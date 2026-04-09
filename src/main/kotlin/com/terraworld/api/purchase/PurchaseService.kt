@@ -42,17 +42,20 @@ class PurchaseService(
             PriceType.MIXED -> {
                 if (user.basicCoin < item.priceAmount) throw BusinessException(ErrorCode.INSUFFICIENT_FUNDS)
                 user.basicCoin -= item.priceAmount
-                if (item.tokenPrice != null && item.category != null) {
-                    val token = userTokenRepository.findByUserIdAndCategoryId(userId, item.category.id)
+                val tokenPrice = item.tokenPrice
+                val category = item.category
+                if (tokenPrice != null && category != null) {
+                    val token = userTokenRepository.findByUserIdAndCategoryId(userId, category.id)
                         .orElseThrow { BusinessException(ErrorCode.INSUFFICIENT_FUNDS) }
-                    if (token.amount < item.tokenPrice) throw BusinessException(ErrorCode.INSUFFICIENT_FUNDS)
-                    token.amount -= item.tokenPrice
+                    if (token.amount < tokenPrice) throw BusinessException(ErrorCode.INSUFFICIENT_FUNDS)
+                    token.amount -= tokenPrice
                     userTokenRepository.save(token)
                 }
             }
             PriceType.TOKEN -> {
-                if (item.category != null) {
-                    val token = userTokenRepository.findByUserIdAndCategoryId(userId, item.category.id)
+                val category = item.category
+                if (category != null) {
+                    val token = userTokenRepository.findByUserIdAndCategoryId(userId, category.id)
                         .orElseThrow { BusinessException(ErrorCode.INSUFFICIENT_FUNDS) }
                     if (token.amount < item.priceAmount) throw BusinessException(ErrorCode.INSUFFICIENT_FUNDS)
                     token.amount -= item.priceAmount
