@@ -1,0 +1,80 @@
+package com.terraworld.api.purchase
+
+import com.terraworld.api.purchase.dto.*
+import com.terraworld.api.user.dto.CurrencyResponse
+import com.terraworld.common.exception.BusinessException
+import com.terraworld.common.exception.ErrorCode
+import com.terraworld.domain.item.*
+import com.terraworld.domain.user.UserRepository
+import com.terraworld.domain.user.UserTokenRepository
+import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Transactional
+
+@Service
+class PurchaseService(
+    private val userRepository: UserRepository,
+    private val userTokenRepository: UserTokenRepository,
+    private val itemRepository: ItemRepository,
+    private val userItemRepository: UserItemRepository,
+) {
+
+    @Transactional
+    fun purchase(userId: Long, request: PurchaseRequest): PurchaseResponse {
+        val user = userRepository.findById(userId)
+            .orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) }
+        val item = itemRepository.findById(request.itemId)
+            .orElseThrow { BusinessException(ErrorCode.ITEM_NOT_FOUND) }
+
+        if (userItemRepository.existsByUserIdAndItemId(userId, item.id)) {
+            throw BusinessException(ErrorCode.ALREADY_OWNED)
+        }
+
+        // 재화 차감
+        when (item.priceType) {
+            PriceType.BASIC -> {
+                if (user.basicCoin < item.priceAmount) throw BusinessException(ErrorCode.INSUFFICIENT_FUNDS)
+                user.basicCoin -= item.priceAmount
+            }
+            PriceType.SPECIAL -> {
+                if (user.specialCoin < item.priceAmount) throw BusinessException(ErrorCode.INSUFFICIENT_FUNDS)
+                user.specialCoin -= item.priceAmount
+            }
+            PriceType.MIXED -> {
+                if (user.basicCoin < item.priceAmount) throw BusinessException(ErrorCode.INSUFFICIENT_FUNDS)
+                user.basicCoin -= item.priceAmount
+                if (item.tokenPrice != null && item.category != null) {
+                    val token = userTokenRepository.findByUserIdAndCategoryId(userId, item.category.id)
+                        .orElseThrow { BusinessException(ErrorCode.INSUFFICIENT_FUNDS) }
+                    if (token.amount < item.tokenPrice) throw BusinessException(ErrorCode.INSUFFICIENT_FUNDS)
+                    token.amount -= item.tokenPrice
+                    userTokenRepository.save(token)
+                }
+            }
+            PriceType.TOKEN -> {
+                if (item.category != null) {
+                    val token = userTokenRepository.findByUserIdAndCategoryId(userId, item.category.id)
+                        .orElseThrow { BusinessException(ErrorCode.INSUFFICIENT_FUNDS) }
+                    if (token.amount < item.priceAmount) throw BusinessException(ErrorCode.INSUFFICIENT_FUNDS)
+                    token.amount -= item.priceAmount
+                    userTokenRepository.save(token)
+                }
+            }
+        }
+        userRepository.save(user)
+        userItemRepository.save(UserItem(user = user, item = item))
+
+        val ownedSlugs = userItemRepository.findAllByUserId(userId).mapNotNull { it.item.slug }
+        val tokens = userTokenRepository.findAllByUserId(userId)
+        val tokenMap = tokens.associate { it.category.id to it.amount }
+
+        return PurchaseResponse(
+            purchasedItem = PurchasedItemInfo(id = item.id, slug = item.slug, name = item.name),
+            updatedCurrency = CurrencyResponse(
+                basicCoins = user.basicCoin.toDouble(), specialCoins = user.specialCoin.toDouble(),
+                walkTokens = (tokenMap[1L] ?: 0).toDouble(), readTokens = (tokenMap[2L] ?: 0).toDouble(),
+                runTokens = (tokenMap[3L] ?: 0).toDouble(), drawTokens = (tokenMap[4L] ?: 0).toDouble(),
+            ),
+            ownedItems = ownedSlugs,
+        )
+    }
+}
