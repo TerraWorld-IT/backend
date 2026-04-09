@@ -37,6 +37,13 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          # openapi-backend is a private submodule in the same org.
+          # GITHUB_TOKEN is scoped to this repo only, so a PAT with `repo` scope
+          # that can read TerraWorld-IT/openapi-backend must be stored as
+          # OPENAPI_SUBMODULE_TOKEN (see: Settings → Secrets → Actions).
+          submodules: recursive
+          token: ${{ secrets.OPENAPI_SUBMODULE_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Setup JDK 21
         uses: actions/setup-java@v4

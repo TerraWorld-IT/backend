@@ -45,6 +45,11 @@ dependencies {
     // OpenAPI
     implementation("org.springdoc:springdoc-openapi-starter-webmvc-ui:2.8.4")
 
+    // Spec-first API stubs (generated from TerraWorld-IT/openapi via composite build).
+    // Controllers implement interfaces in io.terraworld.api.api.* — compile fails
+    // if the spec drifts from the controller signature.
+    implementation("io.terraworld:openapi-backend")
+
     // Test
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.springframework.security:spring-security-test")
