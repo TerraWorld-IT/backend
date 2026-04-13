@@ -22,7 +22,7 @@ class ExchangeService(
     }
 
     @Transactional
-    fun specialToBasic(userId: Long, request: SpecialToBasicRequest): ExchangeResponse {
+    fun specialToBasic(userId: String, request: SpecialToBasicRequest): ExchangeResponse {
         val user = userRepository.findById(userId)
             .orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) }
 
@@ -40,7 +40,7 @@ class ExchangeService(
     }
 
     @Transactional
-    fun exchangeTokens(userId: Long, request: TokenExchangeRequest): ExchangeResponse {
+    fun exchangeTokens(userId: String, request: TokenExchangeRequest): ExchangeResponse {
         if (request.fromCategoryId == request.toCategoryId) {
             throw BusinessException(ErrorCode.SAME_CATEGORY_EXCHANGE)
         }
@@ -73,7 +73,7 @@ class ExchangeService(
         )
     }
 
-    private fun buildCurrency(userId: Long, user: com.terraworld.domain.user.User): CurrencyResponse {
+    private fun buildCurrency(userId: String, user: com.terraworld.domain.user.User): CurrencyResponse {
         val tokens = userTokenRepository.findAllByUserId(userId)
         val tokenMap = tokens.associate { it.category.id to it.amount }
         return CurrencyResponse(

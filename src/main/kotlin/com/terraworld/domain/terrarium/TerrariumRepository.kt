@@ -4,7 +4,7 @@ import org.springframework.data.jpa.repository.JpaRepository
 import java.util.Optional
 
 interface TerrariumRepository : JpaRepository<Terrarium, Long> {
-    fun findByUserId(userId: Long): Optional<Terrarium>
+    fun findByUserId(userId: String): Optional<Terrarium>
 }
 
 interface TerrariumBackgroundRepository : JpaRepository<TerrariumBackground, Long>

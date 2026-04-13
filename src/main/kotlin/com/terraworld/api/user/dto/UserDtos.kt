@@ -28,9 +28,10 @@ data class PlacedItemResponse(
 
 @Schema(description = "유저 전체 데이터")
 data class UserMeResponse(
-    val userId: Long,
+    val userId: String,
     val email: String,
     val nickname: String,
+    val role: String,
     val currency: CurrencyResponse,
     val progress: ProgressResponse,
     val ownedItems: List<String>,

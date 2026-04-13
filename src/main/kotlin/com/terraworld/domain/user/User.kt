@@ -6,14 +6,8 @@ import java.time.LocalDateTime
 @Entity
 @Table(name = "users")
 class User(
-    @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
-    val id: Long = 0,
-
-    @Column(nullable = false, unique = true)
-    val email: String,
-
-    @Column(name = "password_hash", nullable = false)
-    var passwordHash: String,
+    @Id
+    val id: String,
 
     @Column(nullable = false, length = 50)
     var nickname: String,

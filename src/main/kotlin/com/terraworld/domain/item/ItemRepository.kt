@@ -12,6 +12,6 @@ interface ItemRepository : JpaRepository<Item, Long> {
 }
 
 interface UserItemRepository : JpaRepository<UserItem, Long> {
-    fun findAllByUserId(userId: Long): List<UserItem>
-    fun existsByUserIdAndItemId(userId: Long, itemId: Long): Boolean
+    fun findAllByUserId(userId: String): List<UserItem>
+    fun existsByUserIdAndItemId(userId: String, itemId: Long): Boolean
 }
