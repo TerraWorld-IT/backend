@@ -17,6 +17,8 @@ class UserController(
 
     @Operation(summary = "내 정보 조회", description = "현재 로그인한 유저의 전체 데이터를 반환합니다")
     @GetMapping("/me")
-    fun getMe(): UserMeResponse =
-        userService.getMe(SecurityUtil.getCurrentUserId())
+    fun getMe(): UserMeResponse {
+        val current = SecurityUtil.getCurrentUser()
+        return userService.getMe(current.id, current.email)
+    }
 }

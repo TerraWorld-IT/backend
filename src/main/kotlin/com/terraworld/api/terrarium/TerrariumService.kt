@@ -23,7 +23,7 @@ class TerrariumService(
 ) {
 
     @Transactional(readOnly = true)
-    fun getTerrarium(userId: Long): TerrariumResponse {
+    fun getTerrarium(userId: String): TerrariumResponse {
         val terrarium = terrariumRepository.findByUserId(userId)
             .orElseThrow { BusinessException(ErrorCode.TERRARIUM_NOT_FOUND) }
         val user = userRepository.findById(userId).orElseThrow()
@@ -49,7 +49,7 @@ class TerrariumService(
     }
 
     @Transactional
-    fun updatePlacements(userId: Long, request: PlacementRequest): TerrariumResponse {
+    fun updatePlacements(userId: String, request: PlacementRequest): TerrariumResponse {
         val terrarium = terrariumRepository.findByUserId(userId)
             .orElseThrow { BusinessException(ErrorCode.TERRARIUM_NOT_FOUND) }
 
@@ -89,7 +89,7 @@ class TerrariumService(
     }
 
     @Transactional
-    fun heartClick(userId: Long): HeartResponse {
+    fun heartClick(userId: String): HeartResponse {
         val user = userRepository.findById(userId)
             .orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) }
         // +0.1 은 정수 기반에서 1로 처리 (x10 스케일링은 추후 논의)

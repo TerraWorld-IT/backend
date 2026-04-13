@@ -9,22 +9,22 @@ import java.time.LocalDate
 interface RecordRepository : JpaRepository<ActivityRecord, Long> {
 
     fun findAllByUserIdAndIsDeletedFalseOrderByCreatedAtDesc(
-        userId: Long, pageable: Pageable
+        userId: String, pageable: Pageable
     ): Page<ActivityRecord>
 
     fun findAllByUserIdAndRecordedDateBetweenAndIsDeletedFalse(
-        userId: Long, from: LocalDate, to: LocalDate
+        userId: String, from: LocalDate, to: LocalDate
     ): List<ActivityRecord>
 
     fun countByUserIdAndRecordedDateAndCategoryIdAndIsDeletedFalse(
-        userId: Long, recordedDate: LocalDate, categoryId: Long
+        userId: String, recordedDate: LocalDate, categoryId: Long
     ): Long
 
-    fun countByUserIdAndIsDeletedFalse(userId: Long): Long
+    fun countByUserIdAndIsDeletedFalse(userId: String): Long
 
-    fun countByUserIdAndRecordedDateAndIsDeletedFalse(userId: Long, date: LocalDate): Long
+    fun countByUserIdAndRecordedDateAndIsDeletedFalse(userId: String, date: LocalDate): Long
 
-    fun countByUserIdAndRecordedDateGreaterThanEqualAndIsDeletedFalse(userId: Long, date: LocalDate): Long
+    fun countByUserIdAndRecordedDateGreaterThanEqualAndIsDeletedFalse(userId: String, date: LocalDate): Long
 
     @Query("""
         SELECT r.category.id, COUNT(r)
@@ -32,5 +32,5 @@ interface RecordRepository : JpaRepository<ActivityRecord, Long> {
         WHERE r.user.id = :userId AND r.isDeleted = false
         GROUP BY r.category.id
     """)
-    fun countByCategoryGrouped(userId: Long): List<Array<Any>>
+    fun countByCategoryGrouped(userId: String): List<Array<Any>>
 }

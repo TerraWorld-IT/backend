@@ -19,7 +19,7 @@ class PurchaseService(
 ) {
 
     @Transactional
-    fun purchase(userId: Long, request: PurchaseRequest): PurchaseResponse {
+    fun purchase(userId: String, request: PurchaseRequest): PurchaseResponse {
         val user = userRepository.findById(userId)
             .orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) }
         val item = itemRepository.findById(request.itemId)

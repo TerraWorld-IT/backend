@@ -24,7 +24,7 @@ class RecordService(
 ) {
 
     @Transactional
-    fun createRecord(userId: Long, request: CreateRecordRequest): CreateRecordResponse {
+    fun createRecord(userId: String, request: CreateRecordRequest): CreateRecordResponse {
         val user = userRepository.findById(userId)
             .orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) }
         val category = categoryRepository.findById(request.categoryId)
@@ -85,7 +85,7 @@ class RecordService(
     }
 
     @Transactional(readOnly = true)
-    fun getRecords(userId: Long, categoryId: Long?, year: Int?, month: Int?, pageable: Pageable): Page<RecordResponse> {
+    fun getRecords(userId: String, categoryId: Long?, year: Int?, month: Int?, pageable: Pageable): Page<RecordResponse> {
         if (year != null && month != null) {
             val from = LocalDate.of(year, month, 1)
             val to = from.withDayOfMonth(from.lengthOfMonth())
@@ -99,7 +99,7 @@ class RecordService(
     }
 
     @Transactional(readOnly = true)
-    fun getStatistics(userId: Long): StatisticsResponse {
+    fun getStatistics(userId: String): StatisticsResponse {
         val today = LocalDate.now()
         val weekAgo = today.minusDays(7)
         val categories = categoryRepository.findAllByIsActiveTrue()
@@ -120,7 +120,7 @@ class RecordService(
     }
 
     @Transactional
-    fun deleteRecord(userId: Long, recordId: Long) {
+    fun deleteRecord(userId: String, recordId: Long) {
         val record = recordRepository.findById(recordId)
             .orElseThrow { BusinessException(ErrorCode.RECORD_NOT_FOUND) }
         if (record.user.id != userId) throw BusinessException(ErrorCode.FORBIDDEN)

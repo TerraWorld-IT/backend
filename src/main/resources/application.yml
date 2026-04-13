@@ -3,9 +3,9 @@ spring:
     name: terraworld-backend
 
   datasource:
-    url: jdbc:postgresql://localhost:5432/terraworld
-    username: terraworld
-    password: terraworld
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/terraworld?currentSchema=public}
+    username: ${SPRING_DATASOURCE_USERNAME:terraworld}
+    password: ${SPRING_DATASOURCE_PASSWORD:terraworld}
     driver-class-name: org.postgresql.Driver
 
   jpa:
@@ -15,16 +15,25 @@ spring:
       hibernate:
         dialect: org.hibernate.dialect.PostgreSQLDialect
         format_sql: true
+        default_schema: public
     open-in-view: false
 
   flyway:
     enabled: true
     locations: classpath:db/migration
+    schemas: public
+    default-schema: public
+    # SEC-008: baseline-on-migrate is enabled ONLY in dev profile (see
+    # application-prod.yml override below). In prod a missing history
+    # table aborts startup so we notice accidental DB resets before V4
+    # silently wipes user data.
+    baseline-on-migrate: true
+    baseline-version: "0"
 
   data:
     redis:
-      host: localhost
-      port: 6379
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
 
   jackson:
     property-naming-strategy: LOWER_CAMEL_CASE
@@ -32,15 +41,62 @@ spring:
       write-dates-as-timestamps: false
 
 server:
-  port: 8080
+  port: ${SERVER_PORT:8080}
 
-jwt:
-  secret: terraworld-dev-secret-key-change-in-production-min-256-bits-required!!
-  access-expiration: 3600000    # 1 hour
-  refresh-expiration: 604800000 # 7 days
+# SEC-009: profile-scoped CORS — dev includes localhost, prod does not.
+# The allow-list is read by SecurityConfig which further refuses localhost
+# entries when the prod profile is active.
+cors:
+  allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000,https://terraworld.app}
+
+auth:
+  jwks:
+    # Public keys served by better-auth (Nuxt/Nitro). Spring fetches this on
+    # startup and refreshes on unknown kid. better-auth rotates keys on its
+    # own schedule; Spring follows automatically.
+    #
+    # SEC-012: the fallback here is dev-only. Set AUTH_JWKS_URL explicitly
+    # in every non-local environment — the prod profile requires it.
+    url: ${AUTH_JWKS_URL:http://localhost:3000/api/auth/jwks}
+    refresh-cooldown-ms: ${AUTH_JWKS_REFRESH_COOLDOWN_MS:30000}
+    negative-cache-ttl-ms: ${AUTH_JWKS_NEGATIVE_CACHE_TTL_MS:60000}
+    max-response-bytes: ${AUTH_JWKS_MAX_RESPONSE_BYTES:65536}
+  jwt:
+    # Must match the `issuer` and `audience` set in frontend/server/lib/auth.ts
+    # `definePayload`. Any mismatch rejects every token at verification time.
+    issuer: ${AUTH_JWT_ISSUER:terraworld}
+    audience: ${AUTH_JWT_AUDIENCE:terraworld-api}
+  internal:
+    # Shared token used by better-auth databaseHooks on the Nitro side to
+    # call internal Spring endpoints (profile bootstrap on signup).
+    # MUST match frontend INTERNAL_API_TOKEN exactly and MUST NOT be the
+    # BETTER_AUTH_SECRET. Transferred out-of-band.
+    token: ${INTERNAL_API_TOKEN:}
 
 springdoc:
   api-docs:
     path: /api-docs
   swagger-ui:
     path: /swagger-ui
+---
+# --- prod profile overrides ---
+spring:
+  config:
+    activate:
+      on-profile: prod
+
+  flyway:
+    baseline-on-migrate: false
+
+auth:
+  jwks:
+    # No fallback — missing AUTH_JWKS_URL aborts startup in prod.
+    url: ${AUTH_JWKS_URL}
+  internal:
+    # Missing INTERNAL_API_TOKEN aborts startup in prod.
+    token: ${INTERNAL_API_TOKEN}
+
+cors:
+  # Missing CORS_ALLOWED_ORIGINS aborts startup in prod. Never include
+  # localhost entries — SecurityConfig enforces this at boot.
+  allowed-origins: ${CORS_ALLOWED_ORIGINS}

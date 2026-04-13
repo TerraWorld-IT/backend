@@ -21,7 +21,7 @@ class UserService(
     private val levelConfigRepository: LevelConfigRepository,
 ) {
 
-    fun getMe(userId: Long): UserMeResponse {
+    fun getMe(userId: String, email: String): UserMeResponse {
         val user = userRepository.findById(userId)
             .orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) }
 
@@ -47,8 +47,9 @@ class UserService(
 
         return UserMeResponse(
             userId = user.id,
-            email = user.email,
+            email = email,
             nickname = user.nickname,
+            role = user.role.name,
             currency = CurrencyResponse(
                 basicCoins = user.basicCoin.toDouble(),
                 specialCoins = user.specialCoin.toDouble(),
