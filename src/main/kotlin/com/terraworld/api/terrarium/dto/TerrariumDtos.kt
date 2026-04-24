@@ -8,6 +8,16 @@ data class TerrariumResponse(
     val background: BackgroundInfo,
     val placedItems: List<PlacedItemDetail>,
     val maxSlots: Int,
+    @Schema(description = "시들기 상태", required = false)
+    val wilting: WiltingState? = null,
+)
+
+@Schema(description = "시들기 단계 (daysSinceRecord 기반)")
+data class WiltingState(
+    @Schema(description = "0=정상, 1=시들기 시작, 2=많이 시듦, 3=위기")
+    val stage: Int,
+    @Schema(description = "마지막 기록 이후 경과 일수. 한 번도 기록이 없으면 null")
+    val daysSinceRecord: Int?,
 )
 
 data class BackgroundInfo(

@@ -7,10 +7,13 @@ import com.terraworld.domain.item.ItemLayout
 import com.terraworld.domain.item.ItemRepository
 import com.terraworld.domain.item.UserItemRepository
 import com.terraworld.domain.level.LevelConfigRepository
+import com.terraworld.domain.record.RecordRepository
 import com.terraworld.domain.terrarium.*
 import com.terraworld.domain.user.UserRepository
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import java.time.LocalDate
+import java.time.temporal.ChronoUnit
 
 @Service
 class TerrariumService(
@@ -20,7 +23,15 @@ class TerrariumService(
     private val userItemRepository: UserItemRepository,
     private val itemRepository: ItemRepository,
     private val levelConfigRepository: LevelConfigRepository,
+    private val recordRepository: RecordRepository,
 ) {
+
+    companion object {
+        // 시들기 단계 임계치 (마지막 기록 이후 경과 일수 기준)
+        private const val WILT_STAGE_1_DAYS = 3L  // 시들기 시작
+        private const val WILT_STAGE_2_DAYS = 7L  // 많이 시듦
+        private const val WILT_STAGE_3_DAYS = 14L // 위기
+    }
 
     @Transactional(readOnly = true)
     fun getTerrarium(userId: String): TerrariumResponse {
@@ -45,7 +56,30 @@ class TerrariumService(
                 )
             },
             maxSlots = minOf(5, maxItems),
+            wilting = computeWiltingState(userId),
         )
+    }
+
+    /**
+     * 시들기 상태를 activity_records 의 최신 recorded_date 기준으로 동적 계산.
+     * - 기록 없음 → stage 0, daysSinceRecord null
+     * - 0~2 일 → stage 0 (정상)
+     * - 3~6 일 → stage 1 (시들기 시작)
+     * - 7~13 일 → stage 2 (많이 시듦)
+     * - 14 일 이상 → stage 3 (위기)
+     * 추후 P-4(FE 정적 연출) 에서 stage 를 CSS 채도/말풍선에 매핑한다.
+     */
+    private fun computeWiltingState(userId: String): WiltingState {
+        val latest = recordRepository.findMaxRecordedDate(userId)
+            ?: return WiltingState(stage = 0, daysSinceRecord = null)
+        val days = ChronoUnit.DAYS.between(latest, LocalDate.now())
+        val stage = when {
+            days >= WILT_STAGE_3_DAYS -> 3
+            days >= WILT_STAGE_2_DAYS -> 2
+            days >= WILT_STAGE_1_DAYS -> 1
+            else -> 0
+        }
+        return WiltingState(stage = stage, daysSinceRecord = days.toInt())
     }
 
     @Transactional

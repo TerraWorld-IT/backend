@@ -33,4 +33,11 @@ interface RecordRepository : JpaRepository<ActivityRecord, Long> {
         GROUP BY r.category.id
     """)
     fun countByCategoryGrouped(userId: String): List<Array<Any>>
+
+    @Query("""
+        SELECT MAX(r.recordedDate)
+        FROM ActivityRecord r
+        WHERE r.user.id = :userId AND r.isDeleted = false
+    """)
+    fun findMaxRecordedDate(userId: String): LocalDate?
 }
