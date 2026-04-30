@@ -11,24 +11,20 @@ import java.time.LocalDateTime
 class ActivityRecord(
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     val id: Long = 0,
-
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id", nullable = false)
     val user: User,
-
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "category_id", nullable = false)
     val category: Category,
-
     @Column(columnDefinition = "TEXT")
     val memo: String? = null,
-
+    @Column(name = "photo_url", length = 2048)
+    val photoUrl: String? = null,
     @Column(name = "recorded_date", nullable = false)
     val recordedDate: LocalDate,
-
     @Column(name = "is_deleted", nullable = false)
     var isDeleted: Boolean = false,
-
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: LocalDateTime = LocalDateTime.now(),
 )

@@ -20,10 +20,14 @@ class UserService(
     private val terrariumRepository: TerrariumRepository,
     private val levelConfigRepository: LevelConfigRepository,
 ) {
-
-    fun getMe(userId: String, email: String): UserMeResponse {
-        val user = userRepository.findById(userId)
-            .orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) }
+    fun getMe(
+        userId: String,
+        email: String,
+    ): UserMeResponse {
+        val user =
+            userRepository
+                .findById(userId)
+                .orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) }
 
         val tokens = userTokenRepository.findAllByUserId(userId)
         val tokenMap = tokens.associate { it.category.id to it.amount }
@@ -31,38 +35,44 @@ class UserService(
         val nextLevelConfig = levelConfigRepository.findByLevel(user.level + 1)
         val expToNext = nextLevelConfig.map { it.requiredExp - user.totalExp }.orElse(0L)
 
-        val ownedItems = userItemRepository.findAllByUserId(userId)
-            .mapNotNull { it.item.slug }
+        val ownedItems =
+            userItemRepository
+                .findAllByUserId(userId)
+                .mapNotNull { it.item.slug }
 
         val terrarium = terrariumRepository.findByUserId(userId)
-        val placedItems = terrarium.map { t ->
-            t.placedItems.map { p ->
-                PlacedItemResponse(
-                    itemId = p.item.id,
-                    itemSlug = p.item.slug,
-                    slotId = p.slotId,
-                )
-            }
-        }.orElse(emptyList())
+        val placedItems =
+            terrarium
+                .map { t ->
+                    t.placedItems.map { p ->
+                        PlacedItemResponse(
+                            itemId = p.item.id,
+                            itemSlug = p.item.slug,
+                            slotId = p.slotId,
+                        )
+                    }
+                }.orElse(emptyList())
 
         return UserMeResponse(
             userId = user.id,
             email = email,
             nickname = user.nickname,
             role = user.role.name,
-            currency = CurrencyResponse(
-                basicCoins = user.basicCoin.toDouble(),
-                specialCoins = user.specialCoin.toDouble(),
-                walkTokens = (tokenMap[1L] ?: 0).toDouble(),
-                readTokens = (tokenMap[2L] ?: 0).toDouble(),
-                runTokens = (tokenMap[3L] ?: 0).toDouble(),
-                drawTokens = (tokenMap[4L] ?: 0).toDouble(),
-            ),
-            progress = ProgressResponse(
-                level = user.level,
-                experience = user.totalExp,
-                experienceToNext = expToNext,
-            ),
+            currency =
+                CurrencyResponse(
+                    basicCoins = user.basicCoin.toDouble(),
+                    specialCoins = user.specialCoin.toDouble(),
+                    walkTokens = (tokenMap[1L] ?: 0).toDouble(),
+                    readTokens = (tokenMap[2L] ?: 0).toDouble(),
+                    runTokens = (tokenMap[3L] ?: 0).toDouble(),
+                    drawTokens = (tokenMap[4L] ?: 0).toDouble(),
+                ),
+            progress =
+                ProgressResponse(
+                    level = user.level,
+                    experience = user.totalExp,
+                    experienceToNext = expToNext,
+                ),
             ownedItems = ownedItems,
             placedItems = placedItems,
         )

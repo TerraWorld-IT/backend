@@ -16,7 +16,6 @@ import org.springframework.web.bind.annotation.*
 class ItemController(
     private val itemRepository: ItemRepository,
 ) {
-
     @Operation(summary = "아이템 목록 조회")
     @GetMapping
     fun getItems(
@@ -24,27 +23,45 @@ class ItemController(
         @Parameter(description = "등급 (COMMON, RARE, EPIC)") @RequestParam(required = false) rarity: String?,
         @Parameter(description = "레이아웃 (FOREGROUND, BACKGROUND, FIGURE)") @RequestParam(required = false) layout: String?,
     ): Map<String, List<ItemResponse>> {
-        val items = when {
-            categoryId != null -> itemRepository.findAllByIsActiveTrueAndCategoryId(categoryId)
-            rarity != null -> itemRepository.findAllByIsActiveTrueAndRarity(Rarity.valueOf(rarity))
-            layout != null -> itemRepository.findAllByIsActiveTrueAndLayout(ItemLayout.valueOf(layout))
-            else -> itemRepository.findAllByIsActiveTrue()
-        }
+        val items =
+            when {
+                categoryId != null -> itemRepository.findAllByIsActiveTrueAndCategoryId(categoryId)
+                rarity != null -> itemRepository.findAllByIsActiveTrueAndRarity(Rarity.valueOf(rarity))
+                layout != null -> itemRepository.findAllByIsActiveTrueAndLayout(ItemLayout.valueOf(layout))
+                else -> itemRepository.findAllByIsActiveTrue()
+            }
         return mapOf("items" to items.map { it.toResponse() })
     }
 
     @Operation(summary = "아이템 상세 조회")
     @GetMapping("/{itemId}")
-    fun getItem(@PathVariable itemId: Long): ItemResponse {
-        val item = itemRepository.findById(itemId)
-            .orElseThrow { com.terraworld.common.exception.BusinessException(com.terraworld.common.exception.ErrorCode.ITEM_NOT_FOUND) }
+    fun getItem(
+        @PathVariable itemId: Long,
+    ): ItemResponse {
+        val item =
+            itemRepository
+                .findById(itemId)
+                .orElseThrow {
+                    com.terraworld.common.exception
+                        .BusinessException(com.terraworld.common.exception.ErrorCode.ITEM_NOT_FOUND)
+                }
         return item.toResponse()
     }
 
-    private fun Item.toResponse() = ItemResponse(
-        id = id, slug = slug, name = name, description = description,
-        categoryId = category?.id, categoryName = category?.name,
-        priceType = priceType.name, priceAmount = priceAmount, tokenPrice = tokenPrice,
-        rarity = rarity.name, assetUrl = assetUrl, layout = layout.name, isAnimated = isAnimated,
-    )
+    private fun Item.toResponse() =
+        ItemResponse(
+            id = id,
+            slug = slug,
+            name = name,
+            description = description,
+            categoryId = category?.id,
+            categoryName = category?.name,
+            priceType = priceType.name,
+            priceAmount = priceAmount,
+            tokenPrice = tokenPrice,
+            rarity = rarity.name,
+            assetUrl = assetUrl,
+            layout = layout.name,
+            isAnimated = isAnimated,
+        )
 }

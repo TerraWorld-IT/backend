@@ -14,7 +14,6 @@ import org.springframework.web.bind.annotation.RestController
 class UserController(
     private val userService: UserService,
 ) {
-
     @Operation(summary = "내 정보 조회", description = "현재 로그인한 유저의 전체 데이터를 반환합니다")
     @GetMapping("/me")
     fun getMe(): UserMeResponse {

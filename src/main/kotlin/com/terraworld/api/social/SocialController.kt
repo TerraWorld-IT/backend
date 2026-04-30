@@ -19,14 +19,12 @@ import java.time.OffsetDateTime
 class SocialController(
     private val inviteService: InviteService,
 ) {
-
     @Operation(
         summary = "초대 코드 발급",
         description = "현재 사용자가 공유할 수 있는 일회성 초대 코드를 생성. 7일 유효.",
     )
     @PostMapping
-    fun createInvite(): InviteCreateResponse =
-        inviteService.createInvite(SecurityUtil.getCurrentUserId())
+    fun createInvite(): InviteCreateResponse = inviteService.createInvite(SecurityUtil.getCurrentUserId())
 
     @Operation(
         summary = "초대 코드 수락",
@@ -35,8 +33,7 @@ class SocialController(
     @PostMapping("/{code}/accept")
     fun acceptInvite(
         @PathVariable @Size(min = 4, max = 20) code: String,
-    ): InviteAcceptResponsePayload =
-        inviteService.acceptInvite(SecurityUtil.getCurrentUserId(), code)
+    ): InviteAcceptResponsePayload = inviteService.acceptInvite(SecurityUtil.getCurrentUserId(), code)
 }
 
 data class InviteCreateResponse(
@@ -50,4 +47,6 @@ data class InviteAcceptResponsePayload(
     val reward: InviteAcceptReward,
 )
 
-data class InviteAcceptReward(val specialCoins: Int)
+data class InviteAcceptReward(
+    val specialCoins: Int,
+)

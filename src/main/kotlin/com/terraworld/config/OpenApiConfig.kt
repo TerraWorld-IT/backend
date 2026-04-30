@@ -10,24 +10,23 @@ import org.springframework.context.annotation.Configuration
 
 @Configuration
 class OpenApiConfig {
-
     @Bean
-    fun openAPI(): OpenAPI = OpenAPI()
-        .info(
-            Info()
-                .title("TerraWorld API")
-                .description("TerraWorld Backend API - 나만의 작은 기록 정원")
-                .version("1.0.0")
-        )
-        .addSecurityItem(SecurityRequirement().addList("Bearer"))
-        .components(
-            Components().addSecuritySchemes(
-                "Bearer",
-                SecurityScheme()
-                    .type(SecurityScheme.Type.HTTP)
-                    .scheme("bearer")
-                    .bearerFormat("JWT")
-                    .description("JWT Access Token")
+    fun openAPI(): OpenAPI =
+        OpenAPI()
+            .info(
+                Info()
+                    .title("TerraWorld API")
+                    .description("TerraWorld Backend API - 나만의 작은 기록 정원")
+                    .version("1.0.0"),
+            ).addSecurityItem(SecurityRequirement().addList("Bearer"))
+            .components(
+                Components().addSecuritySchemes(
+                    "Bearer",
+                    SecurityScheme()
+                        .type(SecurityScheme.Type.HTTP)
+                        .scheme("bearer")
+                        .bearerFormat("JWT")
+                        .description("JWT Access Token"),
+                ),
             )
-        )
 }

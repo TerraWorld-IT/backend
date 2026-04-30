@@ -1,11 +1,11 @@
 package com.terraworld.api.internal
 
 import com.terraworld.security.UserBootstrapService
+import jakarta.annotation.PostConstruct
 import jakarta.validation.Valid
 import jakarta.validation.constraints.Email
 import jakarta.validation.constraints.NotBlank
 import jakarta.validation.constraints.Size
-import jakarta.annotation.PostConstruct
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.http.HttpStatus
@@ -16,8 +16,8 @@ import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestHeader
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
-import java.security.MessageDigest
 import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 
 /**
  * Internal endpoints called by the Nuxt/Nitro side at auth lifecycle events.
@@ -90,7 +90,6 @@ class InternalUserController(
 data class BootstrapRequest(
     @field:NotBlank @field:Size(max = 128)
     val userId: String,
-
     @field:NotBlank @field:Email @field:Size(max = 255)
     val email: String,
 )

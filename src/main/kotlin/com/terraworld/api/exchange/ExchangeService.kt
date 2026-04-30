@@ -22,9 +22,14 @@ class ExchangeService(
     }
 
     @Transactional
-    fun specialToBasic(userId: String, request: SpecialToBasicRequest): ExchangeResponse {
-        val user = userRepository.findById(userId)
-            .orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) }
+    fun specialToBasic(
+        userId: String,
+        request: SpecialToBasicRequest,
+    ): ExchangeResponse {
+        val user =
+            userRepository
+                .findById(userId)
+                .orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) }
 
         if (user.specialCoin < request.amount) throw BusinessException(ErrorCode.INSUFFICIENT_FUNDS)
 
@@ -40,17 +45,23 @@ class ExchangeService(
     }
 
     @Transactional
-    fun exchangeTokens(userId: String, request: TokenExchangeRequest): ExchangeResponse {
+    fun exchangeTokens(
+        userId: String,
+        request: TokenExchangeRequest,
+    ): ExchangeResponse {
         if (request.fromCategoryId == request.toCategoryId) {
             throw BusinessException(ErrorCode.SAME_CATEGORY_EXCHANGE)
         }
 
-        val rate = exchangeRateRepository
-            .findByFromCategoryIdAndToCategoryIdAndIsActiveTrue(request.fromCategoryId, request.toCategoryId)
-            .orElseThrow { BusinessException(ErrorCode.EXCHANGE_RATE_NOT_FOUND) }
+        val rate =
+            exchangeRateRepository
+                .findByFromCategoryIdAndToCategoryIdAndIsActiveTrue(request.fromCategoryId, request.toCategoryId)
+                .orElseThrow { BusinessException(ErrorCode.EXCHANGE_RATE_NOT_FOUND) }
 
-        val fromToken = userTokenRepository.findByUserIdAndCategoryId(userId, request.fromCategoryId)
-            .orElseThrow { BusinessException(ErrorCode.INSUFFICIENT_FUNDS) }
+        val fromToken =
+            userTokenRepository
+                .findByUserIdAndCategoryId(userId, request.fromCategoryId)
+                .orElseThrow { BusinessException(ErrorCode.INSUFFICIENT_FUNDS) }
 
         if (fromToken.amount < request.amount) throw BusinessException(ErrorCode.INSUFFICIENT_FUNDS)
 
@@ -58,28 +69,40 @@ class ExchangeService(
         fromToken.amount -= request.amount
         userTokenRepository.save(fromToken)
 
-        val toToken = userTokenRepository.findByUserIdAndCategoryId(userId, request.toCategoryId)
-            .orElseThrow()
+        val toToken =
+            userTokenRepository
+                .findByUserIdAndCategoryId(userId, request.toCategoryId)
+                .orElseThrow()
         toToken.amount += received
         userTokenRepository.save(toToken)
 
         val user = userRepository.findById(userId).orElseThrow()
         return ExchangeResponse(
-            exchanged = ExchangeInfo(
-                fromToken.category.name, request.amount,
-                toToken.category.name, received, 1.0 / rate.rate,
-            ),
+            exchanged =
+                ExchangeInfo(
+                    fromToken.category.name,
+                    request.amount,
+                    toToken.category.name,
+                    received,
+                    1.0 / rate.rate,
+                ),
             updatedCurrency = buildCurrency(userId, user),
         )
     }
 
-    private fun buildCurrency(userId: String, user: com.terraworld.domain.user.User): CurrencyResponse {
+    private fun buildCurrency(
+        userId: String,
+        user: com.terraworld.domain.user.User,
+    ): CurrencyResponse {
         val tokens = userTokenRepository.findAllByUserId(userId)
         val tokenMap = tokens.associate { it.category.id to it.amount }
         return CurrencyResponse(
-            basicCoins = user.basicCoin.toDouble(), specialCoins = user.specialCoin.toDouble(),
-            walkTokens = (tokenMap[1L] ?: 0).toDouble(), readTokens = (tokenMap[2L] ?: 0).toDouble(),
-            runTokens = (tokenMap[3L] ?: 0).toDouble(), drawTokens = (tokenMap[4L] ?: 0).toDouble(),
+            basicCoins = user.basicCoin.toDouble(),
+            specialCoins = user.specialCoin.toDouble(),
+            walkTokens = (tokenMap[1L] ?: 0).toDouble(),
+            readTokens = (tokenMap[2L] ?: 0).toDouble(),
+            runTokens = (tokenMap[3L] ?: 0).toDouble(),
+            drawTokens = (tokenMap[4L] ?: 0).toDouble(),
         )
     }
 }

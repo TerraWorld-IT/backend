@@ -18,12 +18,12 @@ import org.springframework.web.bind.annotation.*
 class RecordController(
     private val recordService: RecordService,
 ) {
-
     @Operation(summary = "활동 기록 생성", description = "기록 생성 후 보상을 자동 지급합니다")
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    fun createRecord(@Valid @RequestBody request: CreateRecordRequest): CreateRecordResponse =
-        recordService.createRecord(SecurityUtil.getCurrentUserId(), request)
+    fun createRecord(
+        @Valid @RequestBody request: CreateRecordRequest,
+    ): CreateRecordResponse = recordService.createRecord(SecurityUtil.getCurrentUserId(), request)
 
     @Operation(summary = "기록 목록 조회")
     @GetMapping
@@ -32,17 +32,17 @@ class RecordController(
         @Parameter(description = "연도") @RequestParam(required = false) year: Int?,
         @Parameter(description = "월") @RequestParam(required = false) month: Int?,
         @PageableDefault(size = 20) pageable: Pageable,
-    ): Page<RecordResponse> =
-        recordService.getRecords(SecurityUtil.getCurrentUserId(), categoryId, year, month, pageable)
+    ): Page<RecordResponse> = recordService.getRecords(SecurityUtil.getCurrentUserId(), categoryId, year, month, pageable)
 
     @Operation(summary = "활동 통계")
     @GetMapping("/statistics")
-    fun getStatistics(): StatisticsResponse =
-        recordService.getStatistics(SecurityUtil.getCurrentUserId())
+    fun getStatistics(): StatisticsResponse = recordService.getStatistics(SecurityUtil.getCurrentUserId())
 
     @Operation(summary = "기록 삭제 (soft delete)")
     @DeleteMapping("/{recordId}")
-    fun deleteRecord(@PathVariable recordId: Long): Map<String, String> {
+    fun deleteRecord(
+        @PathVariable recordId: Long,
+    ): Map<String, String> {
         recordService.deleteRecord(SecurityUtil.getCurrentUserId(), recordId)
         return mapOf("message" to "기록이 삭제되었습니다")
     }

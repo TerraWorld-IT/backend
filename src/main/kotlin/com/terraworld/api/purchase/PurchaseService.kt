@@ -17,13 +17,19 @@ class PurchaseService(
     private val itemRepository: ItemRepository,
     private val userItemRepository: UserItemRepository,
 ) {
-
     @Transactional
-    fun purchase(userId: String, request: PurchaseRequest): PurchaseResponse {
-        val user = userRepository.findById(userId)
-            .orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) }
-        val item = itemRepository.findById(request.itemId)
-            .orElseThrow { BusinessException(ErrorCode.ITEM_NOT_FOUND) }
+    fun purchase(
+        userId: String,
+        request: PurchaseRequest,
+    ): PurchaseResponse {
+        val user =
+            userRepository
+                .findById(userId)
+                .orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) }
+        val item =
+            itemRepository
+                .findById(request.itemId)
+                .orElseThrow { BusinessException(ErrorCode.ITEM_NOT_FOUND) }
 
         if (userItemRepository.existsByUserIdAndItemId(userId, item.id)) {
             throw BusinessException(ErrorCode.ALREADY_OWNED)
@@ -45,8 +51,10 @@ class PurchaseService(
                 val tokenPrice = item.tokenPrice
                 val category = item.category
                 if (tokenPrice != null && category != null) {
-                    val token = userTokenRepository.findByUserIdAndCategoryId(userId, category.id)
-                        .orElseThrow { BusinessException(ErrorCode.INSUFFICIENT_FUNDS) }
+                    val token =
+                        userTokenRepository
+                            .findByUserIdAndCategoryId(userId, category.id)
+                            .orElseThrow { BusinessException(ErrorCode.INSUFFICIENT_FUNDS) }
                     if (token.amount < tokenPrice) throw BusinessException(ErrorCode.INSUFFICIENT_FUNDS)
                     token.amount -= tokenPrice
                     userTokenRepository.save(token)
@@ -55,8 +63,10 @@ class PurchaseService(
             PriceType.TOKEN -> {
                 val category = item.category
                 if (category != null) {
-                    val token = userTokenRepository.findByUserIdAndCategoryId(userId, category.id)
-                        .orElseThrow { BusinessException(ErrorCode.INSUFFICIENT_FUNDS) }
+                    val token =
+                        userTokenRepository
+                            .findByUserIdAndCategoryId(userId, category.id)
+                            .orElseThrow { BusinessException(ErrorCode.INSUFFICIENT_FUNDS) }
                     if (token.amount < item.priceAmount) throw BusinessException(ErrorCode.INSUFFICIENT_FUNDS)
                     token.amount -= item.priceAmount
                     userTokenRepository.save(token)
@@ -72,11 +82,15 @@ class PurchaseService(
 
         return PurchaseResponse(
             purchasedItem = PurchasedItemInfo(id = item.id, slug = item.slug, name = item.name),
-            updatedCurrency = CurrencyResponse(
-                basicCoins = user.basicCoin.toDouble(), specialCoins = user.specialCoin.toDouble(),
-                walkTokens = (tokenMap[1L] ?: 0).toDouble(), readTokens = (tokenMap[2L] ?: 0).toDouble(),
-                runTokens = (tokenMap[3L] ?: 0).toDouble(), drawTokens = (tokenMap[4L] ?: 0).toDouble(),
-            ),
+            updatedCurrency =
+                CurrencyResponse(
+                    basicCoins = user.basicCoin.toDouble(),
+                    specialCoins = user.specialCoin.toDouble(),
+                    walkTokens = (tokenMap[1L] ?: 0).toDouble(),
+                    readTokens = (tokenMap[2L] ?: 0).toDouble(),
+                    runTokens = (tokenMap[3L] ?: 0).toDouble(),
+                    drawTokens = (tokenMap[4L] ?: 0).toDouble(),
+                ),
             ownedItems = ownedSlugs,
         )
     }

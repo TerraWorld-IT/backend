@@ -24,37 +24,45 @@ class TerrariumService(
     private val itemRepository: ItemRepository,
     private val levelConfigRepository: LevelConfigRepository,
     private val recordRepository: RecordRepository,
+    private val placementHistoryRepository: TerrariumPlacementHistoryRepository,
 ) {
-
     companion object {
         // 시들기 단계 임계치 (마지막 기록 이후 경과 일수 기준)
-        private const val WILT_STAGE_1_DAYS = 3L  // 시들기 시작
-        private const val WILT_STAGE_2_DAYS = 7L  // 많이 시듦
+        private const val WILT_STAGE_1_DAYS = 3L // 시들기 시작
+        private const val WILT_STAGE_2_DAYS = 7L // 많이 시듦
         private const val WILT_STAGE_3_DAYS = 14L // 위기
     }
 
     @Transactional(readOnly = true)
     fun getTerrarium(userId: String): TerrariumResponse {
-        val terrarium = terrariumRepository.findByUserId(userId)
-            .orElseThrow { BusinessException(ErrorCode.TERRARIUM_NOT_FOUND) }
+        val terrarium =
+            terrariumRepository
+                .findByUserId(userId)
+                .orElseThrow { BusinessException(ErrorCode.TERRARIUM_NOT_FOUND) }
         val user = userRepository.findById(userId).orElseThrow()
         val maxItems = levelConfigRepository.findByLevel(user.level).map { it.maxItems }.orElse(10)
 
         return TerrariumResponse(
             terrariumId = terrarium.id,
-            background = BackgroundInfo(
-                id = terrarium.background.id,
-                name = terrarium.background.name,
-                assetUrl = terrarium.background.assetUrl,
-            ),
-            placedItems = terrarium.placedItems.map { p ->
-                PlacedItemDetail(
-                    id = p.id, itemId = p.item.id, itemSlug = p.item.slug,
-                    itemImage = p.item.assetUrl, itemName = p.item.name,
-                    itemLayout = p.item.layout.name, isAnimated = p.item.isAnimated,
-                    slotId = p.slotId,
-                )
-            },
+            background =
+                BackgroundInfo(
+                    id = terrarium.background.id,
+                    name = terrarium.background.name,
+                    assetUrl = terrarium.background.assetUrl,
+                ),
+            placedItems =
+                terrarium.placedItems.map { p ->
+                    PlacedItemDetail(
+                        id = p.id,
+                        itemId = p.item.id,
+                        itemSlug = p.item.slug,
+                        itemImage = p.item.assetUrl,
+                        itemName = p.item.name,
+                        itemLayout = p.item.layout.name,
+                        isAnimated = p.item.isAnimated,
+                        slotId = p.slotId,
+                    )
+                },
             maxSlots = minOf(5, maxItems),
             wilting = computeWiltingState(userId),
         )
@@ -70,42 +78,55 @@ class TerrariumService(
      * 추후 P-4(FE 정적 연출) 에서 stage 를 CSS 채도/말풍선에 매핑한다.
      */
     private fun computeWiltingState(userId: String): WiltingState {
-        val latest = recordRepository.findMaxRecordedDate(userId)
-            ?: return WiltingState(stage = 0, daysSinceRecord = null)
+        val latest =
+            recordRepository.findMaxRecordedDate(userId)
+                ?: return WiltingState(stage = 0, daysSinceRecord = null)
         val days = ChronoUnit.DAYS.between(latest, LocalDate.now())
-        val stage = when {
-            days >= WILT_STAGE_3_DAYS -> 3
-            days >= WILT_STAGE_2_DAYS -> 2
-            days >= WILT_STAGE_1_DAYS -> 1
-            else -> 0
-        }
+        val stage =
+            when {
+                days >= WILT_STAGE_3_DAYS -> 3
+                days >= WILT_STAGE_2_DAYS -> 2
+                days >= WILT_STAGE_1_DAYS -> 1
+                else -> 0
+            }
         return WiltingState(stage = stage, daysSinceRecord = days.toInt())
     }
 
     @Transactional
-    fun updatePlacements(userId: String, request: PlacementRequest): TerrariumResponse {
-        val terrarium = terrariumRepository.findByUserId(userId)
-            .orElseThrow { BusinessException(ErrorCode.TERRARIUM_NOT_FOUND) }
+    fun updatePlacements(
+        userId: String,
+        request: PlacementRequest,
+    ): TerrariumResponse {
+        val terrarium =
+            terrariumRepository
+                .findByUserId(userId)
+                .orElseThrow { BusinessException(ErrorCode.TERRARIUM_NOT_FOUND) }
 
         // 슬롯 규칙 검증
         for (placement in request.placedItems) {
-            val item = itemRepository.findById(placement.itemId)
-                .orElseThrow { BusinessException(ErrorCode.ITEM_NOT_FOUND) }
+            val item =
+                itemRepository
+                    .findById(placement.itemId)
+                    .orElseThrow { BusinessException(ErrorCode.ITEM_NOT_FOUND) }
 
             if (!userItemRepository.existsByUserIdAndItemId(userId, item.id)) {
                 throw BusinessException(ErrorCode.ITEM_NOT_FOUND, "보유하지 않은 아이템입니다")
             }
 
-            val expectedLayout = when (placement.slotId) {
-                0, 1 -> ItemLayout.BACKGROUND
-                3 -> ItemLayout.FIGURE
-                2, 4 -> ItemLayout.FOREGROUND
-                else -> throw BusinessException(ErrorCode.INVALID_SLOT)
-            }
+            val expectedLayout =
+                when (placement.slotId) {
+                    0, 1 -> ItemLayout.BACKGROUND
+                    3 -> ItemLayout.FIGURE
+                    2, 4 -> ItemLayout.FOREGROUND
+                    else -> throw BusinessException(ErrorCode.INVALID_SLOT)
+                }
             if (item.layout != expectedLayout) {
                 throw BusinessException(ErrorCode.INVALID_SLOT)
             }
         }
+
+        // 기존 배치 itemId 집합 — 새 itemId 만 history 에 추가 (decoration 랭킹 인플레이션 방지)
+        val existingItemIds = terrarium.placedItems.map { it.item.id }.toSet()
 
         // 기존 배치 삭제 후 새로 배치
         terrariumPlacementRepository.deleteAllByTerrariumId(terrarium.id)
@@ -114,8 +135,18 @@ class TerrariumService(
         request.placedItems.forEach { p ->
             val item = itemRepository.findById(p.itemId).orElseThrow()
             terrarium.placedItems.add(
-                TerrariumPlacement(terrarium = terrarium, item = item, slotId = p.slotId)
+                TerrariumPlacement(terrarium = terrarium, item = item, slotId = p.slotId),
             )
+            // 새로 등장한 itemId 만 history 에 적재 (월간 신규 배치 카운트용)
+            if (item.id !in existingItemIds) {
+                placementHistoryRepository.save(
+                    TerrariumPlacementHistory(
+                        userId = userId,
+                        itemId = item.id,
+                        slotId = p.slotId,
+                    ),
+                )
+            }
         }
         terrariumRepository.save(terrarium)
 
@@ -124,8 +155,10 @@ class TerrariumService(
 
     @Transactional
     fun heartClick(userId: String): HeartResponse {
-        val user = userRepository.findById(userId)
-            .orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) }
+        val user =
+            userRepository
+                .findById(userId)
+                .orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) }
         // +0.1 은 정수 기반에서 1로 처리 (x10 스케일링은 추후 논의)
         // 현재는 BIGINT라 +1로 처리
         user.basicCoin += 1

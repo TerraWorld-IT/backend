@@ -1,0 +1,17 @@
+root = true
+
+[*.{kt,kts}]
+indent_style = space
+indent_size = 4
+end_of_line = lf
+charset = utf-8
+trim_trailing_whitespace = true
+insert_final_newline = true
+max_line_length = 140
+
+# ktlint rule 조정 — 기존 코드베이스 컨벤션 보존.
+# JPA / Spring 의 패키지가 많은 import 를 가져 wildcard 가 가독성 더 좋음.
+ktlint_standard_no-wildcard-imports = disabled
+
+# 라인 길이 — Spring 의 어노테이션 + JPQL @Query 가 자주 길어짐.
+ktlint_standard_max-line-length = disabled
