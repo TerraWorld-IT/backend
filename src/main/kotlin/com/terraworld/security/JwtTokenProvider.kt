@@ -67,9 +67,11 @@ class JwtTokenProvider(
     private val objectMapper: ObjectMapper,
 ) {
     private val log = LoggerFactory.getLogger(JwtTokenProvider::class.java)
-    private val httpClient: HttpClient = HttpClient.newBuilder()
-        .connectTimeout(Duration.ofSeconds(5))
-        .build()
+    private val httpClient: HttpClient =
+        HttpClient
+            .newBuilder()
+            .connectTimeout(Duration.ofSeconds(5))
+            .build()
 
     /**
      * Immutable map swapped atomically by refreshJwks. Reads never see a
@@ -115,30 +117,32 @@ class JwtTokenProvider(
     fun getUserIdFromToken(token: String): String = parseClaims(token).subject
 
     /** Returns null (not "") when the email claim is absent — filter must reject. */
-    fun getEmailFromToken(token: String): String? =
-        parseClaims(token).get("email", String::class.java)?.takeIf { it.isNotBlank() }
+    fun getEmailFromToken(token: String): String? = parseClaims(token).get("email", String::class.java)?.takeIf { it.isNotBlank() }
 
     fun getRoleFromToken(token: String): UserRole =
-        parseClaims(token).get("role", String::class.java)
+        parseClaims(token)
+            .get("role", String::class.java)
             ?.let { runCatching { UserRole.valueOf(it) }.getOrNull() }
             ?: UserRole.USER
 
     private fun parseClaims(token: String): Claims {
-        val claims = Jwts.parser()
-            .requireIssuer(expectedIssuer)
-            .requireAudience(expectedAudience)
-            .clockSkewSeconds(30)
-            .keyLocator { header ->
-                val kid = header["kid"]?.toString()?.takeIf { it.isNotBlank() }
-                    ?: throw JwtException("JWT header missing 'kid'")
-                if (!KID_REGEX.matches(kid)) {
-                    throw JwtException("JWT 'kid' rejected as implausible: ${kid.take(16)}")
-                }
-                resolveKey(kid)
-            }
-            .build()
-            .parseSignedClaims(token)
-            .payload
+        val claims =
+            Jwts
+                .parser()
+                .requireIssuer(expectedIssuer)
+                .requireAudience(expectedAudience)
+                .clockSkewSeconds(30)
+                .keyLocator { header ->
+                    val kid =
+                        header["kid"]?.toString()?.takeIf { it.isNotBlank() }
+                            ?: throw JwtException("JWT header missing 'kid'")
+                    if (!KID_REGEX.matches(kid)) {
+                        throw JwtException("JWT 'kid' rejected as implausible: ${kid.take(16)}")
+                    }
+                    resolveKey(kid)
+                }.build()
+                .parseSignedClaims(token)
+                .payload
 
         if (claims.expiration == null) {
             throw JwtException("JWT missing required 'exp' claim")
@@ -202,20 +206,27 @@ class JwtTokenProvider(
 
     private fun refreshJwksSync(throwOnEmpty: Boolean) {
         lastRefreshMs.set(System.currentTimeMillis())
-        val response = httpClient.send(
-            HttpRequest.newBuilder()
-                .uri(URI.create(jwksUrl))
-                .timeout(Duration.ofSeconds(5))
-                .header("Accept", "application/json")
-                .GET()
-                .build(),
-            HttpResponse.BodyHandlers.ofString(),
-        )
+        val response =
+            httpClient.send(
+                HttpRequest
+                    .newBuilder()
+                    .uri(URI.create(jwksUrl))
+                    .timeout(Duration.ofSeconds(5))
+                    .header("Accept", "application/json")
+                    .GET()
+                    .build(),
+                HttpResponse.BodyHandlers.ofString(),
+            )
         if (response.statusCode() !in 200..299) {
             throw IllegalStateException("JWKS fetch failed: HTTP ${response.statusCode()}")
         }
 
-        val declaredLength = response.headers().firstValue("content-length").orElse("0").toLongOrNull() ?: 0
+        val declaredLength =
+            response
+                .headers()
+                .firstValue("content-length")
+                .orElse("0")
+                .toLongOrNull() ?: 0
         if (declaredLength > maxJwksBytes) {
             throw IllegalStateException("JWKS response too large: declared $declaredLength bytes")
         }

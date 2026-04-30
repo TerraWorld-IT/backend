@@ -14,7 +14,6 @@ import org.springframework.web.bind.annotation.RestController
 class CategoryController(
     private val categoryRepository: CategoryRepository,
 ) {
-
     @Operation(summary = "카테고리 목록 조회")
     @GetMapping
     fun getCategories(): Map<String, List<CategoryResponse>> {
@@ -22,16 +21,28 @@ class CategoryController(
         return mapOf("categories" to categories.map { it.toResponse() })
     }
 
-    private fun Category.toResponse() = CategoryResponse(
-        id = id, name = name, iconUrl = iconUrl, color = color,
-        tokenName = tokenName, emoji = emoji,
-        baseCoinReward = baseCoinReward, baseTokenReward = baseTokenReward,
-        dailyLimit = dailyLimit,
-    )
+    private fun Category.toResponse() =
+        CategoryResponse(
+            id = id,
+            name = name,
+            iconUrl = iconUrl,
+            color = color,
+            tokenName = tokenName,
+            emoji = emoji,
+            baseCoinReward = baseCoinReward,
+            baseTokenReward = baseTokenReward,
+            dailyLimit = dailyLimit,
+        )
 }
 
 data class CategoryResponse(
-    val id: Long, val name: String, val iconUrl: String?, val color: String,
-    val tokenName: String, val emoji: String?,
-    val baseCoinReward: Int, val baseTokenReward: Int, val dailyLimit: Int,
+    val id: Long,
+    val name: String,
+    val iconUrl: String?,
+    val color: String,
+    val tokenName: String,
+    val emoji: String?,
+    val baseCoinReward: Int,
+    val baseTokenReward: Int,
+    val dailyLimit: Int,
 )

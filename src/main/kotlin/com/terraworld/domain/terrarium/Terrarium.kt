@@ -9,21 +9,16 @@ import java.time.LocalDateTime
 class Terrarium(
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     val id: Long = 0,
-
     @OneToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id", nullable = false, unique = true)
     val user: User,
-
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "background_id", nullable = false)
     var background: TerrariumBackground,
-
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: LocalDateTime = LocalDateTime.now(),
-
     @Column(name = "updated_at", nullable = false)
     var updatedAt: LocalDateTime = LocalDateTime.now(),
-
     @OneToMany(mappedBy = "terrarium", cascade = [CascadeType.ALL], orphanRemoval = true)
     val placedItems: MutableList<TerrariumPlacement> = mutableListOf(),
 )
@@ -33,16 +28,12 @@ class Terrarium(
 class TerrariumBackground(
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     val id: Long = 0,
-
     @Column(nullable = false, length = 100)
     val name: String,
-
     @Column(name = "asset_url", nullable = false, length = 500)
     val assetUrl: String,
-
     @Column(name = "unlock_condition", nullable = false, length = 30)
     val unlockCondition: String = "DEFAULT",
-
     @Column(name = "unlock_value", nullable = false)
     val unlockValue: Int = 0,
 )
@@ -52,33 +43,24 @@ class TerrariumBackground(
 class TerrariumPlacement(
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     val id: Long = 0,
-
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "terrarium_id", nullable = false)
     val terrarium: Terrarium,
-
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "item_id", nullable = false)
     val item: com.terraworld.domain.item.Item,
-
     @Column(name = "slot_id")
     val slotId: Int? = null,
-
     @Column(name = "pos_x", nullable = false)
     val posX: Float = 0f,
-
     @Column(name = "pos_y", nullable = false)
     val posY: Float = 0f,
-
     @Column(nullable = false)
     val rotation: Float = 0f,
-
     @Column(nullable = false)
     val scale: Float = 1f,
-
     @Column(name = "z_index", nullable = false)
     val zIndex: Int = 0,
-
     @Column(name = "placed_at", nullable = false, updatable = false)
     val placedAt: LocalDateTime = LocalDateTime.now(),
 )

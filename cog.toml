@@ -1,0 +1,5 @@
+from_latest_tag = false
+branch_whitelist = ["main", "develop"]
+
+[changelog]
+path = "CHANGELOG.md"

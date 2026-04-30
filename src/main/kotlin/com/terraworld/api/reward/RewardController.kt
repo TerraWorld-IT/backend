@@ -13,14 +13,12 @@ import org.springframework.web.bind.annotation.RestController
 class RewardController(
     private val rewardService: RewardService,
 ) {
-
     @Operation(
         summary = "광고 시청 보상 수령",
         description = "하루 최대 5회까지 광고 시청 시 스페셜 코인 1개 지급.",
     )
     @PostMapping("/ad")
-    fun claimAdReward(): AdRewardResponsePayload =
-        rewardService.claimAdReward(SecurityUtil.getCurrentUserId())
+    fun claimAdReward(): AdRewardResponsePayload = rewardService.claimAdReward(SecurityUtil.getCurrentUserId())
 }
 
 data class AdRewardResponsePayload(
@@ -30,7 +28,9 @@ data class AdRewardResponsePayload(
     val updatedCurrency: CurrencySnapshot,
 )
 
-data class AdRewardPayload(val specialCoins: Int)
+data class AdRewardPayload(
+    val specialCoins: Int,
+)
 
 data class CurrencySnapshot(
     val basicCoins: Long,

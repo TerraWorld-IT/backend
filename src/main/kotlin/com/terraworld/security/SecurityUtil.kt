@@ -2,7 +2,10 @@ package com.terraworld.security
 
 import org.springframework.security.core.context.SecurityContextHolder
 
-data class AuthenticatedUser(val id: String, val email: String)
+data class AuthenticatedUser(
+    val id: String,
+    val email: String,
+)
 
 object SecurityUtil {
     fun getCurrentUser(): AuthenticatedUser =

@@ -18,27 +18,29 @@ class LevelController(
     private val levelConfigRepository: LevelConfigRepository,
     private val userRepository: UserRepository,
 ) {
-
     @Operation(summary = "현재 레벨과 전체 레벨 구성 조회")
     @GetMapping
     fun getLevels(): LevelsResponse {
-        val user = userRepository.findById(SecurityUtil.getCurrentUserId())
-            .orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) }
+        val user =
+            userRepository
+                .findById(SecurityUtil.getCurrentUserId())
+                .orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) }
 
         val configs = levelConfigRepository.findAll().sortedBy { it.level }
 
         return LevelsResponse(
             currentLevel = user.level,
             currentExp = user.totalExp,
-            levels = configs.map { c ->
-                LevelConfigPayload(
-                    level = c.level,
-                    requiredExp = c.requiredExp,
-                    maxItems = c.maxItems,
-                    rewardType = c.rewardType,
-                    rewardValue = c.rewardValue,
-                )
-            },
+            levels =
+                configs.map { c ->
+                    LevelConfigPayload(
+                        level = c.level,
+                        requiredExp = c.requiredExp,
+                        maxItems = c.maxItems,
+                        rewardType = c.rewardType,
+                        rewardValue = c.rewardValue,
+                    )
+                },
         )
     }
 }

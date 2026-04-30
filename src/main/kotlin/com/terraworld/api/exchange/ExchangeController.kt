@@ -13,14 +13,15 @@ import org.springframework.web.bind.annotation.*
 class ExchangeController(
     private val exchangeService: ExchangeService,
 ) {
-
     @Operation(summary = "스페셜→기본 코인 환전", description = "스페셜 코인 1개 = 기본 코인 2개")
     @PostMapping("/special-to-basic")
-    fun specialToBasic(@Valid @RequestBody request: SpecialToBasicRequest): ExchangeResponse =
-        exchangeService.specialToBasic(SecurityUtil.getCurrentUserId(), request)
+    fun specialToBasic(
+        @Valid @RequestBody request: SpecialToBasicRequest,
+    ): ExchangeResponse = exchangeService.specialToBasic(SecurityUtil.getCurrentUserId(), request)
 
     @Operation(summary = "토큰 교환", description = "카테고리 간 토큰 교환 (비율은 DB 설정 기준)")
     @PostMapping("/tokens")
-    fun exchangeTokens(@Valid @RequestBody request: TokenExchangeRequest): ExchangeResponse =
-        exchangeService.exchangeTokens(SecurityUtil.getCurrentUserId(), request)
+    fun exchangeTokens(
+        @Valid @RequestBody request: TokenExchangeRequest,
+    ): ExchangeResponse = exchangeService.exchangeTokens(SecurityUtil.getCurrentUserId(), request)
 }

@@ -9,11 +9,9 @@ import java.time.LocalDateTime
 data class CreateRecordRequest(
     @Schema(example = "1", description = "카테고리 ID (1=산책, 2=독서, 3=러닝, 4=낙서)")
     val categoryId: Long,
-
     @field:Positive
     @Schema(example = "30", description = "활동 시간(분), 선택사항")
     val duration: Int? = null,
-
     @Schema(example = "공원에서 산책했다", description = "메모, 선택사항")
     val note: String? = null,
 )

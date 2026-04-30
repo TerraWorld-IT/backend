@@ -23,21 +23,27 @@ class NoteController(
     private val dayNoteRepository: DayNoteRepository,
     private val userRepository: UserRepository,
 ) {
-
     @Operation(summary = "특정 날짜 메모 조회")
     @GetMapping("/{date}")
-    fun getNote(@PathVariable date: String): NoteResponse {
+    fun getNote(
+        @PathVariable date: String,
+    ): NoteResponse {
         val noteDate = LocalDate.parse(date)
         val userId = SecurityUtil.getCurrentUserId()
-        val note = dayNoteRepository.findByUserIdAndNoteDate(userId, noteDate)
-            .orElseThrow { BusinessException(ErrorCode.NOTE_NOT_FOUND) }
+        val note =
+            dayNoteRepository
+                .findByUserIdAndNoteDate(userId, noteDate)
+                .orElseThrow { BusinessException(ErrorCode.NOTE_NOT_FOUND) }
         return NoteResponse(date = note.noteDate.toString(), note = note.note)
     }
 
     @Operation(summary = "메모 저장/수정 (upsert)")
     @PutMapping("/{date}")
     @Transactional
-    fun saveNote(@PathVariable date: String, @Valid @RequestBody request: SaveNoteRequest): NoteResponse {
+    fun saveNote(
+        @PathVariable date: String,
+        @Valid @RequestBody request: SaveNoteRequest,
+    ): NoteResponse {
         val noteDate = LocalDate.parse(date)
         val userId = SecurityUtil.getCurrentUserId()
 
@@ -58,7 +64,9 @@ class NoteController(
     @Operation(summary = "메모 삭제")
     @DeleteMapping("/{date}")
     @Transactional
-    fun deleteNote(@PathVariable date: String): Map<String, String> {
+    fun deleteNote(
+        @PathVariable date: String,
+    ): Map<String, String> {
         val noteDate = LocalDate.parse(date)
         dayNoteRepository.deleteByUserIdAndNoteDate(SecurityUtil.getCurrentUserId(), noteDate)
         return mapOf("message" to "메모가 삭제되었습니다")

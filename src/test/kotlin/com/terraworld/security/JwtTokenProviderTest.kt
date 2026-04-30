@@ -5,12 +5,10 @@ import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpHandler
 import com.sun.net.httpserver.HttpServer
 import com.terraworld.domain.user.UserRole
-import io.jsonwebtoken.JwtException
 import io.jsonwebtoken.Jwts
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
-import org.junit.jupiter.api.assertThrows
 import java.net.InetSocketAddress
 import java.nio.charset.StandardCharsets
 import java.security.KeyPair
@@ -30,7 +28,6 @@ import kotlin.test.assertTrue
  * sign-and-verify path is exercised. Covers SEC-001/002/013/ARCH-005.
  */
 class JwtTokenProviderTest {
-
     private lateinit var server: HttpServer
     private lateinit var keyPair: KeyPair
     private lateinit var kid: String
@@ -70,15 +67,16 @@ class JwtTokenProviderTest {
         server.start()
 
         val url = "http://127.0.0.1:${server.address.port}/jwks"
-        provider = JwtTokenProvider(
-            jwksUrl = url,
-            expectedIssuer = "terraworld",
-            expectedAudience = "terraworld-api",
-            refreshCooldownMs = 30_000L,
-            negativeCacheTtlMs = 60_000L,
-            maxJwksBytes = 65_536,
-            objectMapper = ObjectMapper(),
-        )
+        provider =
+            JwtTokenProvider(
+                jwksUrl = url,
+                expectedIssuer = "terraworld",
+                expectedAudience = "terraworld-api",
+                refreshCooldownMs = 30_000L,
+                negativeCacheTtlMs = 60_000L,
+                maxJwksBytes = 65_536,
+                objectMapper = ObjectMapper(),
+            )
         provider.warmup()
         jwksRequests.set(0)
     }
@@ -91,13 +89,14 @@ class JwtTokenProviderTest {
 
     @Test
     fun `valid token verifies and yields claims`() {
-        val token = signToken(
-            sub = "cld-user-1",
-            email = "user@example.com",
-            role = "USER",
-            issuer = "terraworld",
-            audience = "terraworld-api",
-        )
+        val token =
+            signToken(
+                sub = "cld-user-1",
+                email = "user@example.com",
+                role = "USER",
+                issuer = "terraworld",
+                audience = "terraworld-api",
+            )
 
         assertTrue(provider.validateToken(token))
         assertEquals("cld-user-1", provider.getUserIdFromToken(token))
@@ -119,17 +118,23 @@ class JwtTokenProviderTest {
 
     @Test
     fun `token with no exp is rejected`() {
-        val token = Jwts.builder()
-            .header().keyId(kid).and()
-            .issuer("terraworld")
-            .audience().add("terraworld-api").and()
-            .subject("cld-user-1")
-            .claim("email", "user@example.com")
-            .claim("role", "USER")
-            .issuedAt(Date())
-            // no expiration
-            .signWith(keyPair.private, Jwts.SIG.RS256)
-            .compact()
+        val token =
+            Jwts
+                .builder()
+                .header()
+                .keyId(kid)
+                .and()
+                .issuer("terraworld")
+                .audience()
+                .add("terraworld-api")
+                .and()
+                .subject("cld-user-1")
+                .claim("email", "user@example.com")
+                .claim("role", "USER")
+                .issuedAt(Date())
+                // no expiration
+                .signWith(keyPair.private, Jwts.SIG.RS256)
+                .compact()
 
         assertFalse(provider.validateToken(token))
     }
@@ -158,31 +163,38 @@ class JwtTokenProviderTest {
         // is allowed to refresh — we want to verify the NEGATIVE CACHE blocks
         // subsequent calls, not the cooldown gate (cooldown is exercised in
         // a separate test below).
-        val isolated = JwtTokenProvider(
-            jwksUrl = "http://127.0.0.1:${server.address.port}/jwks",
-            expectedIssuer = "terraworld",
-            expectedAudience = "terraworld-api",
-            refreshCooldownMs = 0L,
-            negativeCacheTtlMs = 60_000L,
-            maxJwksBytes = 65_536,
-            objectMapper = ObjectMapper(),
-        )
+        val isolated =
+            JwtTokenProvider(
+                jwksUrl = "http://127.0.0.1:${server.address.port}/jwks",
+                expectedIssuer = "terraworld",
+                expectedAudience = "terraworld-api",
+                refreshCooldownMs = 0L,
+                negativeCacheTtlMs = 60_000L,
+                maxJwksBytes = 65_536,
+                objectMapper = ObjectMapper(),
+            )
         isolated.warmup()
         jwksRequests.set(0)
 
         val rogueKid = "rogue-${UUID.randomUUID()}".take(40)
         val rogueKey = KeyPairGenerator.getInstance("RSA").apply { initialize(2048) }.generateKeyPair()
-        val rogueToken = Jwts.builder()
-            .header().keyId(rogueKid).and()
-            .issuer("terraworld")
-            .audience().add("terraworld-api").and()
-            .subject("cld-attacker")
-            .claim("email", "attacker@example.com")
-            .claim("role", "USER")
-            .issuedAt(Date())
-            .expiration(Date(System.currentTimeMillis() + 60_000))
-            .signWith(rogueKey.private, Jwts.SIG.RS256)
-            .compact()
+        val rogueToken =
+            Jwts
+                .builder()
+                .header()
+                .keyId(rogueKid)
+                .and()
+                .issuer("terraworld")
+                .audience()
+                .add("terraworld-api")
+                .and()
+                .subject("cld-attacker")
+                .claim("email", "attacker@example.com")
+                .claim("role", "USER")
+                .issuedAt(Date())
+                .expiration(Date(System.currentTimeMillis() + 60_000))
+                .signWith(rogueKey.private, Jwts.SIG.RS256)
+                .compact()
 
         // First request triggers a refresh attempt — JWKS endpoint hit once.
         assertFalse(isolated.validateToken(rogueToken))
@@ -204,29 +216,36 @@ class JwtTokenProviderTest {
     fun `negative cache expires after TTL and allows another refresh attempt`() {
         // 100ms negative cache so the test runs quickly. Cooldown=0 to
         // isolate the negative cache pathway from the rate-limit gate.
-        val isolated = JwtTokenProvider(
-            jwksUrl = "http://127.0.0.1:${server.address.port}/jwks",
-            expectedIssuer = "terraworld",
-            expectedAudience = "terraworld-api",
-            refreshCooldownMs = 0L,
-            negativeCacheTtlMs = 100L,
-            maxJwksBytes = 65_536,
-            objectMapper = ObjectMapper(),
-        )
+        val isolated =
+            JwtTokenProvider(
+                jwksUrl = "http://127.0.0.1:${server.address.port}/jwks",
+                expectedIssuer = "terraworld",
+                expectedAudience = "terraworld-api",
+                refreshCooldownMs = 0L,
+                negativeCacheTtlMs = 100L,
+                maxJwksBytes = 65_536,
+                objectMapper = ObjectMapper(),
+            )
         isolated.warmup()
         jwksRequests.set(0)
 
         val rogueKid = "rogue-${UUID.randomUUID()}".take(40)
         val rogueKey = KeyPairGenerator.getInstance("RSA").apply { initialize(2048) }.generateKeyPair()
-        val rogueToken = Jwts.builder()
-            .header().keyId(rogueKid).and()
-            .issuer("terraworld")
-            .audience().add("terraworld-api").and()
-            .subject("cld-attacker")
-            .issuedAt(Date())
-            .expiration(Date(System.currentTimeMillis() + 60_000))
-            .signWith(rogueKey.private, Jwts.SIG.RS256)
-            .compact()
+        val rogueToken =
+            Jwts
+                .builder()
+                .header()
+                .keyId(rogueKid)
+                .and()
+                .issuer("terraworld")
+                .audience()
+                .add("terraworld-api")
+                .and()
+                .subject("cld-attacker")
+                .issuedAt(Date())
+                .expiration(Date(System.currentTimeMillis() + 60_000))
+                .signWith(rogueKey.private, Jwts.SIG.RS256)
+                .compact()
 
         // First call refreshes once.
         assertFalse(isolated.validateToken(rogueToken))
@@ -250,15 +269,21 @@ class JwtTokenProviderTest {
         // cache, even an unknown kid should NOT trigger an immediate refresh.
         val rogueKid = "rogue-${UUID.randomUUID()}".take(40)
         val rogueKey = KeyPairGenerator.getInstance("RSA").apply { initialize(2048) }.generateKeyPair()
-        val rogueToken = Jwts.builder()
-            .header().keyId(rogueKid).and()
-            .issuer("terraworld")
-            .audience().add("terraworld-api").and()
-            .subject("cld-attacker")
-            .issuedAt(Date())
-            .expiration(Date(System.currentTimeMillis() + 60_000))
-            .signWith(rogueKey.private, Jwts.SIG.RS256)
-            .compact()
+        val rogueToken =
+            Jwts
+                .builder()
+                .header()
+                .keyId(rogueKid)
+                .and()
+                .issuer("terraworld")
+                .audience()
+                .add("terraworld-api")
+                .and()
+                .subject("cld-attacker")
+                .issuedAt(Date())
+                .expiration(Date(System.currentTimeMillis() + 60_000))
+                .signWith(rogueKey.private, Jwts.SIG.RS256)
+                .compact()
 
         repeat(10) {
             assertFalse(provider.validateToken(rogueToken))
@@ -268,15 +293,21 @@ class JwtTokenProviderTest {
 
     @Test
     fun `kid with implausible characters is rejected without hitting JWKS`() {
-        val token = Jwts.builder()
-            .header().keyId("../etc/passwd").and()
-            .issuer("terraworld")
-            .audience().add("terraworld-api").and()
-            .subject("cld-attacker")
-            .issuedAt(Date())
-            .expiration(Date(System.currentTimeMillis() + 60_000))
-            .signWith(keyPair.private, Jwts.SIG.RS256)
-            .compact()
+        val token =
+            Jwts
+                .builder()
+                .header()
+                .keyId("../etc/passwd")
+                .and()
+                .issuer("terraworld")
+                .audience()
+                .add("terraworld-api")
+                .and()
+                .subject("cld-attacker")
+                .issuedAt(Date())
+                .expiration(Date(System.currentTimeMillis() + 60_000))
+                .signWith(keyPair.private, Jwts.SIG.RS256)
+                .compact()
 
         val before = jwksRequests.get()
         assertFalse(provider.validateToken(token))
@@ -292,15 +323,16 @@ class JwtTokenProviderTest {
             exchange.sendResponseHeaders(200, body.size.toLong())
             exchange.responseBody.use { it.write(body) }
         }
-        val freshProvider = JwtTokenProvider(
-            jwksUrl = "http://127.0.0.1:${server.address.port}/jwks",
-            expectedIssuer = "terraworld",
-            expectedAudience = "terraworld-api",
-            refreshCooldownMs = 30_000L,
-            negativeCacheTtlMs = 60_000L,
-            maxJwksBytes = 65_536,
-            objectMapper = ObjectMapper(),
-        )
+        val freshProvider =
+            JwtTokenProvider(
+                jwksUrl = "http://127.0.0.1:${server.address.port}/jwks",
+                expectedIssuer = "terraworld",
+                expectedAudience = "terraworld-api",
+                refreshCooldownMs = 30_000L,
+                negativeCacheTtlMs = 60_000L,
+                maxJwksBytes = 65_536,
+                objectMapper = ObjectMapper(),
+            )
         // Warmup catches the failure and logs but does not throw — verify
         // that the empty cache then surfaces as token rejection.
         freshProvider.warmup()
@@ -316,15 +348,16 @@ class JwtTokenProviderTest {
             exchange.sendResponseHeaders(200, body.size.toLong())
             exchange.responseBody.use { it.write(body) }
         }
-        val freshProvider = JwtTokenProvider(
-            jwksUrl = "http://127.0.0.1:${server.address.port}/jwks",
-            expectedIssuer = "terraworld",
-            expectedAudience = "terraworld-api",
-            refreshCooldownMs = 30_000L,
-            negativeCacheTtlMs = 60_000L,
-            maxJwksBytes = 65_536,
-            objectMapper = ObjectMapper(),
-        )
+        val freshProvider =
+            JwtTokenProvider(
+                jwksUrl = "http://127.0.0.1:${server.address.port}/jwks",
+                expectedIssuer = "terraworld",
+                expectedAudience = "terraworld-api",
+                refreshCooldownMs = 30_000L,
+                negativeCacheTtlMs = 60_000L,
+                maxJwksBytes = 65_536,
+                objectMapper = ObjectMapper(),
+            )
         freshProvider.warmup()
         val token = signToken()
         assertFalse(freshProvider.validateToken(token))
@@ -340,10 +373,15 @@ class JwtTokenProviderTest {
         audience: String = "terraworld-api",
         expirationOffsetMs: Long = 60_000L,
     ): String =
-        Jwts.builder()
-            .header().keyId(kid).and()
+        Jwts
+            .builder()
+            .header()
+            .keyId(kid)
+            .and()
             .issuer(issuer)
-            .audience().add(audience).and()
+            .audience()
+            .add(audience)
+            .and()
             .subject(sub)
             .claim("email", email)
             .claim("role", role)
@@ -352,12 +390,19 @@ class JwtTokenProviderTest {
             .signWith(keyPair.private, Jwts.SIG.RS256)
             .compact()
 
-    private fun buildJwksJson(kid: String, key: RSAPublicKey): String {
+    private fun buildJwksJson(
+        kid: String,
+        key: RSAPublicKey,
+    ): String {
         val n = Base64.getUrlEncoder().withoutPadding().encodeToString(stripLeadingZero(key.modulus.toByteArray()))
         val e = Base64.getUrlEncoder().withoutPadding().encodeToString(stripLeadingZero(key.publicExponent.toByteArray()))
         return """{"keys":[{"kty":"RSA","kid":"$kid","use":"sig","alg":"RS256","n":"$n","e":"$e"}]}"""
     }
 
     private fun stripLeadingZero(bytes: ByteArray): ByteArray =
-        if (bytes.isNotEmpty() && bytes[0] == 0.toByte()) bytes.copyOfRange(1, bytes.size) else bytes
+        if (bytes.isNotEmpty() && bytes[0] == 0.toByte()) {
+            bytes.copyOfRange(1, bytes.size)
+        } else {
+            bytes
+        }
 }

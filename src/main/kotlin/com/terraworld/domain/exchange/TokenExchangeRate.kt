@@ -8,18 +8,14 @@ import jakarta.persistence.*
 class TokenExchangeRate(
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     val id: Long = 0,
-
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "from_category_id", nullable = false)
     val fromCategory: Category,
-
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "to_category_id", nullable = false)
     val toCategory: Category,
-
     @Column(nullable = false)
     val rate: Float = 2.0f,
-
     @Column(name = "is_active", nullable = false)
     val isActive: Boolean = true,
 )

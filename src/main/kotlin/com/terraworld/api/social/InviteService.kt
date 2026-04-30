@@ -20,7 +20,6 @@ class InviteService(
     @Value("\${terraworld.invite.base-url:https://terraworld.app/share}")
     private val inviteBaseUrl: String,
 ) {
-
     companion object {
         const val CODE_LENGTH = 8
         const val EXPIRY_DAYS = 7L
@@ -34,14 +33,16 @@ class InviteService(
 
     @Transactional
     fun createInvite(inviterUserId: String): InviteCreateResponse {
-        userRepository.findById(inviterUserId)
+        userRepository
+            .findById(inviterUserId)
             .orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) }
 
         val code = generateUniqueCode()
         val expiresAt = LocalDateTime.now().plusDays(EXPIRY_DAYS)
-        val saved = inviteRepository.save(
-            Invite(code = code, inviterUserId = inviterUserId, expiresAt = expiresAt)
-        )
+        val saved =
+            inviteRepository.save(
+                Invite(code = code, inviterUserId = inviterUserId, expiresAt = expiresAt),
+            )
 
         return InviteCreateResponse(
             inviteCode = saved.code,
@@ -51,18 +52,27 @@ class InviteService(
     }
 
     @Transactional
-    fun acceptInvite(inviteeUserId: String, code: String): InviteAcceptResponsePayload {
-        val invite = inviteRepository.findByCode(code)
-            .orElseThrow { BusinessException(ErrorCode.INVITE_NOT_FOUND) }
+    fun acceptInvite(
+        inviteeUserId: String,
+        code: String,
+    ): InviteAcceptResponsePayload {
+        val invite =
+            inviteRepository
+                .findByCode(code)
+                .orElseThrow { BusinessException(ErrorCode.INVITE_NOT_FOUND) }
 
         if (invite.isAccepted()) throw BusinessException(ErrorCode.INVITE_ALREADY_ACCEPTED)
         if (invite.isExpired()) throw BusinessException(ErrorCode.INVITE_EXPIRED)
         if (invite.inviterUserId == inviteeUserId) throw BusinessException(ErrorCode.INVITE_SELF_ACCEPT)
 
-        val invitee = userRepository.findById(inviteeUserId)
-            .orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) }
-        val inviter = userRepository.findById(invite.inviterUserId)
-            .orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) }
+        val invitee =
+            userRepository
+                .findById(inviteeUserId)
+                .orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) }
+        val inviter =
+            userRepository
+                .findById(invite.inviterUserId)
+                .orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) }
 
         invitee.specialCoin += ACCEPT_REWARD_SPECIAL_COINS
         inviter.specialCoin += ACCEPT_REWARD_SPECIAL_COINS
@@ -81,11 +91,12 @@ class InviteService(
 
     private fun generateUniqueCode(): String {
         repeat(MAX_GENERATION_RETRIES) {
-            val candidate = buildString(CODE_LENGTH) {
-                repeat(CODE_LENGTH) {
-                    append(CODE_ALPHABET[random.nextInt(CODE_ALPHABET.length)])
+            val candidate =
+                buildString(CODE_LENGTH) {
+                    repeat(CODE_LENGTH) {
+                        append(CODE_ALPHABET[random.nextInt(CODE_ALPHABET.length)])
+                    }
                 }
-            }
             if (!inviteRepository.existsByCode(candidate)) return candidate
         }
         // 32^8 공간 내 5회 연속 충돌은 사실상 불가능. 발생 시 INTERNAL 로 처리.

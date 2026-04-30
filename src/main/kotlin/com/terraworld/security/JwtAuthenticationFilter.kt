@@ -36,7 +36,6 @@ class JwtAuthenticationFilter(
     private val jwtTokenProvider: JwtTokenProvider,
     private val userBootstrapService: UserBootstrapService,
 ) : OncePerRequestFilter() {
-
     private val log = LoggerFactory.getLogger(JwtAuthenticationFilter::class.java)
 
     override fun doFilterInternal(
@@ -53,8 +52,7 @@ class JwtAuthenticationFilter(
             if (email.isNullOrBlank()) {
                 log.debug("[auth] rejecting JWT with blank email claim for sub={}", userId)
                 // Leave SecurityContext empty → downstream returns 401.
-            }
-            else {
+            } else {
                 val role = jwtTokenProvider.getRoleFromToken(token)
 
                 // Fallback provisioning — primary path is the better-auth

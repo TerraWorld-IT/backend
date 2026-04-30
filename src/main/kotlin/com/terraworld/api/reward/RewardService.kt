@@ -6,8 +6,11 @@ import com.terraworld.domain.reward.AdWatchLog
 import com.terraworld.domain.reward.AdWatchLogRepository
 import com.terraworld.domain.user.UserRepository
 import com.terraworld.domain.user.UserTokenRepository
+import org.springframework.dao.DataAccessException
+import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import java.time.Duration
 import java.time.LocalDate
 import java.time.LocalTime
 
@@ -16,24 +19,47 @@ class RewardService(
     private val adWatchLogRepository: AdWatchLogRepository,
     private val userRepository: UserRepository,
     private val userTokenRepository: UserTokenRepository,
+    private val redisTemplate: StringRedisTemplate,
 ) {
-
     companion object {
         const val DAILY_AD_LIMIT = 5
         const val REWARD_SPECIAL_COINS = 1
+
         // 카테고리 id → UserService 와 동일 규약 (walk=1, read=2, run=3, draw=4)
         private const val CATEGORY_ID_WALK = 1L
         private const val CATEGORY_ID_READ = 2L
         private const val CATEGORY_ID_RUN = 3L
         private const val CATEGORY_ID_DRAW = 4L
+
+        // 앱 namespace prefix — 같은 Redis 인스턴스를 다른 시스템과 공유 시 키 충돌 방지.
+        private const val REDIS_DAILY_KEY_PREFIX = "terraworld:reward:ad:daily:"
     }
 
     @Transactional
     fun claimAdReward(userId: String): AdRewardResponsePayload {
-        val user = userRepository.findById(userId)
-            .orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) }
+        val user =
+            userRepository
+                .findById(userId)
+                .orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) }
 
         val today = LocalDate.now()
+
+        // 1) Redis 빠른 게이트 — INCR + 25h TTL. 어뷰징 burst 차단.
+        //    Redis 장애 시 아래 DB 검증으로 폴백 (graceful degradation).
+        val redisKey = "$REDIS_DAILY_KEY_PREFIX$userId:$today"
+        try {
+            val redisCount = redisTemplate.opsForValue().increment(redisKey) ?: 0L
+            if (redisCount == 1L) {
+                redisTemplate.expire(redisKey, Duration.ofHours(25))
+            }
+            if (redisCount > DAILY_AD_LIMIT) {
+                throw BusinessException(ErrorCode.AD_DAILY_LIMIT_EXCEEDED)
+            }
+        } catch (_: DataAccessException) {
+            // Redis 장애 — DB 검증으로 폴백
+        }
+
+        // 2) DB 검증 — source of truth. Redis 누락분 보정.
         val dayStart = today.atStartOfDay()
         val dayEnd = today.atTime(LocalTime.MAX)
         val watchedToday = adWatchLogRepository.countByUserIdAndWatchedAtBetween(userId, dayStart, dayEnd)
@@ -45,25 +71,28 @@ class RewardService(
         user.specialCoin += REWARD_SPECIAL_COINS
         userRepository.save(user)
         adWatchLogRepository.save(
-            AdWatchLog(userId = userId, rewardSpecialCoins = REWARD_SPECIAL_COINS)
+            AdWatchLog(userId = userId, rewardSpecialCoins = REWARD_SPECIAL_COINS),
         )
 
         val newCount = (watchedToday + 1).toInt()
-        val tokenMap = userTokenRepository.findAllByUserId(userId)
-            .associate { it.category.id to it.amount }
+        val tokenMap =
+            userTokenRepository
+                .findAllByUserId(userId)
+                .associate { it.category.id to it.amount }
 
         return AdRewardResponsePayload(
             reward = AdRewardPayload(specialCoins = REWARD_SPECIAL_COINS),
             dailyWatchCount = newCount,
             remainingToday = DAILY_AD_LIMIT - newCount,
-            updatedCurrency = CurrencySnapshot(
-                basicCoins = user.basicCoin,
-                specialCoins = user.specialCoin,
-                walkTokens = tokenMap[CATEGORY_ID_WALK] ?: 0L,
-                readTokens = tokenMap[CATEGORY_ID_READ] ?: 0L,
-                runTokens = tokenMap[CATEGORY_ID_RUN] ?: 0L,
-                drawTokens = tokenMap[CATEGORY_ID_DRAW] ?: 0L,
-            ),
+            updatedCurrency =
+                CurrencySnapshot(
+                    basicCoins = user.basicCoin,
+                    specialCoins = user.specialCoin,
+                    walkTokens = tokenMap[CATEGORY_ID_WALK] ?: 0L,
+                    readTokens = tokenMap[CATEGORY_ID_READ] ?: 0L,
+                    runTokens = tokenMap[CATEGORY_ID_RUN] ?: 0L,
+                    drawTokens = tokenMap[CATEGORY_ID_DRAW] ?: 0L,
+                ),
         )
     }
 }

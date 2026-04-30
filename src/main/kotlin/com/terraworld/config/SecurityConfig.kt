@@ -31,7 +31,6 @@ class SecurityConfig(
     private val environment: Environment,
     @Value("\${cors.allowed-origins}") private val allowedOrigins: List<String>,
 ) {
-
     private val isProd: Boolean
         get() = environment.activeProfiles.any { it.equals("prod", ignoreCase = true) }
 
@@ -47,13 +46,17 @@ class SecurityConfig(
                     // X-Internal-Token header inside the controller. Block
                     // unauthenticated access here so no filter quirk can
                     // bypass the header check.
-                    .requestMatchers("/api/v1/internal/**").permitAll()
+                    .requestMatchers("/api/v1/internal/**")
+                    .permitAll()
                     // Auth (sign-in / sign-up / session) is owned by better-auth
                     // on the Nuxt/Nitro side. Spring only validates bearer JWTs
                     // for protected domain endpoints.
-                    .requestMatchers("/api/v1/share/**").permitAll()
-                    .requestMatchers("/api/v1/categories").permitAll()
-                    .requestMatchers("/api/v1/items/**").permitAll()
+                    .requestMatchers("/api/v1/share/**")
+                    .permitAll()
+                    .requestMatchers("/api/v1/categories")
+                    .permitAll()
+                    .requestMatchers("/api/v1/items/**")
+                    .permitAll()
                     .apply {
                         // SEC-023: Swagger UI and API docs exposed only outside prod.
                         if (!isProd) {
@@ -63,12 +66,13 @@ class SecurityConfig(
                                 "/v3/api-docs/**",
                             ).permitAll()
                         }
-                    }
-                    .requestMatchers("/actuator/health").permitAll()
-                    .requestMatchers("/api/v1/admin/**").hasRole("ADMIN")
-                    .anyRequest().authenticated()
-            }
-            .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter::class.java)
+                    }.requestMatchers("/actuator/health")
+                    .permitAll()
+                    .requestMatchers("/api/v1/admin/**")
+                    .hasRole("ADMIN")
+                    .anyRequest()
+                    .authenticated()
+            }.addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter::class.java)
 
         return http.build()
     }
@@ -87,23 +91,25 @@ class SecurityConfig(
             }
         }
 
-        val configuration = CorsConfiguration().apply {
-            this.allowedOrigins = this@SecurityConfig.allowedOrigins
-            allowedMethods = listOf("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
-            // SEC-009: explicit header allow-list instead of wildcard (the wildcard
-            // is incompatible with allowCredentials=true in the CORS spec).
-            allowedHeaders = listOf(
-                "Authorization",
-                "Content-Type",
-                "Accept",
-                "Accept-Language",
-                "X-Requested-With",
-                "X-Idempotency-Key",
-            )
-            exposedHeaders = listOf("X-Request-Id")
-            allowCredentials = true
-            maxAge = 3600L
-        }
+        val configuration =
+            CorsConfiguration().apply {
+                this.allowedOrigins = this@SecurityConfig.allowedOrigins
+                allowedMethods = listOf("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
+                // SEC-009: explicit header allow-list instead of wildcard (the wildcard
+                // is incompatible with allowCredentials=true in the CORS spec).
+                allowedHeaders =
+                    listOf(
+                        "Authorization",
+                        "Content-Type",
+                        "Accept",
+                        "Accept-Language",
+                        "X-Requested-With",
+                        "X-Idempotency-Key",
+                    )
+                exposedHeaders = listOf("X-Request-Id")
+                allowCredentials = true
+                maxAge = 3600L
+            }
         return UrlBasedCorsConfigurationSource().apply {
             registerCorsConfiguration("/**", configuration)
         }

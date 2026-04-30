@@ -10,20 +10,15 @@ import java.time.LocalDateTime
 class DayNote(
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     val id: Long = 0,
-
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id", nullable = false)
     val user: User,
-
     @Column(name = "note_date", nullable = false)
     val noteDate: LocalDate,
-
     @Column(nullable = false, columnDefinition = "TEXT")
     var note: String,
-
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: LocalDateTime = LocalDateTime.now(),
-
     @Column(name = "updated_at", nullable = false)
     var updatedAt: LocalDateTime = LocalDateTime.now(),
 )

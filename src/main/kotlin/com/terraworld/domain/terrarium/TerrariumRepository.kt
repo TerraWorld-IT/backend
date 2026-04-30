@@ -11,5 +11,6 @@ interface TerrariumBackgroundRepository : JpaRepository<TerrariumBackground, Lon
 
 interface TerrariumPlacementRepository : JpaRepository<TerrariumPlacement, Long> {
     fun findAllByTerrariumId(terrariumId: Long): List<TerrariumPlacement>
+
     fun deleteAllByTerrariumId(terrariumId: Long)
 }

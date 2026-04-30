@@ -38,7 +38,6 @@ import kotlin.test.assertTrue
  *   - terrarium background uses deterministic ordering
  */
 class UserBootstrapServiceTest {
-
     private val userRepository: UserRepository = mock(UserRepository::class.java)
     private val userTokenRepository: UserTokenRepository = mock(UserTokenRepository::class.java)
     private val categoryRepository: CategoryRepository = mock(CategoryRepository::class.java)
@@ -46,13 +45,14 @@ class UserBootstrapServiceTest {
     private val terrariumBackgroundRepository: TerrariumBackgroundRepository =
         mock(TerrariumBackgroundRepository::class.java)
 
-    private val service = UserBootstrapService(
-        userRepository,
-        userTokenRepository,
-        categoryRepository,
-        terrariumRepository,
-        terrariumBackgroundRepository,
-    )
+    private val service =
+        UserBootstrapService(
+            userRepository,
+            userTokenRepository,
+            categoryRepository,
+            terrariumRepository,
+            terrariumBackgroundRepository,
+        )
 
     @Test
     fun `ensureExists short-circuits when user already exists`() {
@@ -160,7 +160,10 @@ class UserBootstrapServiceTest {
         assertTrue(captor.value.nickname.length <= 50)
     }
 
-    private fun category(id: Long, name: String) = Category(
+    private fun category(
+        id: Long,
+        name: String,
+    ) = Category(
         id = id,
         name = name,
         color = "#000000",
@@ -170,7 +173,10 @@ class UserBootstrapServiceTest {
         dailyLimit = 5,
     )
 
-    private fun background(id: Long, name: String) = TerrariumBackground(
+    private fun background(
+        id: Long,
+        name: String,
+    ) = TerrariumBackground(
         id = id,
         name = name,
         assetUrl = "/bg/$name.png",

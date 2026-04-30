@@ -45,6 +45,22 @@ jobs:
           submodules: recursive
           token: ${{ secrets.OPENAPI_SUBMODULE_TOKEN || secrets.GITHUB_TOKEN }}
 
+      - name: Check openapi-backend submodule freshness
+        # openapi-backend 가 main 의 latest commit 보다 뒤처져 있으면 경고.
+        # spec 드리프트 조기 감지용. 현재는 warning, 추후 fail 로 전환 예정.
+        run: |
+          cd openapi-backend
+          LOCAL_SHA=$(git rev-parse HEAD)
+          REMOTE_SHA=$(git ls-remote origin refs/heads/main | awk '{print $1}')
+          if [ -z "$REMOTE_SHA" ]; then
+            echo "::warning::openapi-backend remote main SHA를 가져올 수 없습니다 (PAT 권한 또는 네트워크 문제)."
+          elif [ "$LOCAL_SHA" != "$REMOTE_SHA" ]; then
+            echo "::warning title=Spec drift detected::openapi-backend submodule이 main 의 최신 상태가 아닙니다. local=$LOCAL_SHA remote=$REMOTE_SHA"
+          else
+            echo "openapi-backend submodule은 main 의 최신 상태입니다. ($LOCAL_SHA)"
+          fi
+        continue-on-error: true
+
       - name: Setup JDK 21
         uses: actions/setup-java@v4
         with:
@@ -56,7 +72,7 @@ jobs:
         run: chmod +x gradlew
 
       - name: Lint (ktlint)
-        run: ./gradlew ktlintCheck --if-present || true
+        run: ./gradlew ktlintCheck
 
       - name: Test
         run: ./gradlew test

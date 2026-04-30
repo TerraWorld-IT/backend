@@ -44,28 +44,35 @@ class UserBootstrapService(
     private val terrariumBackgroundRepository: TerrariumBackgroundRepository,
 ) {
     @Transactional
-    fun ensureExists(userId: String, email: String) {
+    fun ensureExists(
+        userId: String,
+        email: String,
+    ) {
         require(email.isNotBlank()) { "email must be non-blank" }
         if (userRepository.existsById(userId)) return
 
-        val nickname = email.substringBefore('@')
-            .take(50)
-            .ifBlank { "user" }
+        val nickname =
+            email
+                .substringBefore('@')
+                .take(50)
+                .ifBlank { "user" }
 
-        val user = try {
-            userRepository.save(
-                User(
-                    id = userId,
-                    nickname = nickname,
-                    role = UserRole.USER, // SEC-003: never trust JWT role on create
-                    basicCoin = 100,
-                ),
-            )
-        } catch (e: DataIntegrityViolationException) {
-            // Concurrent race — another thread inserted the row. Safe to no-op
-            // because that thread also provisioned the related children.
-            return
-        }
+        val user =
+            try {
+                userRepository.save(
+                    User(
+                        id = userId,
+                        nickname = nickname,
+                        role = UserRole.USER, // SEC-003: never trust JWT role on create
+                        basicCoin = 100,
+                        specialCoin = 10, // 기획서 시나리오 ① — 게스트 진입 시 햇살 10 지급
+                    ),
+                )
+            } catch (e: DataIntegrityViolationException) {
+                // Concurrent race — another thread inserted the row. Safe to no-op
+                // because that thread also provisioned the related children.
+                return
+            }
 
         // SEC-020: one-shot saveAll instead of per-row save to avoid N+1.
         val categories = categoryRepository.findAll()
@@ -79,7 +86,8 @@ class UserBootstrapService(
 
         // SEC-021: deterministic ordering — always pick the lowest-id background
         // so concurrent first-requests for different users get the same default.
-        terrariumBackgroundRepository.findAll(Sort.by("id").ascending())
+        terrariumBackgroundRepository
+            .findAll(Sort.by("id").ascending())
             .firstOrNull()
             ?.let { defaultBackground ->
                 terrariumRepository.save(
