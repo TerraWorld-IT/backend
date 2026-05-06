@@ -1,5 +1,6 @@
 package com.terraworld.domain.userdevice
 
+import com.fasterxml.jackson.annotation.JsonIgnore
 import jakarta.persistence.Column
 import jakarta.persistence.Entity
 import jakarta.persistence.EnumType
@@ -24,6 +25,13 @@ import java.time.LocalDateTime
 class UserDevice(
     @Column(name = "user_id", nullable = false)
     val userId: String,
+    /**
+     * SEC-005: FCM/APNs 토큰은 "이 디바이스로 push 보낼 수 있는" capability 와 동일.
+     * - JSON 직렬화 차단 (`@JsonIgnore`) — 응답/audit 어디로도 노출되지 않게.
+     * - toString 에서도 가림 (override 아래) — log 실수 차단.
+     * - 분석/식별이 필요한 곳은 `tokenFingerprint()` 사용.
+     */
+    @JsonIgnore
     @Column(name = "token", nullable = false, columnDefinition = "TEXT")
     var token: String,
     @Enumerated(EnumType.STRING)
@@ -42,6 +50,16 @@ class UserDevice(
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     @Column(name = "id")
     var id: Long = 0
+
+    /** Last-N-chars + length fingerprint — 로그/audit 에 노출 안전한 식별자. */
+    fun tokenFingerprint(): String {
+        val tail = token.takeLast(6)
+        return "len=${token.length},…$tail"
+    }
+
+    override fun toString(): String =
+        "UserDevice(id=$id, userId='$userId', platform=$platform, appVersion=$appVersion, " +
+            "isActive=$isActive, lastSeenAt=$lastSeenAt, token=${tokenFingerprint()})"
 }
 
 enum class DevicePlatform { ANDROID, IOS, WEB }

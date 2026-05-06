@@ -45,6 +45,17 @@ class UserDeviceService(
     private val repository: UserDeviceRepository,
     private val auditService: AuditService,
 ) {
+    /**
+     * 디바이스 토큰 멱등 upsert.
+     *
+     * Audit 정책 (ARCH-004): INSERT 만 `DEVICE_REGISTER` 발행, 동일 (user, token)
+     * 재호출은 lastSeenAt/appVersion 만 갱신하므로 audit 발행 안 함. 토큰 owner 가
+     * 다른 user 로 바뀌는 경우(SEC-003) 는 별도 `DEVICE_TOKEN_REASSIGN` 발행.
+     *
+     * Cross-user 재할당 (SEC-003): FCM/APNs 토큰은 device-scoped 이므로 한 토큰을
+     * 동시에 두 user 가 보유할 수 없다. 신규 INSERT 직전 다른 user 의 active row
+     * 가 있으면 모두 `isActive=false` 로 마킹한다.
+     */
     @Transactional
     fun upsert(
         userId: String,
@@ -63,6 +74,29 @@ class UserDeviceService(
                 if (request.appVersion != null) device.appVersion = request.appVersion
                 repository.save(device)
             } else {
+                // SEC-003: 다른 user 가 같은 토큰을 active 로 들고 있으면 deactivate.
+                val foreignActive =
+                    repository
+                        .findAllByTokenAndIsActiveTrue(request.token)
+                        .filter { it.userId != userId }
+                if (foreignActive.isNotEmpty()) {
+                    foreignActive.forEach { row ->
+                        row.isActive = false
+                        repository.save(row)
+                        auditService.publish(
+                            userId = row.userId,
+                            action = "DEVICE_TOKEN_REASSIGN",
+                            resourceType = "UserDevice",
+                            resourceId = row.id.toString(),
+                            payload =
+                                mapOf(
+                                    "reassignedTo" to userId,
+                                    "platform" to row.platform.name,
+                                ),
+                        )
+                    }
+                }
+
                 val device =
                     UserDevice(
                         userId = userId,

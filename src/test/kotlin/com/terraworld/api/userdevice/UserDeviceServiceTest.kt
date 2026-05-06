@@ -109,11 +109,52 @@ class UserDeviceServiceTest {
     }
 
     @Test
-    fun `다른 사용자가 같은 토큰을 등록하면 별도 row`() {
+    fun `SEC-003 — 다른 user 가 같은 active 토큰을 등록하면 기존 row 비활성화 + DEVICE_TOKEN_REASSIGN 발행`() {
         service.upsert("user-1", DeviceRegistrationRequest(token = "shared-token", platform = "ANDROID"))
         service.upsert("user-2", DeviceRegistrationRequest(token = "shared-token", platform = "ANDROID"))
 
+        // 양쪽 row 모두 보존되지만 user-1 의 row 는 isActive=false
         assertEquals(2, repo.all().size)
+        val user1Row = repo.all().first { it.userId == "user-1" }
+        val user2Row = repo.all().first { it.userId == "user-2" }
+        assertEquals(false, user1Row.isActive, "이전 owner row 는 비활성화되어야 함")
+        assertEquals(true, user2Row.isActive, "신규 owner row 는 활성")
+
+        // DEVICE_REGISTER 2회 (user-1 + user-2) + DEVICE_TOKEN_REASSIGN 1회 (user-1)
+        verify(auditService).publish(
+            userId = eq("user-1"),
+            action = eq("DEVICE_TOKEN_REASSIGN"),
+            resourceType = eq("UserDevice"),
+            resourceId = any(),
+            payload = any(),
+        )
+    }
+
+    @Test
+    fun `SEC-003 — 비활성화된 다른 user 의 토큰 row 는 reassign 처리되지 않음`() {
+        // 사전: user-A 의 비활성화 row
+        val pre =
+            UserDevice(
+                userId = "user-A",
+                token = "stale-token",
+                platform = DevicePlatform.ANDROID,
+                isActive = false,
+            )
+        repo.save(pre)
+
+        // user-B 가 같은 토큰 등록 — reassign 발행되면 안 됨
+        service.upsert("user-B", DeviceRegistrationRequest(token = "stale-token", platform = "ANDROID"))
+
+        verify(auditService, never()).publish(
+            userId = eq("user-A"),
+            action = eq("DEVICE_TOKEN_REASSIGN"),
+            resourceType = any(),
+            resourceId = any(),
+            payload = any(),
+        )
+        // user-B 의 INSERT 는 정상
+        val userB = repo.all().first { it.userId == "user-B" }
+        assertEquals(true, userB.isActive)
     }
 
     @Test
@@ -151,5 +192,7 @@ class UserDeviceServiceTest {
             )
 
         override fun findAllByUserIdAndIsActiveTrue(userId: String): List<UserDevice> = store.values.filter { it.userId == userId && it.isActive }
+
+        override fun findAllByTokenAndIsActiveTrue(token: String): List<UserDevice> = store.values.filter { it.token == token && it.isActive }
     }
 }

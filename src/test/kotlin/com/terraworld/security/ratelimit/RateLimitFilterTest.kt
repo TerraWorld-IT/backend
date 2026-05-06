@@ -28,9 +28,12 @@ class RateLimitFilterTest {
     private val valueOps: ValueOperations<String, String> = mock()
     private val objectMapper = ObjectMapper()
 
-    private fun newFilter(rules: List<RateLimitProperties.Rule>): RateLimitFilter =
+    private fun newFilter(
+        rules: List<RateLimitProperties.Rule>,
+        trustForwardedFor: Boolean = false,
+    ): RateLimitFilter =
         RateLimitFilter(
-            properties = RateLimitProperties(enabled = true, rules = rules),
+            properties = RateLimitProperties(enabled = true, rules = rules, trustForwardedFor = trustForwardedFor),
             redisTemplate = redisTemplate,
             objectMapper = objectMapper,
         )
@@ -116,9 +119,9 @@ class RateLimitFilterTest {
     }
 
     @Test
-    fun `X-Forwarded-For first segment is used as IP`() {
+    fun `SEC-001 — trustForwardedFor=true 일 때만 X-Forwarded-For 첫 segment 사용`() {
         val rule = RateLimitProperties.Rule(HttpMethod.POST, "/api/v1/invites", limit = 5)
-        val filter = newFilter(listOf(rule))
+        val filter = newFilter(listOf(rule), trustForwardedFor = true)
         val request =
             MockHttpServletRequest("POST", "/api/v1/invites").apply {
                 addHeader("X-Forwarded-For", "203.0.113.5, 10.0.0.1")
@@ -132,6 +135,112 @@ class RateLimitFilterTest {
 
         verify(valueOps).increment("terraworld:rl:POST:/api/v1/invites:ip:203.0.113.5")
         verify(chain).doFilter(request, response)
+    }
+
+    @Test
+    fun `SEC-001 — trustForwardedFor=false (default) 면 XFF 무시 + remoteAddr 사용`() {
+        val rule = RateLimitProperties.Rule(HttpMethod.POST, "/api/v1/invites", limit = 5)
+        val filter = newFilter(listOf(rule), trustForwardedFor = false)
+        val request =
+            MockHttpServletRequest("POST", "/api/v1/invites").apply {
+                addHeader("X-Forwarded-For", "203.0.113.5, 10.0.0.1") // attacker-controlled
+                remoteAddr = "127.0.0.1"
+            }
+        val response = MockHttpServletResponse()
+        val chain: FilterChain = mock()
+        whenever(valueOps.increment("terraworld:rl:POST:/api/v1/invites:ip:127.0.0.1")).thenReturn(1L)
+
+        filter.doFilter(request, response, chain)
+
+        verify(valueOps).increment("terraworld:rl:POST:/api/v1/invites:ip:127.0.0.1")
+        verify(chain).doFilter(request, response)
+    }
+
+    @Test
+    fun `SEC-002 — failClosed=true rule 은 Redis 장애 시 503 반환`() {
+        val rule =
+            RateLimitProperties.Rule(
+                HttpMethod.POST,
+                "/api/v1/exchange/tokens",
+                limit = 60,
+                failClosed = true,
+            )
+        val filter = newFilter(listOf(rule))
+        val request =
+            MockHttpServletRequest("POST", "/api/v1/exchange/tokens").apply { remoteAddr = "10.0.0.7" }
+        val response = MockHttpServletResponse()
+        val chain: FilterChain = mock()
+        whenever(valueOps.increment(any())).thenThrow(DataAccessResourceFailureException("redis down"))
+
+        filter.doFilter(request, response, chain)
+
+        assertThat(response.status).isEqualTo(503)
+        assertThat(response.contentAsString).contains("DEPENDENCY_UNAVAILABLE")
+        verify(chain, never()).doFilter(any(), any())
+    }
+
+    @Test
+    fun `SEC-002 — failClosed=false rule 은 Redis 장애 시 fail-open (기존 동작 보장)`() {
+        val rule =
+            RateLimitProperties.Rule(
+                HttpMethod.POST,
+                "/api/v1/records",
+                limit = 60,
+                failClosed = false,
+            )
+        val filter = newFilter(listOf(rule))
+        val request = MockHttpServletRequest("POST", "/api/v1/records").apply { remoteAddr = "10.0.0.8" }
+        val response = MockHttpServletResponse()
+        val chain: FilterChain = mock()
+        whenever(valueOps.increment(any())).thenThrow(DataAccessResourceFailureException("redis down"))
+
+        filter.doFilter(request, response, chain)
+
+        verify(chain).doFilter(request, response)
+        assertThat(response.status).isEqualTo(200)
+    }
+
+    @Test
+    fun `SEC-010 — u_userId 와 ip_userId 는 동일 문자열이어도 버킷 충돌 안 함`() {
+        val rule = RateLimitProperties.Rule(HttpMethod.POST, "/api/v1/invites", limit = 5)
+        val filter = newFilter(listOf(rule))
+        val sharedString = "203.0.113.5"
+
+        // 1) 인증된 user-id 가 우연히 IP 문자열과 같음
+        val auth =
+            UsernamePasswordAuthenticationToken(
+                AuthenticatedUser(id = sharedString, email = "u@example.com"),
+                null,
+                emptyList(),
+            )
+        SecurityContextHolder.getContext().authentication = auth
+        val authedReq = MockHttpServletRequest("POST", "/api/v1/invites")
+        whenever(valueOps.increment("terraworld:rl:POST:/api/v1/invites:u:$sharedString")).thenReturn(1L)
+        filter.doFilter(authedReq, MockHttpServletResponse(), mock())
+
+        // 2) 익명 IP 사용자가 같은 문자열로 진입 — 다른 버킷 키로 INCR 되어야 함
+        SecurityContextHolder.clearContext()
+        val anonReq = MockHttpServletRequest("POST", "/api/v1/invites").apply { remoteAddr = sharedString }
+        whenever(valueOps.increment("terraworld:rl:POST:/api/v1/invites:ip:$sharedString")).thenReturn(1L)
+        filter.doFilter(anonReq, MockHttpServletResponse(), mock())
+
+        // u: prefix 와 ip: prefix 는 별도 INCR 호출
+        verify(valueOps).increment("terraworld:rl:POST:/api/v1/invites:u:$sharedString")
+        verify(valueOps).increment("terraworld:rl:POST:/api/v1/invites:ip:$sharedString")
+    }
+
+    @Test
+    fun `SEC-006 — admin path rule 은 boot 시 거부`() {
+        val ex =
+            kotlin
+                .runCatching {
+                    RateLimitProperties(
+                        enabled = true,
+                        rules = listOf(RateLimitProperties.Rule(HttpMethod.POST, "/api/v1/admin/items", 10)),
+                    )
+                }.exceptionOrNull()
+        assertThat(ex).isInstanceOf(IllegalArgumentException::class.java)
+        assertThat(ex?.message).contains("admin")
     }
 
     @Test

@@ -79,6 +79,10 @@ terraworld:
   # (e.g. in some test profiles).
   rate-limit:
     enabled: ${TERRAWORLD_RATE_LIMIT_ENABLED:true}
+    # SEC-001: trust upstream X-Forwarded-For only when the deployment sits behind
+    # a trusted reverse proxy that overwrites the header. Default OFF — anonymous
+    # rate-limit subject falls back to remoteAddr of the connection.
+    trust-forwarded-for: ${TERRAWORLD_RATE_LIMIT_TRUST_XFF:false}
 
 springdoc:
   api-docs:
