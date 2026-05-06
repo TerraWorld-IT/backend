@@ -1,5 +1,6 @@
 package com.terraworld.api.reward
 
+import com.terraworld.api.user.dto.CurrencyResponse
 import com.terraworld.security.SecurityUtil
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.tags.Tag
@@ -25,18 +26,9 @@ data class AdRewardResponsePayload(
     val reward: AdRewardPayload,
     val dailyWatchCount: Int,
     val remainingToday: Int,
-    val updatedCurrency: CurrencySnapshot,
+    val updatedCurrency: CurrencyResponse,
 )
 
 data class AdRewardPayload(
     val specialCoins: Int,
-)
-
-data class CurrencySnapshot(
-    val basicCoins: Long,
-    val specialCoins: Long,
-    val walkTokens: Long,
-    val readTokens: Long,
-    val runTokens: Long,
-    val drawTokens: Long,
 )

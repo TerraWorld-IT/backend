@@ -19,6 +19,7 @@ class UserService(
     private val userItemRepository: UserItemRepository,
     private val terrariumRepository: TerrariumRepository,
     private val levelConfigRepository: LevelConfigRepository,
+    private val currencyBuilder: CurrencyBuilder,
 ) {
     fun getMe(
         userId: String,
@@ -28,9 +29,6 @@ class UserService(
             userRepository
                 .findById(userId)
                 .orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) }
-
-        val tokens = userTokenRepository.findAllByUserId(userId)
-        val tokenMap = tokens.associate { it.category.id to it.amount }
 
         val nextLevelConfig = levelConfigRepository.findByLevel(user.level + 1)
         val expToNext = nextLevelConfig.map { it.requiredExp - user.totalExp }.orElse(0L)
@@ -58,15 +56,7 @@ class UserService(
             email = email,
             nickname = user.nickname,
             role = user.role.name,
-            currency =
-                CurrencyResponse(
-                    basicCoins = user.basicCoin.toDouble(),
-                    specialCoins = user.specialCoin.toDouble(),
-                    walkTokens = (tokenMap[1L] ?: 0).toDouble(),
-                    readTokens = (tokenMap[2L] ?: 0).toDouble(),
-                    runTokens = (tokenMap[3L] ?: 0).toDouble(),
-                    drawTokens = (tokenMap[4L] ?: 0).toDouble(),
-                ),
+            currency = currencyBuilder.build(userId, user),
             progress =
                 ProgressResponse(
                     level = user.level,
@@ -75,6 +65,11 @@ class UserService(
                 ),
             ownedItems = ownedItems,
             placedItems = placedItems,
+            entitlements =
+                EntitlementsResponse(
+                    freePlacement = user.entitlementFreePlacement,
+                    premiumThemes = user.entitlementPremiumThemes,
+                ),
         )
     }
 }

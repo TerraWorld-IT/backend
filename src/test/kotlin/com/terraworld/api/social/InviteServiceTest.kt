@@ -131,6 +131,16 @@ class InviteServiceTest {
 
         override fun existsByCode(code: String): Boolean = store.values.any { it.code == code }
 
+        override fun existsAcceptedBetween(
+            userIdA: String,
+            userIdB: String,
+        ): Boolean =
+            store.values.any { i ->
+                i.acceptedAt != null &&
+                    ((i.inviterUserId == userIdA && i.inviteeUserId == userIdB) ||
+                        (i.inviterUserId == userIdB && i.inviteeUserId == userIdA))
+            }
+
         override fun <S : Invite> save(entity: S): S {
             if (entity.id == 0L) {
                 val idField = Invite::class.java.getDeclaredField("id")

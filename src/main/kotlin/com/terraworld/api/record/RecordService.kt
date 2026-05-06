@@ -1,12 +1,14 @@
 package com.terraworld.api.record
 
 import com.terraworld.api.record.dto.*
-import com.terraworld.api.user.dto.CurrencyResponse
+import com.terraworld.api.user.CurrencyBuilder
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
 import com.terraworld.domain.category.CategoryRepository
 import com.terraworld.domain.record.ActivityRecord
 import com.terraworld.domain.record.RecordRepository
+import com.terraworld.domain.social.InviteRepository
+import com.terraworld.domain.user.User
 import com.terraworld.domain.user.UserRepository
 import com.terraworld.domain.user.UserTokenRepository
 import org.springframework.data.domain.Page
@@ -14,6 +16,7 @@ import org.springframework.data.domain.Pageable
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.LocalDate
+import java.util.UUID
 
 @Service
 class RecordService(
@@ -21,6 +24,8 @@ class RecordService(
     private val userRepository: UserRepository,
     private val userTokenRepository: UserTokenRepository,
     private val categoryRepository: CategoryRepository,
+    private val inviteRepository: InviteRepository,
+    private val currencyBuilder: CurrencyBuilder,
 ) {
     @Transactional
     fun createRecord(
@@ -36,6 +41,11 @@ class RecordService(
                 .findById(request.categoryId)
                 .orElseThrow { BusinessException(ErrorCode.CATEGORY_NOT_FOUND) }
 
+        // 커스텀 카테고리는 본인만 사용 가능
+        if (category.isCustom && category.ownerUserId != userId) {
+            throw BusinessException(ErrorCode.CATEGORY_NOT_FOUND, "본인 카테고리가 아닙니다")
+        }
+
         // 일일 제한 체크
         val todayCount =
             recordRepository.countByUserIdAndRecordedDateAndCategoryIdAndIsDeletedFalse(
@@ -50,32 +60,65 @@ class RecordService(
             )
         }
 
-        // 기록 생성
+        // Joint record 검증 (지정 시)
+        // 1) 본인 자기참조 차단
+        // 2) 존재하지 않는 사용자 차단 (404 대신 INVALID_PARTNER 로 통일)
+        // 3) 친구 관계(수락된 invite) 미존재 차단 — 임의 userId 로 보상 가산 어뷰징 방지
+        val partner: User? =
+            request.partnerUserId
+                ?.takeIf { it.isNotBlank() }
+                ?.let { partnerId ->
+                    if (partnerId == userId) throw BusinessException(ErrorCode.INVALID_PARTNER, "본인을 partner 로 지정할 수 없습니다")
+                    val target =
+                        userRepository
+                            .findById(partnerId)
+                            .orElseThrow { BusinessException(ErrorCode.INVALID_PARTNER, "존재하지 않는 사용자입니다") }
+                    if (!inviteRepository.existsAcceptedBetween(userId, partnerId)) {
+                        throw BusinessException(ErrorCode.INVALID_PARTNER, "친구로 등록되지 않은 사용자입니다")
+                    }
+                    target
+                }
+        val jointSessionId: UUID? = if (partner != null) UUID.randomUUID() else null
+
+        // 본인 기록
         val record =
             recordRepository.save(
                 ActivityRecord(
                     user = user,
                     category = category,
                     memo = request.note,
+                    photoUrl = request.photoUrl,
                     recordedDate = LocalDate.now(),
+                    partnerUserId = partner?.id,
+                    jointSessionId = jointSessionId,
                 ),
             )
+        applyReward(user, category)
 
-        // 보상 지급
-        user.basicCoin += category.baseCoinReward
-        user.totalExp += 10
-        userRepository.save(user)
-
-        val token =
-            userTokenRepository
-                .findByUserIdAndCategoryId(userId, category.id)
-                .orElseThrow()
-        token.amount += category.baseTokenReward
-        userTokenRepository.save(token)
-
-        // 응답 구성
-        val tokens = userTokenRepository.findAllByUserId(userId)
-        val tokenMap = tokens.associate { it.category.id to it.amount }
+        // Partner 기록 (있을 때) — partner 의 daily limit 체크 후, 미달이면 보상 가산
+        if (partner != null) {
+            val partnerTodayCount =
+                recordRepository.countByUserIdAndRecordedDateAndCategoryIdAndIsDeletedFalse(
+                    partner.id,
+                    LocalDate.now(),
+                    category.id,
+                )
+            if (partnerTodayCount < category.dailyLimit) {
+                recordRepository.save(
+                    ActivityRecord(
+                        user = partner,
+                        category = category,
+                        memo = request.note,
+                        photoUrl = request.photoUrl,
+                        recordedDate = LocalDate.now(),
+                        partnerUserId = userId,
+                        jointSessionId = jointSessionId,
+                    ),
+                )
+                applyReward(partner, category)
+            }
+            // partner 한도 초과 시에는 partner 보상만 skip — 본인 기록은 정상 진행 (UX 트레이드오프)
+        }
 
         return CreateRecordResponse(
             record =
@@ -95,16 +138,31 @@ class RecordService(
                     categoryTokens = category.baseTokenReward,
                     experienceGained = 10,
                 ),
-            updatedCurrency =
-                CurrencyResponse(
-                    basicCoins = user.basicCoin.toDouble(),
-                    specialCoins = user.specialCoin.toDouble(),
-                    walkTokens = (tokenMap[1L] ?: 0).toDouble(),
-                    readTokens = (tokenMap[2L] ?: 0).toDouble(),
-                    runTokens = (tokenMap[3L] ?: 0).toDouble(),
-                    drawTokens = (tokenMap[4L] ?: 0).toDouble(),
-                ),
+            updatedCurrency = currencyBuilder.build(userId, user),
         )
+    }
+
+    private fun applyReward(
+        user: User,
+        category: com.terraworld.domain.category.Category,
+    ) {
+        user.basicCoin += category.baseCoinReward
+        user.totalExp += 10
+        userRepository.save(user)
+
+        val token =
+            userTokenRepository.findByUserIdAndCategoryId(user.id, category.id).orElseGet {
+                // Custom category 의 첫 적립 시점에 row 생성
+                userTokenRepository.save(
+                    com.terraworld.domain.user.UserToken(
+                        user = user,
+                        category = category,
+                        amount = 0,
+                    ),
+                )
+            }
+        token.amount += category.baseTokenReward
+        userTokenRepository.save(token)
     }
 
     @Transactional(readOnly = true)
@@ -133,7 +191,10 @@ class RecordService(
     fun getStatistics(userId: String): StatisticsResponse {
         val today = LocalDate.now()
         val weekAgo = today.minusDays(7)
-        val categories = categoryRepository.findAllByIsActiveTrue()
+        // 시스템 카테고리 + 본인 커스텀
+        val categories =
+            categoryRepository.findAllByIsActiveTrueAndIsCustomFalse() +
+                categoryRepository.findAllByOwnerUserIdAndIsActiveTrue(userId)
         val categoryCounts = recordRepository.countByCategoryGrouped(userId)
         val countMap = categoryCounts.associate { (it[0] as Long) to (it[1] as Long) }
 

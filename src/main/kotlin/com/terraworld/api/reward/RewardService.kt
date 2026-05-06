@@ -1,11 +1,11 @@
 package com.terraworld.api.reward
 
+import com.terraworld.api.user.CurrencyBuilder
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
 import com.terraworld.domain.reward.AdWatchLog
 import com.terraworld.domain.reward.AdWatchLogRepository
 import com.terraworld.domain.user.UserRepository
-import com.terraworld.domain.user.UserTokenRepository
 import org.springframework.dao.DataAccessException
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.stereotype.Service
@@ -18,18 +18,12 @@ import java.time.LocalTime
 class RewardService(
     private val adWatchLogRepository: AdWatchLogRepository,
     private val userRepository: UserRepository,
-    private val userTokenRepository: UserTokenRepository,
     private val redisTemplate: StringRedisTemplate,
+    private val currencyBuilder: CurrencyBuilder,
 ) {
     companion object {
         const val DAILY_AD_LIMIT = 5
         const val REWARD_SPECIAL_COINS = 1
-
-        // 카테고리 id → UserService 와 동일 규약 (walk=1, read=2, run=3, draw=4)
-        private const val CATEGORY_ID_WALK = 1L
-        private const val CATEGORY_ID_READ = 2L
-        private const val CATEGORY_ID_RUN = 3L
-        private const val CATEGORY_ID_DRAW = 4L
 
         // 앱 namespace prefix — 같은 Redis 인스턴스를 다른 시스템과 공유 시 키 충돌 방지.
         private const val REDIS_DAILY_KEY_PREFIX = "terraworld:reward:ad:daily:"
@@ -75,24 +69,11 @@ class RewardService(
         )
 
         val newCount = (watchedToday + 1).toInt()
-        val tokenMap =
-            userTokenRepository
-                .findAllByUserId(userId)
-                .associate { it.category.id to it.amount }
-
         return AdRewardResponsePayload(
             reward = AdRewardPayload(specialCoins = REWARD_SPECIAL_COINS),
             dailyWatchCount = newCount,
             remainingToday = DAILY_AD_LIMIT - newCount,
-            updatedCurrency =
-                CurrencySnapshot(
-                    basicCoins = user.basicCoin,
-                    specialCoins = user.specialCoin,
-                    walkTokens = tokenMap[CATEGORY_ID_WALK] ?: 0L,
-                    readTokens = tokenMap[CATEGORY_ID_READ] ?: 0L,
-                    runTokens = tokenMap[CATEGORY_ID_RUN] ?: 0L,
-                    drawTokens = tokenMap[CATEGORY_ID_DRAW] ?: 0L,
-                ),
+            updatedCurrency = currencyBuilder.build(userId, user),
         )
     }
 }

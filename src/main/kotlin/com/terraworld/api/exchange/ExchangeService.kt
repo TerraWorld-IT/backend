@@ -1,6 +1,7 @@
 package com.terraworld.api.exchange
 
 import com.terraworld.api.exchange.dto.*
+import com.terraworld.api.user.CurrencyBuilder
 import com.terraworld.api.user.dto.CurrencyResponse
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
@@ -16,6 +17,7 @@ class ExchangeService(
     private val userRepository: UserRepository,
     private val userTokenRepository: UserTokenRepository,
     private val exchangeRateRepository: TokenExchangeRateRepository,
+    private val currencyBuilder: CurrencyBuilder,
 ) {
     companion object {
         const val SPECIAL_TO_BASIC_RATE = 2.0
@@ -93,16 +95,5 @@ class ExchangeService(
     private fun buildCurrency(
         userId: String,
         user: com.terraworld.domain.user.User,
-    ): CurrencyResponse {
-        val tokens = userTokenRepository.findAllByUserId(userId)
-        val tokenMap = tokens.associate { it.category.id to it.amount }
-        return CurrencyResponse(
-            basicCoins = user.basicCoin.toDouble(),
-            specialCoins = user.specialCoin.toDouble(),
-            walkTokens = (tokenMap[1L] ?: 0).toDouble(),
-            readTokens = (tokenMap[2L] ?: 0).toDouble(),
-            runTokens = (tokenMap[3L] ?: 0).toDouble(),
-            drawTokens = (tokenMap[4L] ?: 0).toDouble(),
-        )
-    }
+    ): CurrencyResponse = currencyBuilder.build(userId, user)
 }

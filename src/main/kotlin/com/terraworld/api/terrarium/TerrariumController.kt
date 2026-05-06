@@ -26,4 +26,10 @@ class TerrariumController(
     @Operation(summary = "하트 클릭", description = "클릭당 기본코인 +0.1 지급")
     @PostMapping("/heart")
     fun heartClick(): HeartResponse = terrariumService.heartClick(SecurityUtil.getCurrentUserId())
+
+    @Operation(summary = "진화 단계 전환", description = "잠금 해제된 단계 사이에서만 전환 가능")
+    @PostMapping("/upgrade")
+    fun upgrade(
+        @Valid @RequestBody request: UpgradeTerrariumRequest,
+    ): UpgradeTerrariumResponse = terrariumService.upgrade(SecurityUtil.getCurrentUserId(), request)
 }

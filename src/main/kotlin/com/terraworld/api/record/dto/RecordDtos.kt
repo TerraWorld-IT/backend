@@ -14,6 +14,10 @@ data class CreateRecordRequest(
     val duration: Int? = null,
     @Schema(example = "공원에서 산책했다", description = "메모, 선택사항")
     val note: String? = null,
+    @Schema(description = "첨부 사진 URL (선택)")
+    val photoUrl: String? = null,
+    @Schema(description = "함께 기록할 친구의 userId. 지정 시 양쪽 모두 보상 가산.")
+    val partnerUserId: String? = null,
 )
 
 @Schema(description = "활동 기록 응답")

@@ -21,6 +21,10 @@ class User(
     var basicCoin: Long = 0,
     @Column(name = "special_coin", nullable = false)
     var specialCoin: Long = 0,
+    @Column(name = "entitlement_free_placement", nullable = false)
+    var entitlementFreePlacement: Boolean = false,
+    @Column(name = "entitlement_premium_themes", nullable = false)
+    var entitlementPremiumThemes: Boolean = false,
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: LocalDateTime = LocalDateTime.now(),
     @Column(name = "updated_at", nullable = false)

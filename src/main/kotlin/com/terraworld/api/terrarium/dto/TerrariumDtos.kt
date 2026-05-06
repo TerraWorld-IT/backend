@@ -8,8 +8,24 @@ data class TerrariumResponse(
     val background: BackgroundInfo,
     val placedItems: List<PlacedItemDetail>,
     val maxSlots: Int,
+    @Schema(description = "현재 진화 단계", required = false)
+    val evolutionStage: String = "BOTTLE",
+    @Schema(description = "잠금 해제된 진화 단계 목록", required = false)
+    val unlockedStages: List<String> = listOf("POT", "BOTTLE"),
     @Schema(description = "시들기 상태", required = false)
     val wilting: WiltingState? = null,
+)
+
+@Schema(description = "진화 단계 전환 요청")
+data class UpgradeTerrariumRequest(
+    @Schema(description = "전환할 단계", example = "PALUDARIUM")
+    val targetStage: String,
+)
+
+@Schema(description = "진화 단계 전환 응답")
+data class UpgradeTerrariumResponse(
+    val terrarium: TerrariumResponse,
+    val message: String? = null,
 )
 
 @Schema(description = "시들기 단계 (daysSinceRecord 기반)")
