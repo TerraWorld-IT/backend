@@ -2,6 +2,7 @@ package com.terraworld.api.purchase
 
 import com.terraworld.api.purchase.dto.PurchaseRequest
 import com.terraworld.api.user.CurrencyBuilder
+import com.terraworld.common.audit.AuditService
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
 import com.terraworld.domain.category.Category
@@ -49,7 +50,8 @@ class PurchaseServiceTest {
         userItemRepo = FakeUserItemRepository()
 
         val currencyBuilder = CurrencyBuilder(tokenRepo)
-        service = PurchaseService(userRepo, tokenRepo, itemRepo, userItemRepo, currencyBuilder)
+        val auditService = org.mockito.Mockito.mock(AuditService::class.java)
+        service = PurchaseService(userRepo, tokenRepo, itemRepo, userItemRepo, currencyBuilder, auditService)
 
         walkCategory = Category(id = 1L, name = "산책", tokenName = "산책토큰")
         user = User(id = "user-1", nickname = "테스터", basicCoin = 100, specialCoin = 30)

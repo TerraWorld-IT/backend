@@ -3,6 +3,7 @@ package com.terraworld.api.exchange
 import com.terraworld.api.exchange.dto.SpecialToBasicRequest
 import com.terraworld.api.exchange.dto.TokenExchangeRequest
 import com.terraworld.api.user.CurrencyBuilder
+import com.terraworld.common.audit.AuditService
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
 import com.terraworld.domain.category.Category
@@ -41,7 +42,8 @@ class ExchangeServiceTest {
         tokenRepo = FakeUserTokenRepository()
         rateRepo = FakeRateRepository()
         val currencyBuilder = CurrencyBuilder(tokenRepo)
-        service = ExchangeService(userRepo, tokenRepo, rateRepo, currencyBuilder)
+        val auditService = org.mockito.Mockito.mock(AuditService::class.java)
+        service = ExchangeService(userRepo, tokenRepo, rateRepo, currencyBuilder, auditService)
 
         walkCategory = Category(id = 1L, name = "산책", tokenName = "산책토큰")
         readCategory = Category(id = 2L, name = "독서", tokenName = "독서토큰")
