@@ -2,6 +2,7 @@ package com.terraworld.api.attendance
 
 import com.terraworld.api.user.CurrencyBuilder
 import com.terraworld.api.user.dto.CurrencyResponse
+import com.terraworld.common.audit.AuditService
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
 import com.terraworld.domain.attendance.AttendanceLog
@@ -35,6 +36,7 @@ class AttendanceService(
     private val userRepository: UserRepository,
     private val attendanceRepository: AttendanceLogRepository,
     private val currencyBuilder: CurrencyBuilder,
+    private val auditService: AuditService,
 ) {
     companion object {
         const val BASE_REWARD = 5
@@ -87,6 +89,18 @@ class AttendanceService(
 
         user.basicCoin += reward
         userRepository.save(user)
+
+        auditService.publish(
+            userId = userId,
+            action = "ATTENDANCE_CHECKIN",
+            resourceType = "Attendance",
+            payload =
+                mapOf(
+                    "streak" to newStreak,
+                    "rewardBasicCoins" to reward,
+                    "bonus" to bonus,
+                ),
+        )
 
         return AttendanceCheckInResponse(
             reward = AttendanceRewardInfo(basicCoins = reward, bonus = bonus),

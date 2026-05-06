@@ -2,6 +2,7 @@ package com.terraworld.api.purchase
 
 import com.terraworld.api.purchase.dto.*
 import com.terraworld.api.user.CurrencyBuilder
+import com.terraworld.common.audit.AuditService
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
 import com.terraworld.domain.item.*
@@ -17,6 +18,7 @@ class PurchaseService(
     private val itemRepository: ItemRepository,
     private val userItemRepository: UserItemRepository,
     private val currencyBuilder: CurrencyBuilder,
+    private val auditService: AuditService,
 ) {
     @Transactional
     fun purchase(
@@ -78,6 +80,20 @@ class PurchaseService(
         userItemRepository.save(UserItem(user = user, item = item))
 
         val ownedSlugs = userItemRepository.findAllByUserId(userId).mapNotNull { it.item.slug }
+
+        auditService.publish(
+            userId = userId,
+            action = "PURCHASE_ITEM",
+            resourceType = "Item",
+            resourceId = item.id.toString(),
+            payload =
+                mapOf(
+                    "itemSlug" to item.slug,
+                    "itemName" to item.name,
+                    "priceType" to item.priceType.name,
+                    "priceAmount" to item.priceAmount,
+                ),
+        )
 
         return PurchaseResponse(
             purchasedItem = PurchasedItemInfo(id = item.id, slug = item.slug, name = item.name),
