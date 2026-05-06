@@ -22,8 +22,12 @@ import java.time.Duration
  *
  * Key shape: `terraworld:rl:{METHOD}:{rulePathPattern}:{subjectId}`
  *
- * On Redis outage the filter fails open with a WARN log (graceful
- * degradation) — domain-level daily limits in services still apply.
+ * Failure semantics on Redis outage are per-rule (SEC-002):
+ *   - `failClosed = false` (default) → log WARN + pass through (fail-open)
+ *   - `failClosed = true` → 503 SERVICE_UNAVAILABLE (money / credential flows)
+ *
+ * In both branches a structured WARN log is emitted with `event=rate_limit_redis_outage`
+ * tag for ops alerting / dashboards (audit_log_dropped 사촌 metric).
  *
  * Filter chain ordering:
  *   The bean is added in [com.terraworld.config.SecurityConfig] AFTER
@@ -68,8 +72,7 @@ class RateLimitFilter(
                 }
                 incremented
             } catch (e: DataAccessException) {
-                log.warn("[rate-limit] Redis unavailable, failing open: {}", e.message)
-                filterChain.doFilter(request, response)
+                handleRedisOutage(rule, response, filterChain, request, e)
                 return
             }
 
@@ -78,6 +81,27 @@ class RateLimitFilter(
             return
         }
 
+        filterChain.doFilter(request, response)
+    }
+
+    private fun handleRedisOutage(
+        rule: RateLimitProperties.Rule,
+        response: HttpServletResponse,
+        filterChain: FilterChain,
+        request: HttpServletRequest,
+        cause: DataAccessException,
+    ) {
+        log.warn(
+            "[rate-limit] event=rate_limit_redis_outage path={} method={} failClosed={} cause={}",
+            rule.path,
+            rule.method.name(),
+            rule.failClosed,
+            cause.message,
+        )
+        if (rule.failClosed) {
+            writeServiceUnavailable(response)
+            return
+        }
         filterChain.doFilter(request, response)
     }
 
@@ -93,13 +117,21 @@ class RateLimitFilter(
         val auth = SecurityContextHolder.getContext().authentication
         val principal = auth?.principal
         if (principal is com.terraworld.security.AuthenticatedUser) {
+            // SEC-010: `u:` prefix prevents collision with anonymous `ip:` keys.
             return "u:${principal.id}"
         }
-        val xff = request.getHeader("X-Forwarded-For")
         val ip =
-            if (!xff.isNullOrBlank()) {
-                xff.split(",").first().trim()
+            if (properties.trustForwardedFor) {
+                val xff = request.getHeader("X-Forwarded-For")
+                if (!xff.isNullOrBlank()) {
+                    xff.split(",").first().trim()
+                } else {
+                    request.remoteAddr ?: "unknown"
+                }
             } else {
+                // SEC-001: when not behind a trusted proxy, ignore the user-controllable
+                // X-Forwarded-For header. Otherwise an attacker rotates XFF to bypass
+                // per-IP buckets, or sets it to a victim's IP to exhaust their quota.
                 request.remoteAddr ?: "unknown"
             }
         return "ip:$ip"
@@ -117,6 +149,19 @@ class RateLimitFilter(
             mapOf(
                 "code" to "RATE_LIMIT_EXCEEDED",
                 "message" to "요청이 너무 많습니다. 잠시 후 다시 시도해 주세요",
+            )
+        response.writer.write(objectMapper.writeValueAsString(body))
+    }
+
+    private fun writeServiceUnavailable(response: HttpServletResponse) {
+        response.status = HttpStatus.SERVICE_UNAVAILABLE.value()
+        response.contentType = MediaType.APPLICATION_JSON_VALUE
+        response.characterEncoding = "UTF-8"
+        response.setHeader(HttpHeaders.RETRY_AFTER, "5")
+        val body =
+            mapOf(
+                "code" to "DEPENDENCY_UNAVAILABLE",
+                "message" to "잠시 후 다시 시도해 주세요",
             )
         response.writer.write(objectMapper.writeValueAsString(body))
     }
