@@ -3,6 +3,7 @@ package com.terraworld.api.exchange
 import com.terraworld.api.exchange.dto.*
 import com.terraworld.api.user.CurrencyBuilder
 import com.terraworld.api.user.dto.CurrencyResponse
+import com.terraworld.common.audit.AuditService
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
 import com.terraworld.domain.exchange.TokenExchangeRateRepository
@@ -18,6 +19,7 @@ class ExchangeService(
     private val userTokenRepository: UserTokenRepository,
     private val exchangeRateRepository: TokenExchangeRateRepository,
     private val currencyBuilder: CurrencyBuilder,
+    private val auditService: AuditService,
 ) {
     companion object {
         const val SPECIAL_TO_BASIC_RATE = 2.0
@@ -39,6 +41,18 @@ class ExchangeService(
         user.specialCoin -= request.amount
         user.basicCoin += received
         userRepository.save(user)
+
+        auditService.publish(
+            userId = userId,
+            action = "EXCHANGE_S2B",
+            resourceType = "Wallet",
+            payload =
+                mapOf(
+                    "specialCoinSpent" to request.amount,
+                    "basicCoinReceived" to received,
+                    "rate" to SPECIAL_TO_BASIC_RATE,
+                ),
+        )
 
         return ExchangeResponse(
             exchanged = ExchangeInfo("SPECIAL_COIN", request.amount, "BASIC_COIN", received, SPECIAL_TO_BASIC_RATE),
@@ -79,6 +93,21 @@ class ExchangeService(
         userTokenRepository.save(toToken)
 
         val user = userRepository.findById(userId).orElseThrow()
+
+        auditService.publish(
+            userId = userId,
+            action = "EXCHANGE_TOKEN",
+            resourceType = "Wallet",
+            payload =
+                mapOf(
+                    "fromCategoryId" to request.fromCategoryId,
+                    "toCategoryId" to request.toCategoryId,
+                    "amountSpent" to request.amount,
+                    "amountReceived" to received,
+                    "rate" to rate.rate,
+                ),
+        )
+
         return ExchangeResponse(
             exchanged =
                 ExchangeInfo(

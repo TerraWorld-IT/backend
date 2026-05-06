@@ -1,6 +1,7 @@
 package com.terraworld.api.reward
 
 import com.terraworld.api.user.CurrencyBuilder
+import com.terraworld.common.audit.AuditService
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
 import com.terraworld.domain.reward.AdWatchLog
@@ -58,7 +59,8 @@ class RewardServiceTest {
         lenient().`when`(redisTemplate.expire(anyString(), any())).thenReturn(true)
 
         currencyBuilder = CurrencyBuilder(tokenRepo)
-        service = RewardService(logRepo, userRepo, redisTemplate, currencyBuilder)
+        val auditService = mock(AuditService::class.java)
+        service = RewardService(logRepo, userRepo, redisTemplate, currencyBuilder, auditService)
 
         userRepo.save(User(id = "user-1", nickname = "테스터"))
     }

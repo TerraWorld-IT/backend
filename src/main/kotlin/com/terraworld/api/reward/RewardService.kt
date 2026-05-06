@@ -1,6 +1,7 @@
 package com.terraworld.api.reward
 
 import com.terraworld.api.user.CurrencyBuilder
+import com.terraworld.common.audit.AuditService
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
 import com.terraworld.domain.reward.AdWatchLog
@@ -20,6 +21,7 @@ class RewardService(
     private val userRepository: UserRepository,
     private val redisTemplate: StringRedisTemplate,
     private val currencyBuilder: CurrencyBuilder,
+    private val auditService: AuditService,
 ) {
     companion object {
         const val DAILY_AD_LIMIT = 5
@@ -69,6 +71,16 @@ class RewardService(
         )
 
         val newCount = (watchedToday + 1).toInt()
+        auditService.publish(
+            userId = userId,
+            action = "REWARD_AD_CLAIMED",
+            resourceType = "Reward",
+            payload =
+                mapOf(
+                    "specialCoins" to REWARD_SPECIAL_COINS,
+                    "dailyWatchCount" to newCount,
+                ),
+        )
         return AdRewardResponsePayload(
             reward = AdRewardPayload(specialCoins = REWARD_SPECIAL_COINS),
             dailyWatchCount = newCount,
