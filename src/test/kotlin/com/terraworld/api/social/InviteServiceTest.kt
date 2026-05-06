@@ -137,8 +137,10 @@ class InviteServiceTest {
         ): Boolean =
             store.values.any { i ->
                 i.acceptedAt != null &&
-                    ((i.inviterUserId == userIdA && i.inviteeUserId == userIdB) ||
-                        (i.inviterUserId == userIdB && i.inviteeUserId == userIdA))
+                    (
+                        (i.inviterUserId == userIdA && i.inviteeUserId == userIdB) ||
+                            (i.inviterUserId == userIdB && i.inviteeUserId == userIdA)
+                    )
             }
 
         override fun <S : Invite> save(entity: S): S {

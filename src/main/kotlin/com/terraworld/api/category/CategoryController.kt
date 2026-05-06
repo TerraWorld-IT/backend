@@ -87,7 +87,9 @@ class CategoryController(
         val user = userRepository.findById(userId).orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) }
         userTokenRepository.save(UserToken(user = user, category = saved, amount = 0))
 
-        return org.springframework.http.ResponseEntity.status(HttpStatus.CREATED).body(saved.toResponse())
+        return org.springframework.http.ResponseEntity
+            .status(HttpStatus.CREATED)
+            .body(saved.toResponse())
     }
 
     @Operation(summary = "커스텀 카테고리 삭제 (soft)")
@@ -106,7 +108,9 @@ class CategoryController(
 
         category.isActive = false
         categoryRepository.save(category)
-        return org.springframework.http.ResponseEntity.noContent().build()
+        return org.springframework.http.ResponseEntity
+            .noContent()
+            .build()
     }
 
     private fun currentUserIdOrNull(): String? =

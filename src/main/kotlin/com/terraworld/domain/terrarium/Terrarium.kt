@@ -30,7 +30,9 @@ class Terrarium(
  * 5단계 테라리움 진화. 사용자 레벨 기반으로 자동 잠금 해제되며, 사용자는 잠금 해제된
  * 단계 사이에서 자유롭게 전환 가능. CUSTOM 은 freePlacement entitlement 추가 필요.
  */
-enum class EvolutionStage(val unlockLevel: Int) {
+enum class EvolutionStage(
+    val unlockLevel: Int,
+) {
     POT(1),
     BOTTLE(5),
     PALUDARIUM(10),
