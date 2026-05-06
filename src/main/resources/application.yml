@@ -73,6 +73,13 @@ auth:
     # BETTER_AUTH_SECRET. Transferred out-of-band.
     token: ${INTERNAL_API_TOKEN:}
 
+terraworld:
+  # Burst-protection rate limiter. See RateLimitProperties.DEFAULT_RULES for
+  # the per-endpoint defaults. Disable globally with TERRAWORLD_RATE_LIMIT_ENABLED=false
+  # (e.g. in some test profiles).
+  rate-limit:
+    enabled: ${TERRAWORLD_RATE_LIMIT_ENABLED:true}
+
 springdoc:
   api-docs:
     path: /api-docs

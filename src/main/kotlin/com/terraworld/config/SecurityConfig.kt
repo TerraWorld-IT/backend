@@ -1,6 +1,7 @@
 package com.terraworld.config
 
 import com.terraworld.security.JwtAuthenticationFilter
+import com.terraworld.security.ratelimit.RateLimitFilter
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
@@ -28,6 +29,7 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource
 @EnableWebSecurity
 class SecurityConfig(
     private val jwtAuthenticationFilter: JwtAuthenticationFilter,
+    private val rateLimitFilter: RateLimitFilter,
     private val environment: Environment,
     @Value("\${cors.allowed-origins}") private val allowedOrigins: List<String>,
 ) {
@@ -73,6 +75,9 @@ class SecurityConfig(
                     .anyRequest()
                     .authenticated()
             }.addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter::class.java)
+            // RateLimitFilter sits AFTER JWT extraction so authenticated subjects
+            // are bucketed by userId rather than IP. On Redis outage it fails open.
+            .addFilterAfter(rateLimitFilter, JwtAuthenticationFilter::class.java)
 
         return http.build()
     }
