@@ -8,21 +8,25 @@ class Category(
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)
     val id: Long = 0,
     @Column(nullable = false, length = 50)
-    val name: String,
+    var name: String,
     @Column(name = "icon_url", length = 500)
-    val iconUrl: String? = null,
+    var iconUrl: String? = null,
     @Column(nullable = false, length = 7)
-    val color: String = "#000000",
+    var color: String = "#000000",
     @Column(name = "token_name", nullable = false, length = 50)
-    val tokenName: String,
+    var tokenName: String,
     @Column(length = 10)
-    val emoji: String? = null,
+    var emoji: String? = null,
     @Column(name = "base_coin_reward", nullable = false)
-    val baseCoinReward: Int = 20,
+    var baseCoinReward: Int = 20,
     @Column(name = "base_token_reward", nullable = false)
-    val baseTokenReward: Int = 10,
+    var baseTokenReward: Int = 10,
     @Column(name = "daily_limit", nullable = false)
-    val dailyLimit: Int = 5,
+    var dailyLimit: Int = 5,
     @Column(name = "is_active", nullable = false)
-    val isActive: Boolean = true,
+    var isActive: Boolean = true,
+    @Column(name = "is_custom", nullable = false)
+    var isCustom: Boolean = false,
+    @Column(name = "owner_user_id", length = 255)
+    var ownerUserId: String? = null,
 )

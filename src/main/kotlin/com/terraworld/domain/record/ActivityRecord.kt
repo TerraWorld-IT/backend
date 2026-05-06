@@ -25,6 +25,10 @@ class ActivityRecord(
     val recordedDate: LocalDate,
     @Column(name = "is_deleted", nullable = false)
     var isDeleted: Boolean = false,
+    @Column(name = "partner_user_id", length = 255)
+    val partnerUserId: String? = null,
+    @Column(name = "joint_session_id")
+    val jointSessionId: java.util.UUID? = null,
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: LocalDateTime = LocalDateTime.now(),
 )

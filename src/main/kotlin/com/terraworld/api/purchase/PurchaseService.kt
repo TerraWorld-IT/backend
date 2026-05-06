@@ -1,7 +1,7 @@
 package com.terraworld.api.purchase
 
 import com.terraworld.api.purchase.dto.*
-import com.terraworld.api.user.dto.CurrencyResponse
+import com.terraworld.api.user.CurrencyBuilder
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
 import com.terraworld.domain.item.*
@@ -16,6 +16,7 @@ class PurchaseService(
     private val userTokenRepository: UserTokenRepository,
     private val itemRepository: ItemRepository,
     private val userItemRepository: UserItemRepository,
+    private val currencyBuilder: CurrencyBuilder,
 ) {
     @Transactional
     fun purchase(
@@ -77,20 +78,10 @@ class PurchaseService(
         userItemRepository.save(UserItem(user = user, item = item))
 
         val ownedSlugs = userItemRepository.findAllByUserId(userId).mapNotNull { it.item.slug }
-        val tokens = userTokenRepository.findAllByUserId(userId)
-        val tokenMap = tokens.associate { it.category.id to it.amount }
 
         return PurchaseResponse(
             purchasedItem = PurchasedItemInfo(id = item.id, slug = item.slug, name = item.name),
-            updatedCurrency =
-                CurrencyResponse(
-                    basicCoins = user.basicCoin.toDouble(),
-                    specialCoins = user.specialCoin.toDouble(),
-                    walkTokens = (tokenMap[1L] ?: 0).toDouble(),
-                    readTokens = (tokenMap[2L] ?: 0).toDouble(),
-                    runTokens = (tokenMap[3L] ?: 0).toDouble(),
-                    drawTokens = (tokenMap[4L] ?: 0).toDouble(),
-                ),
+            updatedCurrency = currencyBuilder.build(userId, user),
             ownedItems = ownedSlugs,
         )
     }

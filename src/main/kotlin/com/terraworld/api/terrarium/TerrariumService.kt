@@ -41,6 +41,7 @@ class TerrariumService(
                 .orElseThrow { BusinessException(ErrorCode.TERRARIUM_NOT_FOUND) }
         val user = userRepository.findById(userId).orElseThrow()
         val maxItems = levelConfigRepository.findByLevel(user.level).map { it.maxItems }.orElse(10)
+        val unlocked = EvolutionStage.unlockedFor(user.level)
 
         return TerrariumResponse(
             terrariumId = terrarium.id,
@@ -64,8 +65,51 @@ class TerrariumService(
                     )
                 },
             maxSlots = minOf(5, maxItems),
+            evolutionStage = terrarium.evolutionStage.name,
+            unlockedStages = unlocked.map { it.name },
             wilting = computeWiltingState(userId),
         )
+    }
+
+    /**
+     * 진화 단계 전환. 잠금 해제된 단계만 허용. CUSTOM 은 freePlacement entitlement 추가 필요.
+     * 다운그레이드는 허용하되 잠금 해제 범위 안에서만.
+     */
+    @Transactional
+    fun upgrade(
+        userId: String,
+        request: UpgradeTerrariumRequest,
+    ): UpgradeTerrariumResponse {
+        val target =
+            runCatching { EvolutionStage.valueOf(request.targetStage) }
+                .getOrElse { throw BusinessException(ErrorCode.INVALID_INPUT, "알 수 없는 진화 단계: ${request.targetStage}") }
+
+        val user = userRepository.findById(userId).orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) }
+        val unlocked = EvolutionStage.unlockedFor(user.level)
+        if (target !in unlocked) {
+            throw BusinessException(ErrorCode.FORBIDDEN_EVOLUTION, "레벨이 부족합니다 (필요: ${target.unlockLevel})")
+        }
+        if (target == EvolutionStage.CUSTOM && !user.entitlementFreePlacement) {
+            throw BusinessException(ErrorCode.FORBIDDEN_EVOLUTION, "자유배치 권리(freePlacement)가 필요합니다")
+        }
+
+        val terrarium =
+            terrariumRepository
+                .findByUserId(userId)
+                .orElseThrow { BusinessException(ErrorCode.TERRARIUM_NOT_FOUND) }
+        val previous = terrarium.evolutionStage
+        terrarium.evolutionStage = target
+        terrariumRepository.save(terrarium)
+
+        val message =
+            if (previous == target) {
+                "이미 해당 단계입니다"
+            } else if (target.unlockLevel > previous.unlockLevel) {
+                "${target.name} 으로 진화했습니다"
+            } else {
+                "${target.name} 으로 변경했습니다"
+            }
+        return UpgradeTerrariumResponse(terrarium = getTerrarium(userId), message = message)
     }
 
     /**

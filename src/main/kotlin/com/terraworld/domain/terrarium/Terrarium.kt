@@ -15,6 +15,9 @@ class Terrarium(
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "background_id", nullable = false)
     var background: TerrariumBackground,
+    @Column(name = "evolution_stage", nullable = false, length = 20)
+    @Enumerated(EnumType.STRING)
+    var evolutionStage: EvolutionStage = EvolutionStage.BOTTLE,
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: LocalDateTime = LocalDateTime.now(),
     @Column(name = "updated_at", nullable = false)
@@ -22,6 +25,25 @@ class Terrarium(
     @OneToMany(mappedBy = "terrarium", cascade = [CascadeType.ALL], orphanRemoval = true)
     val placedItems: MutableList<TerrariumPlacement> = mutableListOf(),
 )
+
+/**
+ * 5단계 테라리움 진화. 사용자 레벨 기반으로 자동 잠금 해제되며, 사용자는 잠금 해제된
+ * 단계 사이에서 자유롭게 전환 가능. CUSTOM 은 freePlacement entitlement 추가 필요.
+ */
+enum class EvolutionStage(
+    val unlockLevel: Int,
+) {
+    POT(1),
+    BOTTLE(5),
+    PALUDARIUM(10),
+    WORLD(20),
+    CUSTOM(30),
+    ;
+
+    companion object {
+        fun unlockedFor(userLevel: Int): List<EvolutionStage> = entries.filter { userLevel >= it.unlockLevel }
+    }
+}
 
 @Entity
 @Table(name = "terrarium_backgrounds")

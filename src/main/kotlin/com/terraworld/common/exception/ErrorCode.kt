@@ -37,6 +37,15 @@ enum class ErrorCode(
     INVITE_ALREADY_ACCEPTED(HttpStatus.CONFLICT, "이미 사용된 초대 코드입니다"),
     INVITE_SELF_ACCEPT(HttpStatus.BAD_REQUEST, "본인 초대 코드는 수락할 수 없습니다"),
 
+    // Phase 3 — 진화 / 커스텀 카테고리 / 출석 / Joint record
+    FORBIDDEN_EVOLUTION(HttpStatus.FORBIDDEN, "해당 진화 단계로 전환할 수 없습니다"),
+    INVALID_INPUT(HttpStatus.BAD_REQUEST, "잘못된 입력입니다"),
+    CATEGORY_LIMIT_EXCEEDED(HttpStatus.CONFLICT, "커스텀 카테고리 최대 개수(10개)를 초과했습니다"),
+    CATEGORY_NAME_DUPLICATE(HttpStatus.CONFLICT, "이미 존재하는 카테고리 이름입니다"),
+    CATEGORY_PROTECTED(HttpStatus.FORBIDDEN, "시스템 카테고리는 수정/삭제할 수 없습니다"),
+    ATTENDANCE_ALREADY_CHECKED(HttpStatus.CONFLICT, "오늘 이미 출석 보상을 받았습니다"),
+    INVALID_PARTNER(HttpStatus.BAD_REQUEST, "함께 기록할 수 없는 사용자입니다"),
+
     // General
     BAD_REQUEST(HttpStatus.BAD_REQUEST, "잘못된 요청입니다"),
     FORBIDDEN(HttpStatus.FORBIDDEN, "권한이 없습니다"),
