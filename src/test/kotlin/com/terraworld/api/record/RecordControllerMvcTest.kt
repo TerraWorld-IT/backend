@@ -44,18 +44,6 @@ class RecordControllerMvcTest : AbstractMvcTest() {
 
     @MockBean private lateinit var rateLimitFilter: RateLimitFilter
 
-    /**
-     * `createRecord` happy-path 는 일시 비활성화한다.
-     *
-     * spec 의 `photoUrl: { type: string, format: uri, maxLength: 2048 }` 가
-     * generated `CreateRecordRequest.photoUrl: java.net.URI?` 로 매핑되면서
-     * `@Size(max=2048)` 가 URI 타입에 부착됨 → jakarta validator 가
-     * `UnexpectedTypeException: No validator for URI` 를 던진다.
-     *
-     * 본 PR 의 scope 는 controller smoke test 추가이므로 spec 수정은 별도 PR
-     * 에서 다룬다 (예: spec photoUrl maxLength 제거 또는 type 매핑 옵션 변경).
-     */
-    @org.junit.jupiter.api.Disabled("URI Size validator missing — spec photoUrl 정의 followup PR 필요")
     @Test
     fun `POST _api_v1_records 201`() {
         whenever(recordService.createRecord(eq(TEST_USER_ID), any())).thenReturn(
