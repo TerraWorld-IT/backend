@@ -8,28 +8,14 @@ import com.terraworld.common.exception.ErrorCode
 import com.terraworld.domain.attendance.AttendanceLog
 import com.terraworld.domain.attendance.AttendanceLogRepository
 import com.terraworld.domain.user.UserRepository
-import com.terraworld.security.SecurityUtil
-import io.swagger.v3.oas.annotations.Operation
-import io.swagger.v3.oas.annotations.tags.Tag
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
-import org.springframework.web.bind.annotation.*
 import java.time.LocalDate
 
-@Tag(name = "Reward", description = "출석 체크인 (이슬 보상)")
-@RestController
-@RequestMapping("/api/v1/rewards/attendance")
-class AttendanceController(
-    private val attendanceService: AttendanceService,
-) {
-    @Operation(summary = "출석 현황 조회")
-    @GetMapping
-    fun getState(): AttendanceStateResponse = attendanceService.getState(SecurityUtil.getCurrentUserId())
-
-    @Operation(summary = "출석 체크인")
-    @PostMapping
-    fun checkIn(): AttendanceCheckInResponse = attendanceService.checkIn(SecurityUtil.getCurrentUserId())
-}
+// NOTE: HTTP 진입점은 com.terraworld.api.reward.RewardController 로 이전됐다
+// (generated RewardApi 채택). 본 파일은 service + DTOs 만 보존한다. 후속
+// 슬라이스에서 generated AttendanceCheckInResponse / AttendanceResponse 로
+// 마이그레이션 후 본 local DTO 들을 제거할 예정.
 
 @Service
 class AttendanceService(
