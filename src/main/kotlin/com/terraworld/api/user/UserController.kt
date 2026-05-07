@@ -1,5 +1,6 @@
 package com.terraworld.api.user
 
+import com.terraworld.api.user.dto.toApi
 import com.terraworld.api.userdevice.UserDeviceService
 import com.terraworld.security.SecurityUtil
 import io.swagger.v3.oas.annotations.Operation
@@ -8,15 +9,11 @@ import io.terraworld.api.api.UserApi
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
-import com.terraworld.api.user.dto.CategoryTokenAmount as LocalCategoryTokenAmount
-import com.terraworld.api.user.dto.CurrencyResponse as LocalCurrencyResponse
 import com.terraworld.api.user.dto.EntitlementsResponse as LocalEntitlementsResponse
 import com.terraworld.api.user.dto.PlacedItemResponse as LocalPlacedItemResponse
 import com.terraworld.api.user.dto.ProgressResponse as LocalProgressResponse
 import com.terraworld.api.user.dto.UserMeResponse as LocalUserMeResponse
 import com.terraworld.api.userdevice.DeviceRegistrationRequest as LocalDeviceRegistrationRequest
-import io.terraworld.api.model.CategoryTokenAmount as ApiCategoryTokenAmount
-import io.terraworld.api.model.CurrencyResponse as ApiCurrencyResponse
 import io.terraworld.api.model.DeviceRegistrationRequest as ApiDeviceRegistrationRequest
 import io.terraworld.api.model.DeviceRegistrationResponse as ApiDeviceRegistrationResponse
 import io.terraworld.api.model.EntitlementsResponse as ApiEntitlementsResponse
@@ -88,24 +85,6 @@ class UserController(
             ownedItems = ownedItems,
             placedItems = placedItems.map { it.toApi() },
             entitlements = entitlements.toApi(),
-        )
-
-    private fun LocalCurrencyResponse.toApi(): ApiCurrencyResponse =
-        ApiCurrencyResponse(
-            basicCoins = basicCoins,
-            specialCoins = specialCoins,
-            walkTokens = walkTokens,
-            readTokens = readTokens,
-            runTokens = runTokens,
-            drawTokens = drawTokens,
-            categoryTokens = categoryTokens.map { it.toApi() },
-        )
-
-    private fun LocalCategoryTokenAmount.toApi(): ApiCategoryTokenAmount =
-        ApiCategoryTokenAmount(
-            categoryId = categoryId,
-            categoryName = categoryName,
-            amount = amount,
         )
 
     private fun LocalProgressResponse.toApi(): ApiProgressResponse =

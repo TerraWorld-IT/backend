@@ -1,5 +1,6 @@
 package com.terraworld.api.exchange
 
+import com.terraworld.api.user.dto.toApi
 import com.terraworld.security.SecurityUtil
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.tags.Tag
@@ -10,10 +11,6 @@ import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
 import com.terraworld.api.exchange.dto.SpecialToBasicRequest as LocalSpecialToBasicRequest
 import com.terraworld.api.exchange.dto.TokenExchangeRequest as LocalTokenExchangeRequest
-import com.terraworld.api.user.dto.CategoryTokenAmount as LocalCategoryTokenAmount
-import com.terraworld.api.user.dto.CurrencyResponse as LocalCurrencyResponse
-import io.terraworld.api.model.CategoryTokenAmount as ApiCategoryTokenAmount
-import io.terraworld.api.model.CurrencyResponse as ApiCurrencyResponse
 import io.terraworld.api.model.ExchangeInfo as ApiExchangeInfo
 import io.terraworld.api.model.ExchangeResponse as ApiExchangeResponse
 import io.terraworld.api.model.SpecialToBasicRequest as ApiSpecialToBasicRequest
@@ -82,22 +79,4 @@ class ExchangeController(
             ),
         )
     }
-
-    private fun LocalCurrencyResponse.toApi(): ApiCurrencyResponse =
-        ApiCurrencyResponse(
-            basicCoins = basicCoins,
-            specialCoins = specialCoins,
-            walkTokens = walkTokens,
-            readTokens = readTokens,
-            runTokens = runTokens,
-            drawTokens = drawTokens,
-            categoryTokens = categoryTokens.map { it.toApi() },
-        )
-
-    private fun LocalCategoryTokenAmount.toApi(): ApiCategoryTokenAmount =
-        ApiCategoryTokenAmount(
-            categoryId = categoryId,
-            categoryName = categoryName,
-            amount = amount,
-        )
 }
