@@ -1,6 +1,7 @@
 package com.terraworld.api.reward
 
 import com.terraworld.api.attendance.AttendanceService
+import com.terraworld.api.user.dto.toApi
 import com.terraworld.security.SecurityUtil
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.tags.Tag
@@ -10,15 +11,11 @@ import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
 import com.terraworld.api.attendance.AttendanceCheckInResponse as LocalAttendanceCheckInResponse
 import com.terraworld.api.attendance.AttendanceStateResponse as LocalAttendanceStateResponse
-import com.terraworld.api.user.dto.CategoryTokenAmount as LocalCategoryTokenAmount
-import com.terraworld.api.user.dto.CurrencyResponse as LocalCurrencyResponse
 import io.terraworld.api.model.AdRewardResponse as ApiAdRewardResponse
 import io.terraworld.api.model.AdRewardResponseReward as ApiAdRewardResponseReward
 import io.terraworld.api.model.AttendanceCheckInResponse as ApiAttendanceCheckInResponse
 import io.terraworld.api.model.AttendanceCheckInResponseReward as ApiAttendanceCheckInResponseReward
 import io.terraworld.api.model.AttendanceResponse as ApiAttendanceResponse
-import io.terraworld.api.model.CategoryTokenAmount as ApiCategoryTokenAmount
-import io.terraworld.api.model.CurrencyResponse as ApiCurrencyResponse
 
 /**
  * 두 번째 generated `*Api` 인터페이스 채택 슬라이스 (Reward 도메인 통합).
@@ -92,24 +89,6 @@ class RewardController(
             longestStreak = longestStreak,
             rewardBasicCoins = rewardBasicCoins,
             bonusEligible = bonusEligible,
-        )
-
-    private fun LocalCurrencyResponse.toApi(): ApiCurrencyResponse =
-        ApiCurrencyResponse(
-            basicCoins = basicCoins,
-            specialCoins = specialCoins,
-            walkTokens = walkTokens,
-            readTokens = readTokens,
-            runTokens = runTokens,
-            drawTokens = drawTokens,
-            categoryTokens = categoryTokens.map { it.toApi() },
-        )
-
-    private fun LocalCategoryTokenAmount.toApi(): ApiCategoryTokenAmount =
-        ApiCategoryTokenAmount(
-            categoryId = categoryId,
-            categoryName = categoryName,
-            amount = amount,
         )
 }
 

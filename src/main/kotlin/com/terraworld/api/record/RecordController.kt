@@ -1,5 +1,6 @@
 package com.terraworld.api.record
 
+import com.terraworld.api.user.dto.toApi
 import com.terraworld.security.SecurityUtil
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.tags.Tag
@@ -19,13 +20,9 @@ import com.terraworld.api.record.dto.CreateRecordResponse as LocalCreateRecordRe
 import com.terraworld.api.record.dto.RecordResponse as LocalRecordResponse
 import com.terraworld.api.record.dto.RewardInfo as LocalRewardInfo
 import com.terraworld.api.record.dto.StatisticsResponse as LocalStatisticsResponse
-import com.terraworld.api.user.dto.CategoryTokenAmount as LocalCategoryTokenAmount
-import com.terraworld.api.user.dto.CurrencyResponse as LocalCurrencyResponse
 import io.terraworld.api.model.CategoryCount as ApiCategoryCount
-import io.terraworld.api.model.CategoryTokenAmount as ApiCategoryTokenAmount
 import io.terraworld.api.model.CreateRecordRequest as ApiCreateRecordRequest
 import io.terraworld.api.model.CreateRecordResponse as ApiCreateRecordResponse
-import io.terraworld.api.model.CurrencyResponse as ApiCurrencyResponse
 import io.terraworld.api.model.RecordResponse as ApiRecordResponse
 import io.terraworld.api.model.RewardInfo as ApiRewardInfo
 import io.terraworld.api.model.StatisticsResponse as ApiStatisticsResponse
@@ -154,23 +151,5 @@ class RecordController(
             categoryName = categoryName,
             emoji = emoji,
             count = count,
-        )
-
-    private fun LocalCurrencyResponse.toApi(): ApiCurrencyResponse =
-        ApiCurrencyResponse(
-            basicCoins = basicCoins,
-            specialCoins = specialCoins,
-            walkTokens = walkTokens,
-            readTokens = readTokens,
-            runTokens = runTokens,
-            drawTokens = drawTokens,
-            categoryTokens = categoryTokens.map { it.toApi() },
-        )
-
-    private fun LocalCategoryTokenAmount.toApi(): ApiCategoryTokenAmount =
-        ApiCategoryTokenAmount(
-            categoryId = categoryId,
-            categoryName = categoryName,
-            amount = amount,
         )
 }
