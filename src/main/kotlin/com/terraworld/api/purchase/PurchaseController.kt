@@ -1,22 +1,78 @@
 package com.terraworld.api.purchase
 
-import com.terraworld.api.purchase.dto.PurchaseRequest
-import com.terraworld.api.purchase.dto.PurchaseResponse
 import com.terraworld.security.SecurityUtil
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.tags.Tag
+import io.terraworld.api.api.PurchaseApi
 import jakarta.validation.Valid
-import org.springframework.web.bind.annotation.*
+import org.springframework.http.ResponseEntity
+import org.springframework.web.bind.annotation.RequestMapping
+import org.springframework.web.bind.annotation.RestController
+import com.terraworld.api.purchase.dto.PurchaseRequest as LocalPurchaseRequest
+import com.terraworld.api.user.dto.CategoryTokenAmount as LocalCategoryTokenAmount
+import com.terraworld.api.user.dto.CurrencyResponse as LocalCurrencyResponse
+import io.terraworld.api.model.CategoryTokenAmount as ApiCategoryTokenAmount
+import io.terraworld.api.model.CurrencyResponse as ApiCurrencyResponse
+import io.terraworld.api.model.PurchaseRequest as ApiPurchaseRequest
+import io.terraworld.api.model.PurchaseResponse as ApiPurchaseResponse
+import io.terraworld.api.model.PurchasedItemInfo as ApiPurchasedItemInfo
 
+/**
+ * PurchaseApi (1 endpoint — purchaseItem) implement. spec PR #12 의 tag
+ * 분리 (Shop ↔ Purchase) 결과 PurchaseApi 신규 생성됨.
+ *
+ * PurchaseService 의 시그니처 (local DTO) 는 그대로 두고 controller 에서
+ * generated ↔ local 변환만 수행 — PurchaseServiceTest 등 기존 테스트
+ * 영향 0.
+ */
 @Tag(name = "Purchase", description = "구매 API")
 @RestController
-@RequestMapping("/api/v1/purchases")
+@RequestMapping("/api/v1")
 class PurchaseController(
     private val purchaseService: PurchaseService,
-) {
-    @Operation(summary = "아이템 구매", description = "재화를 차감하고 아이템을 보유 목록에 추가합니다")
-    @PostMapping
-    fun purchase(
-        @Valid @RequestBody request: PurchaseRequest,
-    ): PurchaseResponse = purchaseService.purchase(SecurityUtil.getCurrentUserId(), request)
+) : PurchaseApi {
+    @Operation(
+        summary = "아이템 구매",
+        description = "재화를 차감하고 아이템을 보유 목록에 추가합니다",
+    )
+    override fun purchaseItem(
+        @Valid purchaseRequest: ApiPurchaseRequest,
+    ): ResponseEntity<ApiPurchaseResponse> {
+        val userId = SecurityUtil.getCurrentUserId()
+        val local =
+            purchaseService.purchase(
+                userId = userId,
+                request = LocalPurchaseRequest(itemId = purchaseRequest.itemId),
+            )
+        return ResponseEntity.ok(
+            ApiPurchaseResponse(
+                purchasedItem =
+                    ApiPurchasedItemInfo(
+                        id = local.purchasedItem.id,
+                        slug = local.purchasedItem.slug,
+                        name = local.purchasedItem.name,
+                    ),
+                updatedCurrency = local.updatedCurrency.toApi(),
+                ownedItems = local.ownedItems,
+            ),
+        )
+    }
+
+    private fun LocalCurrencyResponse.toApi(): ApiCurrencyResponse =
+        ApiCurrencyResponse(
+            basicCoins = basicCoins,
+            specialCoins = specialCoins,
+            walkTokens = walkTokens,
+            readTokens = readTokens,
+            runTokens = runTokens,
+            drawTokens = drawTokens,
+            categoryTokens = categoryTokens.map { it.toApi() },
+        )
+
+    private fun LocalCategoryTokenAmount.toApi(): ApiCategoryTokenAmount =
+        ApiCategoryTokenAmount(
+            categoryId = categoryId,
+            categoryName = categoryName,
+            amount = amount,
+        )
 }
