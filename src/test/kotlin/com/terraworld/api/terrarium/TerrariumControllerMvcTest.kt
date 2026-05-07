@@ -1,0 +1,124 @@
+package com.terraworld.api.terrarium
+
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.terraworld.api.terrarium.dto.BackgroundInfo
+import com.terraworld.api.terrarium.dto.HeartResponse
+import com.terraworld.api.terrarium.dto.PlacedItemDetail
+import com.terraworld.api.terrarium.dto.TerrariumResponse
+import com.terraworld.api.terrarium.dto.UpgradeTerrariumResponse
+import com.terraworld.security.JwtAuthenticationFilter
+import com.terraworld.security.ratelimit.RateLimitFilter
+import com.terraworld.test.AbstractMvcTest
+import io.terraworld.api.model.EvolutionStage
+import io.terraworld.api.model.PlacementItem
+import io.terraworld.api.model.PlacementRequest
+import io.terraworld.api.model.UpgradeTerrariumRequest
+import org.junit.jupiter.api.Test
+import org.mockito.kotlin.any
+import org.mockito.kotlin.eq
+import org.mockito.kotlin.whenever
+import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc
+import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest
+import org.springframework.boot.test.mock.mockito.MockBean
+import org.springframework.http.MediaType
+import org.springframework.test.web.servlet.MockMvc
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
+
+@WebMvcTest(TerrariumController::class)
+@AutoConfigureMockMvc(addFilters = false)
+class TerrariumControllerMvcTest : AbstractMvcTest() {
+    @Autowired private lateinit var mockMvc: MockMvc
+
+    @Autowired private lateinit var objectMapper: ObjectMapper
+
+    @MockBean private lateinit var terrariumService: TerrariumService
+
+    @MockBean private lateinit var jwtAuthenticationFilter: JwtAuthenticationFilter
+
+    @MockBean private lateinit var rateLimitFilter: RateLimitFilter
+
+    @Test
+    fun `GET _api_v1_terrarium 200`() {
+        whenever(terrariumService.getTerrarium(eq(TEST_USER_ID))).thenReturn(stubTerrarium())
+
+        mockMvc
+            .perform(get("/api/v1/terrarium"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.terrariumId").value(1))
+            .andExpect(jsonPath("$.maxSlots").value(20))
+            .andExpect(jsonPath("$.evolutionStage").value("BOTTLE"))
+    }
+
+    @Test
+    fun `PUT _api_v1_terrarium_placements 200`() {
+        whenever(terrariumService.updatePlacements(eq(TEST_USER_ID), any())).thenReturn(stubTerrarium())
+
+        val payload = PlacementRequest(placedItems = listOf(PlacementItem(itemId = 1L, slotId = 0)))
+
+        mockMvc
+            .perform(
+                put("/api/v1/terrarium/placements")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(payload)),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.placedItems[0].itemId").value(10))
+    }
+
+    @Test
+    fun `POST _api_v1_terrarium_heart 200`() {
+        whenever(terrariumService.heartClick(eq(TEST_USER_ID)))
+            .thenReturn(HeartResponse(reward = 0.1, updatedBasicCoins = 100.1))
+
+        mockMvc
+            .perform(post("/api/v1/terrarium/heart"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.reward").value(0.1))
+            .andExpect(jsonPath("$.updatedBasicCoins").value(100.1))
+    }
+
+    @Test
+    fun `POST _api_v1_terrarium_upgrade 200`() {
+        whenever(terrariumService.upgrade(eq(TEST_USER_ID), any())).thenReturn(
+            UpgradeTerrariumResponse(terrarium = stubTerrarium(), message = "PALUDARIUM 으로 진화"),
+        )
+
+        mockMvc
+            .perform(
+                post("/api/v1/terrarium/upgrade")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(
+                        objectMapper.writeValueAsString(
+                            UpgradeTerrariumRequest(targetStage = EvolutionStage.PALUDARIUM),
+                        ),
+                    ),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.message").value("PALUDARIUM 으로 진화"))
+    }
+
+    private fun stubTerrarium() =
+        TerrariumResponse(
+            terrariumId = 1L,
+            background = BackgroundInfo(id = 1L, name = "기본 배경", assetUrl = "/bg.png"),
+            placedItems =
+                listOf(
+                    PlacedItemDetail(
+                        id = 1L,
+                        itemId = 10L,
+                        itemSlug = "item-10",
+                        itemImage = "/item.png",
+                        itemName = "테스트 아이템",
+                        itemLayout = "FOREGROUND",
+                        isAnimated = false,
+                        slotId = 0,
+                    ),
+                ),
+            maxSlots = 20,
+            evolutionStage = "BOTTLE",
+            unlockedStages = listOf("POT", "BOTTLE"),
+        )
+}
