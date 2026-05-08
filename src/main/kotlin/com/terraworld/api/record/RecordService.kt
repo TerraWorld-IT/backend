@@ -131,6 +131,7 @@ class RecordService(
                     duration = request.duration,
                     recordedDate = record.recordedDate,
                     createdAt = record.createdAt,
+                    photoUrl = record.photoUrl,
                 ),
             reward =
                 RewardInfo(
@@ -238,5 +239,6 @@ class RecordService(
             duration = null,
             recordedDate = recordedDate,
             createdAt = createdAt,
+            photoUrl = photoUrl,
         )
 }

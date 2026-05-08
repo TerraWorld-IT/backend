@@ -30,6 +30,8 @@ data class RecordResponse(
     val duration: Int?,
     val recordedDate: LocalDate,
     val createdAt: LocalDateTime,
+    @Schema(description = "첨부 사진 URL (업로드 시 등록)")
+    val photoUrl: String? = null,
 )
 
 @Schema(description = "기록 생성 + 보상 응답")
