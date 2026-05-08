@@ -1,12 +1,13 @@
 package com.terraworld.api.upload
 
-import com.terraworld.api.upload.dto.PhotoUploadResponse
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
+import io.terraworld.api.model.PhotoUploadResponse
 import org.springframework.http.HttpStatus
 import org.springframework.stereotype.Service
 import org.springframework.web.multipart.MultipartFile
 import org.springframework.web.server.ResponseStatusException
+import java.net.URI
 import java.util.Base64
 
 @Service
@@ -27,6 +28,10 @@ class PhotoUploadService {
      *   - DB 비대 (5MB 이미지 → ~7MB base64 텍스트)
      *   - SSR HTML payload 비대
      *   - 캐싱·CDN 활용 불가
+     *
+     * Service DTO migration (ARCH-008-phase-4): 반환 타입을 generated `PhotoUploadResponse`
+     * 로 직접 변경. controller 의 String→URI / String→OffsetDateTime 매퍼 제거.
+     * dataURL 은 `data:image/...` scheme 으로 valid URI — `URI.create()` 안전.
      */
     fun upload(file: MultipartFile): PhotoUploadResponse {
         if (file.isEmpty) {
@@ -48,7 +53,7 @@ class PhotoUploadService {
         val base64 = Base64.getEncoder().encodeToString(bytes)
         val dataUrl = "data:$mime;base64,$base64"
         return PhotoUploadResponse(
-            photoUrl = dataUrl,
+            photoUrl = URI.create(dataUrl),
             expiresAt = null,
         )
     }
