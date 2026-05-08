@@ -1,7 +1,7 @@
 package com.terraworld.api.purchase.dto
 
-import com.terraworld.api.user.dto.CurrencyResponse
 import io.swagger.v3.oas.annotations.media.Schema
+import io.terraworld.api.model.CurrencyResponse
 
 @Schema(description = "구매 요청")
 data class PurchaseRequest(

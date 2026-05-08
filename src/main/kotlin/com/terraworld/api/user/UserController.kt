@@ -1,6 +1,5 @@
 package com.terraworld.api.user
 
-import com.terraworld.api.shared.dto.toApi
 import com.terraworld.api.userdevice.UserDeviceService
 import com.terraworld.security.SecurityUtil
 import io.swagger.v3.oas.annotations.Operation
@@ -80,7 +79,7 @@ class UserController(
             email = email,
             nickname = nickname,
             role = ApiUserMeResponse.Role.forValue(role),
-            currency = currency.toApi(),
+            currency = currency,
             progress = progress.toApi(),
             ownedItems = ownedItems,
             placedItems = placedItems.map { it.toApi() },

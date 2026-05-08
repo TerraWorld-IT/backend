@@ -1,13 +1,13 @@
 package com.terraworld.api.attendance
 
 import com.terraworld.api.user.CurrencyBuilder
-import com.terraworld.api.user.dto.CurrencyResponse
 import com.terraworld.common.audit.AuditService
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
 import com.terraworld.domain.attendance.AttendanceLog
 import com.terraworld.domain.attendance.AttendanceLogRepository
 import com.terraworld.domain.user.UserRepository
+import io.terraworld.api.model.CurrencyResponse
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.LocalDate

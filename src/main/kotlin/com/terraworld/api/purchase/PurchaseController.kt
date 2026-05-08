@@ -1,6 +1,5 @@
 package com.terraworld.api.purchase
 
-import com.terraworld.api.shared.dto.toApi
 import com.terraworld.security.SecurityUtil
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.tags.Tag
@@ -49,7 +48,7 @@ class PurchaseController(
                         slug = local.purchasedItem.slug,
                         name = local.purchasedItem.name,
                     ),
-                updatedCurrency = local.updatedCurrency.toApi(),
+                updatedCurrency = local.updatedCurrency,
                 ownedItems = local.ownedItems,
             ),
         )

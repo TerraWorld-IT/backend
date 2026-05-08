@@ -1,6 +1,5 @@
 package com.terraworld.api.exchange
 
-import com.terraworld.api.shared.dto.toApi
 import com.terraworld.security.SecurityUtil
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.tags.Tag
@@ -46,7 +45,7 @@ class ExchangeController(
                         toAmount = local.exchanged.toAmount,
                         rate = local.exchanged.rate,
                     ),
-                updatedCurrency = local.updatedCurrency.toApi(),
+                updatedCurrency = local.updatedCurrency,
             ),
         )
     }
@@ -75,7 +74,7 @@ class ExchangeController(
                         toAmount = local.exchanged.toAmount,
                         rate = local.exchanged.rate,
                     ),
-                updatedCurrency = local.updatedCurrency.toApi(),
+                updatedCurrency = local.updatedCurrency,
             ),
         )
     }

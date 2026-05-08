@@ -1,7 +1,7 @@
 package com.terraworld.api.exchange.dto
 
-import com.terraworld.api.user.dto.CurrencyResponse
 import io.swagger.v3.oas.annotations.media.Schema
+import io.terraworld.api.model.CurrencyResponse
 import jakarta.validation.constraints.Positive
 
 @Schema(description = "스페셜→기본 코인 환전 요청")

@@ -1,6 +1,5 @@
 package com.terraworld.api.record
 
-import com.terraworld.api.shared.dto.toApi
 import com.terraworld.security.SecurityUtil
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.tags.Tag
@@ -116,7 +115,7 @@ class RecordController(
         ApiCreateRecordResponse(
             record = record.toApi(),
             reward = reward.toApi(),
-            updatedCurrency = updatedCurrency.toApi(),
+            updatedCurrency = updatedCurrency,
         )
 
     private fun LocalRecordResponse.toApi(): ApiRecordResponse =
