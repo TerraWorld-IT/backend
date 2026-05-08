@@ -11,7 +11,6 @@ import org.springframework.web.bind.annotation.RestController
 import com.terraworld.api.attendance.AttendanceCheckInResponse as LocalAttendanceCheckInResponse
 import com.terraworld.api.attendance.AttendanceStateResponse as LocalAttendanceStateResponse
 import io.terraworld.api.model.AdRewardResponse as ApiAdRewardResponse
-import io.terraworld.api.model.AdRewardResponseReward as ApiAdRewardResponseReward
 import io.terraworld.api.model.AttendanceCheckInResponse as ApiAttendanceCheckInResponse
 import io.terraworld.api.model.AttendanceCheckInResponseReward as ApiAttendanceCheckInResponseReward
 import io.terraworld.api.model.AttendanceResponse as ApiAttendanceResponse
@@ -45,15 +44,8 @@ class RewardController(
     )
     override fun claimAdReward(): ResponseEntity<ApiAdRewardResponse> {
         val userId = SecurityUtil.getCurrentUserId()
-        val local = rewardService.claimAdReward(userId)
-        return ResponseEntity.ok(
-            ApiAdRewardResponse(
-                reward = ApiAdRewardResponseReward(specialCoins = local.reward.specialCoins),
-                dailyWatchCount = local.dailyWatchCount,
-                remainingToday = local.remainingToday,
-                updatedCurrency = local.updatedCurrency,
-            ),
-        )
+        val response = rewardService.claimAdReward(userId)
+        return ResponseEntity.ok(response)
     }
 
     @Operation(summary = "출석 체크인", description = "오늘 1회 한정. 보상 + 갱신된 attendance 상태를 반환.")

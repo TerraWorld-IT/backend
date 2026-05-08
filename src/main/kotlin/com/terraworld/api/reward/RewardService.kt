@@ -1,7 +1,5 @@
 package com.terraworld.api.reward
 
-import com.terraworld.api.reward.dto.AdRewardPayload
-import com.terraworld.api.reward.dto.AdRewardResponsePayload
 import com.terraworld.api.user.CurrencyBuilder
 import com.terraworld.common.audit.AuditService
 import com.terraworld.common.exception.BusinessException
@@ -9,6 +7,8 @@ import com.terraworld.common.exception.ErrorCode
 import com.terraworld.domain.reward.AdWatchLog
 import com.terraworld.domain.reward.AdWatchLogRepository
 import com.terraworld.domain.user.UserRepository
+import io.terraworld.api.model.AdRewardResponse
+import io.terraworld.api.model.AdRewardResponseReward
 import org.springframework.dao.DataAccessException
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.stereotype.Service
@@ -33,8 +33,12 @@ class RewardService(
         private const val REDIS_DAILY_KEY_PREFIX = "terraworld:reward:ad:daily:"
     }
 
+    /**
+     * ARCH-008-phase-5: 반환 타입을 generated [AdRewardResponse] 로 직접. local
+     * `AdRewardResponsePayload` / `AdRewardPayload` 삭제. controller mapper 제거.
+     */
     @Transactional
-    fun claimAdReward(userId: String): AdRewardResponsePayload {
+    fun claimAdReward(userId: String): AdRewardResponse {
         val user =
             userRepository
                 .findById(userId)
@@ -83,8 +87,8 @@ class RewardService(
                     "dailyWatchCount" to newCount,
                 ),
         )
-        return AdRewardResponsePayload(
-            reward = AdRewardPayload(specialCoins = REWARD_SPECIAL_COINS),
+        return AdRewardResponse(
+            reward = AdRewardResponseReward(specialCoins = REWARD_SPECIAL_COINS),
             dailyWatchCount = newCount,
             remainingToday = DAILY_AD_LIMIT - newCount,
             updatedCurrency = currencyBuilder.build(userId, user),
