@@ -84,6 +84,16 @@ terraworld:
     # rate-limit subject falls back to remoteAddr of the connection.
     trust-forwarded-for: ${TERRAWORLD_RATE_LIMIT_TRUST_XFF:false}
 
+# SF-005 follow-up: photoUrl 도메인 화이트리스트.
+# RecordController.createRecord 가 받는 외부 URL 의 scheme/host/data MIME 을
+# PhotoUrlValidator 가 검증해 임의 외부 URL / javascript: / file: 등을 400 으로 차단.
+# 운영 단계에서 prod CDN 호스트 (cdn.terraworld.app 등) 를 환경변수로 좁혀 지정.
+app:
+  photo-url:
+    allowed-schemes: ${APP_PHOTO_URL_SCHEMES:https,data}
+    allowed-hosts: ${APP_PHOTO_URL_HOSTS:cdn.terraworld.app,terraworld.app}
+    allowed-data-mimes: ${APP_PHOTO_URL_DATA_MIMES:image/jpeg,image/png,image/webp}
+
 springdoc:
   api-docs:
     path: /api-docs

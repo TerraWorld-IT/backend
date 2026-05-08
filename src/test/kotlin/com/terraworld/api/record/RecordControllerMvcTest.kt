@@ -6,18 +6,24 @@ import com.terraworld.api.record.dto.CreateRecordResponse
 import com.terraworld.api.record.dto.RecordResponse
 import com.terraworld.api.record.dto.RewardInfo
 import com.terraworld.api.record.dto.StatisticsResponse
+import com.terraworld.api.upload.PhotoUrlValidator
 import com.terraworld.api.user.dto.CurrencyResponse
+import com.terraworld.common.exception.BusinessException
+import com.terraworld.common.exception.ErrorCode
+import com.terraworld.common.exception.GlobalExceptionHandler
 import com.terraworld.security.JwtAuthenticationFilter
 import com.terraworld.security.ratelimit.RateLimitFilter
 import com.terraworld.test.AbstractMvcTest
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
+import org.mockito.kotlin.doThrow
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.whenever
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest
 import org.springframework.boot.test.mock.mockito.MockBean
+import org.springframework.context.annotation.Import
 import org.springframework.data.domain.PageImpl
 import org.springframework.data.domain.PageRequest
 import org.springframework.http.MediaType
@@ -33,6 +39,7 @@ import io.terraworld.api.model.CreateRecordRequest as ApiCreateRecordRequest
 
 @WebMvcTest(RecordController::class)
 @AutoConfigureMockMvc(addFilters = false)
+@Import(GlobalExceptionHandler::class)
 class RecordControllerMvcTest : AbstractMvcTest() {
     @Autowired private lateinit var mockMvc: MockMvc
 
@@ -43,6 +50,10 @@ class RecordControllerMvcTest : AbstractMvcTest() {
     @MockBean private lateinit var jwtAuthenticationFilter: JwtAuthenticationFilter
 
     @MockBean private lateinit var rateLimitFilter: RateLimitFilter
+
+    // SF-005 follow-up: photoUrl 화이트리스트 검증기 — happy path 는 mockito default (no-op).
+    // negative case 에서만 doThrow 로 violation 흉내.
+    @MockBean private lateinit var photoUrlValidator: PhotoUrlValidator
 
     @Test
     fun `POST _api_v1_records 201`() {
@@ -100,6 +111,72 @@ class RecordControllerMvcTest : AbstractMvcTest() {
             .perform(delete("/api/v1/records/1"))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.message").exists())
+    }
+
+    // ── Negative cases ────────────────────────────────────────────────────────────
+
+    @Test
+    fun `POST _api_v1_records 400 INVALID_PHOTO_URL when validator rejects`() {
+        // photoUrl 화이트리스트 위반 시 controller 가 service 호출 전에 BusinessException → 400
+        doThrow(BusinessException(ErrorCode.INVALID_PHOTO_URL))
+            .whenever(photoUrlValidator)
+            .requireAllowed(any())
+
+        mockMvc
+            .perform(
+                post("/api/v1/records")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(
+                        objectMapper.writeValueAsString(
+                            ApiCreateRecordRequest(
+                                categoryId = 1L,
+                                photoUrl = java.net.URI.create("https://attacker.example/evil.jpg"),
+                            ),
+                        ),
+                    ),
+            ).andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value("INVALID_PHOTO_URL"))
+    }
+
+    @Test
+    fun `POST _api_v1_records 404 when category not found`() {
+        // service 가 BusinessException(CATEGORY_NOT_FOUND) throw → GlobalExceptionHandler 가 404 매핑
+        whenever(recordService.createRecord(eq(TEST_USER_ID), any()))
+            .thenThrow(BusinessException(ErrorCode.CATEGORY_NOT_FOUND))
+
+        mockMvc
+            .perform(
+                post("/api/v1/records")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(ApiCreateRecordRequest(categoryId = 9999L))),
+            ).andExpect(status().isNotFound)
+            .andExpect(jsonPath("$.code").value("CATEGORY_NOT_FOUND"))
+    }
+
+    @Test
+    fun `POST _api_v1_records 429 when daily limit exceeded`() {
+        whenever(recordService.createRecord(eq(TEST_USER_ID), any()))
+            .thenThrow(BusinessException(ErrorCode.DAILY_LIMIT_EXCEEDED))
+
+        mockMvc
+            .perform(
+                post("/api/v1/records")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(ApiCreateRecordRequest(categoryId = 1L))),
+            ).andExpect(status().isTooManyRequests)
+            .andExpect(jsonPath("$.code").value("DAILY_LIMIT_EXCEEDED"))
+    }
+
+    @Test
+    fun `DELETE _api_v1_records_id 404 when record not found`() {
+        // RecordService.deleteRecord 가 RECORD_NOT_FOUND throw → 404
+        whenever(recordService.deleteRecord(eq(TEST_USER_ID), eq(9999L)))
+            .thenThrow(BusinessException(ErrorCode.RECORD_NOT_FOUND))
+
+        mockMvc
+            .perform(delete("/api/v1/records/9999"))
+            .andExpect(status().isNotFound)
+            .andExpect(jsonPath("$.code").value("RECORD_NOT_FOUND"))
     }
 
     private fun stubRecord() =

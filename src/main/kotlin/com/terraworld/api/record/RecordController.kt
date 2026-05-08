@@ -48,6 +48,7 @@ import io.terraworld.api.model.StatisticsResponse as ApiStatisticsResponse
 @RequestMapping("/api/v1")
 class RecordController(
     private val recordService: RecordService,
+    private val photoUrlValidator: com.terraworld.api.upload.PhotoUrlValidator,
 ) : RecordApi {
     @Operation(
         summary = "활동 기록 생성",
@@ -57,6 +58,9 @@ class RecordController(
         @Valid createRecordRequest: ApiCreateRecordRequest,
     ): ResponseEntity<ApiCreateRecordResponse> {
         val userId = SecurityUtil.getCurrentUserId()
+        // SF-005 follow-up: photoUrl 도메인 화이트리스트 (scheme/host/data MIME)
+        val photoUrlString = createRecordRequest.photoUrl?.toString()
+        photoUrlValidator.requireAllowed(photoUrlString)
         val local =
             recordService.createRecord(
                 userId = userId,
@@ -65,7 +69,7 @@ class RecordController(
                         categoryId = createRecordRequest.categoryId,
                         duration = createRecordRequest.duration,
                         note = createRecordRequest.note,
-                        photoUrl = createRecordRequest.photoUrl?.toString(),
+                        photoUrl = photoUrlString,
                         partnerUserId = createRecordRequest.partnerUserId,
                     ),
             )

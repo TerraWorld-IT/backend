@@ -46,6 +46,9 @@ enum class ErrorCode(
     ATTENDANCE_ALREADY_CHECKED(HttpStatus.CONFLICT, "오늘 이미 출석 보상을 받았습니다"),
     INVALID_PARTNER(HttpStatus.BAD_REQUEST, "함께 기록할 수 없는 사용자입니다"),
 
+    // Phase 4 — photoUrl 도메인 화이트리스트 (SF-005 follow-up)
+    INVALID_PHOTO_URL(HttpStatus.BAD_REQUEST, "허용되지 않은 사진 URL 입니다"),
+
     // General
     BAD_REQUEST(HttpStatus.BAD_REQUEST, "잘못된 요청입니다"),
     FORBIDDEN(HttpStatus.FORBIDDEN, "권한이 없습니다"),
