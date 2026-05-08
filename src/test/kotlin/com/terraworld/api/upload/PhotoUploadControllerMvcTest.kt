@@ -1,9 +1,9 @@
 package com.terraworld.api.upload
 
-import com.terraworld.api.upload.dto.PhotoUploadResponse
 import com.terraworld.security.JwtAuthenticationFilter
 import com.terraworld.security.ratelimit.RateLimitFilter
 import com.terraworld.test.AbstractMvcTest
+import io.terraworld.api.model.PhotoUploadResponse
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.whenever
@@ -16,6 +16,7 @@ import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
+import java.net.URI
 
 @WebMvcTest(PhotoUploadController::class)
 @AutoConfigureMockMvc(addFilters = false)
@@ -32,7 +33,7 @@ class PhotoUploadControllerMvcTest : AbstractMvcTest() {
     fun `POST _api_v1_uploads_photo 200`() {
         whenever(photoUploadService.upload(any())).thenReturn(
             PhotoUploadResponse(
-                photoUrl = "data:image/jpeg;base64,abc123",
+                photoUrl = URI.create("data:image/jpeg;base64,abc123"),
                 expiresAt = null,
             ),
         )

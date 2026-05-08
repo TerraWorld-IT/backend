@@ -84,7 +84,7 @@ class PhotoUploadServiceTest {
                 byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xE0.toByte()),
             )
         val response = service.upload(jpeg)
-        assertTrue(response.photoUrl.startsWith("data:image/jpeg;base64,"))
+        assertTrue(response.photoUrl.toString().startsWith("data:image/jpeg;base64,"))
         assertNull(response.expiresAt)
     }
 
@@ -103,7 +103,7 @@ class PhotoUploadServiceTest {
             )
         val png = MockMultipartFile("file", "ok.png", "image/png", pngHeader + byteArrayOf(0x00, 0x01))
         val response = service.upload(png)
-        assertTrue(response.photoUrl.startsWith("data:image/png;base64,"))
+        assertTrue(response.photoUrl.toString().startsWith("data:image/png;base64,"))
     }
 
     @Test
@@ -130,7 +130,7 @@ class PhotoUploadServiceTest {
                 ),
             )
         val response = service.upload(webp)
-        assertTrue(response.photoUrl.startsWith("data:image/webp;base64,"))
+        assertTrue(response.photoUrl.toString().startsWith("data:image/webp;base64,"))
     }
 
     @Test
@@ -143,7 +143,7 @@ class PhotoUploadServiceTest {
                 byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte()),
             )
         val response = service.upload(upper)
-        assertTrue(response.photoUrl.startsWith("data:image/jpeg;base64,"))
+        assertTrue(response.photoUrl.toString().startsWith("data:image/jpeg;base64,"))
     }
 
     @Test
