@@ -5,6 +5,7 @@ import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.tags.Tag
 import io.terraworld.api.api.TerrariumApi
 import jakarta.validation.Valid
+import org.slf4j.LoggerFactory
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
@@ -47,6 +48,8 @@ import io.terraworld.api.model.WiltingState as ApiWiltingState
 class TerrariumController(
     private val terrariumService: TerrariumService,
 ) : TerrariumApi {
+    private val log = LoggerFactory.getLogger(javaClass)
+
     @Operation(summary = "테라리움 상태 조회")
     override fun getTerrarium(): ResponseEntity<ApiTerrariumResponse> {
         val local = terrariumService.getTerrarium(SecurityUtil.getCurrentUserId())
@@ -75,9 +78,17 @@ class TerrariumController(
             ApiPlacementResponse(
                 placedItems =
                     local.placedItems.map { detail ->
+                        // SF-003: slotId=0 은 BACKGROUND 슬롯으로 의미 있는 값.
+                        // service 가 null 을 반환했다면 미배치 상태인데 이를 0 으로
+                        // 변환하면 zombie placement 가 발생한다. fail-fast 로 service
+                        // contract 위반을 즉시 가시화.
+                        val resolvedSlotId =
+                            checkNotNull(detail.slotId) {
+                                "TerrariumService.updatePlacements 가 slotId=null 인 PlacedItem(itemId=${detail.itemId}) 을 반환했다 — service contract 위반"
+                            }
                         ApiPlacementResponseItem(
                             itemId = detail.itemId,
-                            slotId = detail.slotId ?: 0,
+                            slotId = resolvedSlotId,
                             itemSlug = detail.itemSlug,
                         )
                     },
@@ -155,7 +166,18 @@ class TerrariumController(
 
     /**
      * service 의 String evolutionStage 를 generated enum 으로 매핑.
-     * 알 수 없는 값은 forValue 의 throw 회피 위해 null 반환.
+     * spec 에 없는 값이면 null + WARN 로그 (SF-002) — 운영 대시보드가 spec ↔
+     * DB drift 를 사전 감지하도록 한다. throw 안 하는 이유: 사용자 응답 흐름을
+     * 막지 않기 위함. 운영 정책상 fail-fast 로 전환하려면 forValue 직접 호출 +
+     * @ExceptionHandler 도입 검토.
      */
-    private fun String.toEvolutionStageOrNull(): ApiEvolutionStage? = runCatching { ApiEvolutionStage.forValue(this) }.getOrNull()
+    private fun String.toEvolutionStageOrNull(): ApiEvolutionStage? =
+        runCatching { ApiEvolutionStage.forValue(this) }
+            .onFailure {
+                log.warn(
+                    "spec drift: evolution_stage='{}' is not in OpenAPI spec — returning null (expected one of: {})",
+                    this,
+                    ApiEvolutionStage.entries.joinToString { it.value },
+                )
+            }.getOrNull()
 }

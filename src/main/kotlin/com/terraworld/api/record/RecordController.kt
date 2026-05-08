@@ -125,9 +125,11 @@ class RecordController(
             categoryEmoji = categoryEmoji,
             memo = memo,
             duration = duration,
-            // local RecordResponse 는 photoUrl 미보유 — 후속 슬라이스에서 service
-            // 가 generated 직접 반환하도록 마이그레이션 시 채워질 예정.
-            photoUrl = null,
+            // SF-004/005: 이전엔 하드코딩 null. 이제 service 가 ActivityRecord.photoUrl
+            // 을 RecordResponse.photoUrl 로 채워주므로 그대로 매핑.
+            // 잘못된 String 이 들어오면 URI.create 가 IllegalArgumentException →
+            // global handler 가 500 으로 매핑 (silent loss 대신 fail-fast).
+            photoUrl = photoUrl?.let { java.net.URI.create(it) },
         )
 
     private fun LocalRewardInfo.toApi(): ApiRewardInfo =
