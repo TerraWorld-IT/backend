@@ -7,6 +7,9 @@ import com.terraworld.api.attendance.AttendanceStateResponse
 import com.terraworld.api.reward.dto.AdRewardPayload
 import com.terraworld.api.reward.dto.AdRewardResponsePayload
 import com.terraworld.api.user.dto.CurrencyResponse
+import com.terraworld.common.exception.BusinessException
+import com.terraworld.common.exception.ErrorCode
+import com.terraworld.common.exception.GlobalExceptionHandler
 import com.terraworld.security.JwtAuthenticationFilter
 import com.terraworld.security.ratelimit.RateLimitFilter
 import com.terraworld.test.AbstractMvcTest
@@ -17,6 +20,7 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest
 import org.springframework.boot.test.mock.mockito.MockBean
+import org.springframework.context.annotation.Import
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
@@ -25,6 +29,7 @@ import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 
 @WebMvcTest(RewardController::class)
 @AutoConfigureMockMvc(addFilters = false)
+@Import(GlobalExceptionHandler::class)
 class RewardControllerMvcTest : AbstractMvcTest() {
     @Autowired private lateinit var mockMvc: MockMvc
 
@@ -95,6 +100,30 @@ class RewardControllerMvcTest : AbstractMvcTest() {
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.reward.basicCoins").value(5))
             .andExpect(jsonPath("$.attendance.streak").value(4))
+    }
+
+    // ── Negative cases ────────────────────────────────────────────────────────────
+
+    @Test
+    fun `POST _api_v1_rewards_ad 429 when daily limit exceeded`() {
+        whenever(rewardService.claimAdReward(eq(TEST_USER_ID)))
+            .thenThrow(BusinessException(ErrorCode.AD_DAILY_LIMIT_EXCEEDED))
+
+        mockMvc
+            .perform(post("/api/v1/rewards/ad"))
+            .andExpect(status().isTooManyRequests)
+            .andExpect(jsonPath("$.code").value("AD_DAILY_LIMIT_EXCEEDED"))
+    }
+
+    @Test
+    fun `POST _api_v1_rewards_attendance 409 when already checked today`() {
+        whenever(attendanceService.checkIn(eq(TEST_USER_ID)))
+            .thenThrow(BusinessException(ErrorCode.ATTENDANCE_ALREADY_CHECKED))
+
+        mockMvc
+            .perform(post("/api/v1/rewards/attendance"))
+            .andExpect(status().isConflict)
+            .andExpect(jsonPath("$.code").value("ATTENDANCE_ALREADY_CHECKED"))
     }
 
     private fun currency() =
