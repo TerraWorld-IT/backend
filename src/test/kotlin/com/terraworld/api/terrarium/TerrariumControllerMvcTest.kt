@@ -6,6 +6,9 @@ import com.terraworld.api.terrarium.dto.HeartResponse
 import com.terraworld.api.terrarium.dto.PlacedItemDetail
 import com.terraworld.api.terrarium.dto.TerrariumResponse
 import com.terraworld.api.terrarium.dto.UpgradeTerrariumResponse
+import com.terraworld.common.exception.BusinessException
+import com.terraworld.common.exception.ErrorCode
+import com.terraworld.common.exception.GlobalExceptionHandler
 import com.terraworld.security.JwtAuthenticationFilter
 import com.terraworld.security.ratelimit.RateLimitFilter
 import com.terraworld.test.AbstractMvcTest
@@ -21,6 +24,7 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest
 import org.springframework.boot.test.mock.mockito.MockBean
+import org.springframework.context.annotation.Import
 import org.springframework.http.MediaType
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
@@ -31,6 +35,7 @@ import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 
 @WebMvcTest(TerrariumController::class)
 @AutoConfigureMockMvc(addFilters = false)
+@Import(GlobalExceptionHandler::class)
 class TerrariumControllerMvcTest : AbstractMvcTest() {
     @Autowired private lateinit var mockMvc: MockMvc
 
@@ -98,6 +103,54 @@ class TerrariumControllerMvcTest : AbstractMvcTest() {
                     ),
             ).andExpect(status().isOk)
             .andExpect(jsonPath("$.message").value("PALUDARIUM 으로 진화"))
+    }
+
+    // ── Negative cases ────────────────────────────────────────────────────────────
+
+    @Test
+    fun `GET _api_v1_terrarium 404 when terrarium not found`() {
+        whenever(terrariumService.getTerrarium(eq(TEST_USER_ID)))
+            .thenThrow(BusinessException(ErrorCode.TERRARIUM_NOT_FOUND))
+
+        mockMvc
+            .perform(get("/api/v1/terrarium"))
+            .andExpect(status().isNotFound)
+            .andExpect(jsonPath("$.code").value("TERRARIUM_NOT_FOUND"))
+    }
+
+    @Test
+    fun `PUT _api_v1_terrarium_placements 400 when invalid slot`() {
+        whenever(terrariumService.updatePlacements(eq(TEST_USER_ID), any()))
+            .thenThrow(BusinessException(ErrorCode.INVALID_SLOT))
+
+        val payload = PlacementRequest(placedItems = listOf(PlacementItem(itemId = 1L, slotId = 99)))
+
+        mockMvc
+            .perform(
+                put("/api/v1/terrarium/placements")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(objectMapper.writeValueAsString(payload)),
+            ).andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value("INVALID_SLOT"))
+    }
+
+    @Test
+    fun `POST _api_v1_terrarium_upgrade 403 when forbidden evolution`() {
+        // 사용자 레벨 < 진화 요구 레벨 또는 entitlement 부재 시 controller 가 FORBIDDEN_EVOLUTION 으로 차단
+        whenever(terrariumService.upgrade(eq(TEST_USER_ID), any()))
+            .thenThrow(BusinessException(ErrorCode.FORBIDDEN_EVOLUTION))
+
+        mockMvc
+            .perform(
+                post("/api/v1/terrarium/upgrade")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(
+                        objectMapper.writeValueAsString(
+                            UpgradeTerrariumRequest(targetStage = EvolutionStage.WORLD),
+                        ),
+                    ),
+            ).andExpect(status().isForbidden)
+            .andExpect(jsonPath("$.code").value("FORBIDDEN_EVOLUTION"))
     }
 
     private fun stubTerrarium() =
