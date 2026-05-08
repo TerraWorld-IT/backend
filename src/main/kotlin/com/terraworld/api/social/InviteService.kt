@@ -5,6 +5,9 @@ import com.terraworld.common.exception.ErrorCode
 import com.terraworld.domain.social.Invite
 import com.terraworld.domain.social.InviteRepository
 import com.terraworld.domain.user.UserRepository
+import io.terraworld.api.model.InviteAcceptResponse
+import io.terraworld.api.model.InviteAcceptResponseReward
+import io.terraworld.api.model.InviteResponse
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -31,8 +34,11 @@ class InviteService(
 
     private val random = SecureRandom()
 
+    /**
+     * ARCH-008-phase-10: 반환 타입을 generated [InviteResponse] 직접 사용.
+     */
     @Transactional
-    fun createInvite(inviterUserId: String): InviteCreateResponse {
+    fun createInvite(inviterUserId: String): InviteResponse {
         userRepository
             .findById(inviterUserId)
             .orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) }
@@ -44,18 +50,21 @@ class InviteService(
                 Invite(code = code, inviterUserId = inviterUserId, expiresAt = expiresAt),
             )
 
-        return InviteCreateResponse(
+        return InviteResponse(
             inviteCode = saved.code,
             inviteLink = URI.create("$inviteBaseUrl/${saved.code}"),
             expiresAt = saved.expiresAt.toInstant(ZoneOffset.UTC).atOffset(ZoneOffset.UTC),
         )
     }
 
+    /**
+     * ARCH-008-phase-10: 반환 타입을 generated [InviteAcceptResponse] 직접 사용.
+     */
     @Transactional
     fun acceptInvite(
         inviteeUserId: String,
         code: String,
-    ): InviteAcceptResponsePayload {
+    ): InviteAcceptResponse {
         val invite =
             inviteRepository
                 .findByCode(code)
@@ -83,9 +92,9 @@ class InviteService(
         invite.acceptedAt = LocalDateTime.now()
         inviteRepository.save(invite)
 
-        return InviteAcceptResponsePayload(
+        return InviteAcceptResponse(
             message = "초대 수락 완료: 초대자와 함께 스페셜 코인 ${ACCEPT_REWARD_SPECIAL_COINS}개씩 지급되었습니다.",
-            reward = InviteAcceptReward(specialCoins = ACCEPT_REWARD_SPECIAL_COINS),
+            reward = InviteAcceptResponseReward(specialCoins = ACCEPT_REWARD_SPECIAL_COINS),
         )
     }
 
