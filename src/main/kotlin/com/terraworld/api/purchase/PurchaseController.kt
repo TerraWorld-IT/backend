@@ -11,15 +11,13 @@ import org.springframework.web.bind.annotation.RestController
 import com.terraworld.api.purchase.dto.PurchaseRequest as LocalPurchaseRequest
 import io.terraworld.api.model.PurchaseRequest as ApiPurchaseRequest
 import io.terraworld.api.model.PurchaseResponse as ApiPurchaseResponse
-import io.terraworld.api.model.PurchasedItemInfo as ApiPurchasedItemInfo
 
 /**
  * PurchaseApi (1 endpoint — purchaseItem) implement. spec PR #12 의 tag
  * 분리 (Shop ↔ Purchase) 결과 PurchaseApi 신규 생성됨.
  *
- * PurchaseService 의 시그니처 (local DTO) 는 그대로 두고 controller 에서
- * generated ↔ local 변환만 수행 — PurchaseServiceTest 등 기존 테스트
- * 영향 0.
+ * ARCH-008-phase-7 후: PurchaseService 가 generated [ApiPurchaseResponse] 직접 반환.
+ * controller 매퍼 제거. local PurchaseRequest 만 잔존 (request DTO 는 별도 phase).
  */
 @Tag(name = "Purchase", description = "구매 API")
 @RestController
@@ -35,22 +33,11 @@ class PurchaseController(
         @Valid purchaseRequest: ApiPurchaseRequest,
     ): ResponseEntity<ApiPurchaseResponse> {
         val userId = SecurityUtil.getCurrentUserId()
-        val local =
+        val response =
             purchaseService.purchase(
                 userId = userId,
                 request = LocalPurchaseRequest(itemId = purchaseRequest.itemId),
             )
-        return ResponseEntity.ok(
-            ApiPurchaseResponse(
-                purchasedItem =
-                    ApiPurchasedItemInfo(
-                        id = local.purchasedItem.id,
-                        slug = local.purchasedItem.slug,
-                        name = local.purchasedItem.name,
-                    ),
-                updatedCurrency = local.updatedCurrency,
-                ownedItems = local.ownedItems,
-            ),
-        )
+        return ResponseEntity.ok(response)
     }
 }
