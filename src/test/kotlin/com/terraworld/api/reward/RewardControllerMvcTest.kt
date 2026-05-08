@@ -4,14 +4,14 @@ import com.terraworld.api.attendance.AttendanceCheckInResponse
 import com.terraworld.api.attendance.AttendanceRewardInfo
 import com.terraworld.api.attendance.AttendanceService
 import com.terraworld.api.attendance.AttendanceStateResponse
-import com.terraworld.api.reward.dto.AdRewardPayload
-import com.terraworld.api.reward.dto.AdRewardResponsePayload
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
 import com.terraworld.common.exception.GlobalExceptionHandler
 import com.terraworld.security.JwtAuthenticationFilter
 import com.terraworld.security.ratelimit.RateLimitFilter
 import com.terraworld.test.AbstractMvcTest
+import io.terraworld.api.model.AdRewardResponse
+import io.terraworld.api.model.AdRewardResponseReward
 import io.terraworld.api.model.CurrencyResponse
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.eq
@@ -44,8 +44,8 @@ class RewardControllerMvcTest : AbstractMvcTest() {
     @Test
     fun `POST _api_v1_rewards_ad 200`() {
         whenever(rewardService.claimAdReward(eq(TEST_USER_ID))).thenReturn(
-            AdRewardResponsePayload(
-                reward = AdRewardPayload(specialCoins = 1),
+            AdRewardResponse(
+                reward = AdRewardResponseReward(specialCoins = 1),
                 dailyWatchCount = 1,
                 remainingToday = 4,
                 updatedCurrency = currency(),
