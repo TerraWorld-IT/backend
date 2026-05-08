@@ -1,10 +1,10 @@
 package com.terraworld.api.ranking
 
-import com.terraworld.api.ranking.dto.RankingEntry
-import com.terraworld.api.ranking.dto.RankingResponse
 import com.terraworld.security.JwtAuthenticationFilter
 import com.terraworld.security.ratelimit.RateLimitFilter
 import com.terraworld.test.AbstractMvcTest
+import io.terraworld.api.model.RankingEntry
+import io.terraworld.api.model.RankingResponse
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.whenever
@@ -39,9 +39,9 @@ class RankingControllerMvcTest : AbstractMvcTest() {
             ),
         ).thenReturn(
             RankingResponse(
-                type = "engagement",
+                type = RankingResponse.Type.forValue("engagement"),
                 yearMonth = "2026-04",
-                entries =
+                propertyEntries =
                     listOf(
                         RankingEntry(rank = 1, userId = "u1", nickname = "1등", score = 42, isSelf = false),
                     ),

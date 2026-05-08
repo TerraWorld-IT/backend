@@ -1,12 +1,12 @@
 package com.terraworld.api.ranking
 
-import com.terraworld.api.ranking.dto.RankingEntry
-import com.terraworld.api.ranking.dto.RankingResponse
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
 import com.terraworld.domain.record.RecordRepository
 import com.terraworld.domain.terrarium.TerrariumPlacementHistoryRepository
 import com.terraworld.domain.user.UserRepository
+import io.terraworld.api.model.RankingEntry
+import io.terraworld.api.model.RankingResponse
 import org.springframework.data.domain.PageRequest
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -28,6 +28,10 @@ class RankingService(
         private const val DEFAULT_LIMIT = 50
     }
 
+    /**
+     * ARCH-008-phase-9: 반환 타입을 generated [RankingResponse] 직접. local DTO 삭제 + controller 매퍼 제거.
+     * `type` 은 generated enum 으로 — `forValue("engagement"/"decoration")` 안전 (hardcoded).
+     */
     @Transactional(readOnly = true)
     fun getMonthly(
         currentUserId: String,
@@ -64,21 +68,14 @@ class RankingService(
         val myRank = computeMyRank(entries, currentUserId, myScore)
 
         return RankingResponse(
-            type = "engagement",
+            type = RankingResponse.Type.forValue("engagement"),
             yearMonth = ym.format(YEAR_MONTH_FMT),
-            entries = entries,
+            propertyEntries = entries,
             myRank = myRank,
             myScore = if (myScore > 0) myScore else null,
         )
     }
 
-    /**
-     * decoration 랭킹 — `terrarium_placement_history` 의 월간 신규 배치 카운트 기반.
-     *
-     * Repository 가 없는 테스트 환경(또는 마이그레이션 V7 미적용 환경)에서는
-     * 안전하게 빈 entries 반환. 추후 `TerrariumService` 의 placement upsert 흐름에
-     * history insert 가 wiring 되면 실제 카운트가 채워진다.
-     */
     private fun buildDecorationRanking(
         currentUserId: String,
         ym: YearMonth,
@@ -93,9 +90,9 @@ class RankingService(
         val myRank = computeMyRank(entries, currentUserId, myScore)
 
         return RankingResponse(
-            type = "decoration",
+            type = RankingResponse.Type.forValue("decoration"),
             yearMonth = ym.format(YEAR_MONTH_FMT),
-            entries = entries,
+            propertyEntries = entries,
             myRank = myRank,
             myScore = if (myScore > 0) myScore else null,
         )
@@ -106,11 +103,9 @@ class RankingService(
         rows: List<Array<Any>>,
     ): List<RankingEntry> {
         if (rows.isEmpty()) return emptyList()
-        // 닉네임 일괄 조회 (N+1 회피)
         val userIds = rows.map { it[0] as String }
         val nicknameById = userRepository.findAllById(userIds).associate { it.id to it.nickname }
 
-        // 동점자 처리 (올림픽 방식: 같은 점수는 같은 rank, 다음 rank skip)
         var lastScore: Long = -1
         var rank = 0
         val entries = mutableListOf<RankingEntry>()
@@ -133,18 +128,15 @@ class RankingService(
         return entries
     }
 
-    /**
-     * entries 안에 currentUserId 가 있으면 그 rank, 아니면 myScore 기반으로 entries 의 마지막 rank + 1 미만이라 가정해 nullable 반환.
-     */
     private fun computeMyRank(
         entries: List<RankingEntry>,
         currentUserId: String,
         myScore: Long,
     ): Int? {
         if (myScore <= 0) return null
-        val selfEntry = entries.firstOrNull { it.isSelf }
+        // generated RankingEntry.isSelf 는 nullable Boolean 이므로 `== true` 로 unwrap
+        val selfEntry = entries.firstOrNull { it.isSelf == true }
         if (selfEntry != null) return selfEntry.rank
-        // entries 밖 — 정확한 글로벌 순위는 별도 쿼리 필요. 여기서는 "entries.last.rank + 1 이상" 표시만
         val lastRank = entries.lastOrNull()?.rank ?: 0
         return if (lastRank == 0) 1 else lastRank + 1
     }
