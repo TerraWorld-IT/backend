@@ -1,10 +1,6 @@
 package com.terraworld.api.user
 
 import com.fasterxml.jackson.databind.ObjectMapper
-import com.terraworld.api.user.dto.EntitlementsResponse
-import com.terraworld.api.user.dto.PlacedItemResponse
-import com.terraworld.api.user.dto.ProgressResponse
-import com.terraworld.api.user.dto.UserMeResponse
 import com.terraworld.api.userdevice.DeviceRegistrationResponse
 import com.terraworld.api.userdevice.UserDeviceService
 import com.terraworld.common.exception.BusinessException
@@ -14,6 +10,10 @@ import com.terraworld.security.JwtAuthenticationFilter
 import com.terraworld.security.ratelimit.RateLimitFilter
 import com.terraworld.test.AbstractMvcTest
 import io.terraworld.api.model.CurrencyResponse
+import io.terraworld.api.model.EntitlementsResponse
+import io.terraworld.api.model.PlacedItemResponse
+import io.terraworld.api.model.ProgressResponse
+import io.terraworld.api.model.UserMeResponse
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.eq
@@ -68,7 +68,7 @@ class UserControllerMvcTest : AbstractMvcTest() {
                     userId = TEST_USER_ID,
                     email = TEST_USER_EMAIL,
                     nickname = "테스트유저",
-                    role = "USER",
+                    role = UserMeResponse.Role.USER,
                     currency =
                         CurrencyResponse(
                             basicCoins = 100.0,
