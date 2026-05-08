@@ -1,6 +1,7 @@
 package com.terraworld.api.record.dto
 
 import io.swagger.v3.oas.annotations.media.Schema
+import io.terraworld.api.model.CurrencyResponse
 import jakarta.validation.constraints.Positive
 import java.time.LocalDate
 import java.time.LocalDateTime
@@ -38,7 +39,7 @@ data class RecordResponse(
 data class CreateRecordResponse(
     val record: RecordResponse,
     val reward: RewardInfo,
-    val updatedCurrency: com.terraworld.api.user.dto.CurrencyResponse,
+    val updatedCurrency: CurrencyResponse,
 )
 
 @Schema(description = "보상 정보")

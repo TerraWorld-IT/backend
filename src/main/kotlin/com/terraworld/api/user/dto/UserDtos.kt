@@ -1,25 +1,7 @@
 package com.terraworld.api.user.dto
 
 import io.swagger.v3.oas.annotations.media.Schema
-
-@Schema(description = "재화 정보")
-data class CurrencyResponse(
-    val basicCoins: Double,
-    val specialCoins: Double,
-    val walkTokens: Double,
-    val readTokens: Double,
-    val runTokens: Double,
-    val drawTokens: Double,
-    @Schema(description = "모든 카테고리 토큰 잔액 (시스템 4종 + 커스텀)")
-    val categoryTokens: List<CategoryTokenAmount> = emptyList(),
-)
-
-@Schema(description = "카테고리별 토큰 잔액")
-data class CategoryTokenAmount(
-    val categoryId: Long,
-    val categoryName: String,
-    val amount: Double,
-)
+import io.terraworld.api.model.CurrencyResponse
 
 @Schema(description = "사용자 entitlement (유료/이벤트 해금 권리)")
 data class EntitlementsResponse(

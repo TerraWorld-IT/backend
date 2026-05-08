@@ -1,10 +1,10 @@
 package com.terraworld.api.user
 
-import com.terraworld.api.user.dto.CategoryTokenAmount
-import com.terraworld.api.user.dto.CurrencyResponse
 import com.terraworld.domain.user.User
 import com.terraworld.domain.user.UserToken
 import com.terraworld.domain.user.UserTokenRepository
+import io.terraworld.api.model.CategoryTokenAmount
+import io.terraworld.api.model.CurrencyResponse
 import org.springframework.stereotype.Component
 
 /**
@@ -14,6 +14,10 @@ import org.springframework.stereotype.Component
  * legacy 4 fields (walkTokens / readTokens / runTokens / drawTokens) for back-compat
  * and simultaneously populates [CurrencyResponse.categoryTokens] with EVERY token
  * row (system + custom).
+ *
+ * ARCH-008 cross-cutting cleanup: 반환 타입을 generated `io.terraworld.api.model.CurrencyResponse`
+ * 직접 사용. 5 controllers 의 `local.updatedCurrency.toApi()` 매퍼 + `shared/dto/CurrencyMappers.kt`
+ * + `user/dto/{CurrencyResponse,CategoryTokenAmount}` 모두 obsolete.
  */
 @Component
 class CurrencyBuilder(

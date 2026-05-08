@@ -6,13 +6,13 @@ import com.terraworld.api.attendance.AttendanceService
 import com.terraworld.api.attendance.AttendanceStateResponse
 import com.terraworld.api.reward.dto.AdRewardPayload
 import com.terraworld.api.reward.dto.AdRewardResponsePayload
-import com.terraworld.api.user.dto.CurrencyResponse
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
 import com.terraworld.common.exception.GlobalExceptionHandler
 import com.terraworld.security.JwtAuthenticationFilter
 import com.terraworld.security.ratelimit.RateLimitFilter
 import com.terraworld.test.AbstractMvcTest
+import io.terraworld.api.model.CurrencyResponse
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.whenever

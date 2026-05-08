@@ -2,13 +2,13 @@ package com.terraworld.api.exchange
 
 import com.terraworld.api.exchange.dto.*
 import com.terraworld.api.user.CurrencyBuilder
-import com.terraworld.api.user.dto.CurrencyResponse
 import com.terraworld.common.audit.AuditService
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
 import com.terraworld.domain.exchange.TokenExchangeRateRepository
 import com.terraworld.domain.user.UserRepository
 import com.terraworld.domain.user.UserTokenRepository
+import io.terraworld.api.model.CurrencyResponse
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import kotlin.math.floor

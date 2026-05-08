@@ -1,7 +1,6 @@
 package com.terraworld.api.user
 
 import com.fasterxml.jackson.databind.ObjectMapper
-import com.terraworld.api.user.dto.CurrencyResponse
 import com.terraworld.api.user.dto.EntitlementsResponse
 import com.terraworld.api.user.dto.PlacedItemResponse
 import com.terraworld.api.user.dto.ProgressResponse
@@ -14,6 +13,7 @@ import com.terraworld.common.exception.GlobalExceptionHandler
 import com.terraworld.security.JwtAuthenticationFilter
 import com.terraworld.security.ratelimit.RateLimitFilter
 import com.terraworld.test.AbstractMvcTest
+import io.terraworld.api.model.CurrencyResponse
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.eq

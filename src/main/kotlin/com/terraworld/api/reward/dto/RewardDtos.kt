@@ -1,6 +1,6 @@
 package com.terraworld.api.reward.dto
 
-import com.terraworld.api.user.dto.CurrencyResponse
+import io.terraworld.api.model.CurrencyResponse
 
 /**
  * RewardService.claimAdReward 의 반환 타입.

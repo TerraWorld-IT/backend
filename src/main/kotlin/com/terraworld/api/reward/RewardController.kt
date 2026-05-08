@@ -1,7 +1,6 @@
 package com.terraworld.api.reward
 
 import com.terraworld.api.attendance.AttendanceService
-import com.terraworld.api.shared.dto.toApi
 import com.terraworld.security.SecurityUtil
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.tags.Tag
@@ -52,7 +51,7 @@ class RewardController(
                 reward = ApiAdRewardResponseReward(specialCoins = local.reward.specialCoins),
                 dailyWatchCount = local.dailyWatchCount,
                 remainingToday = local.remainingToday,
-                updatedCurrency = local.updatedCurrency.toApi(),
+                updatedCurrency = local.updatedCurrency,
             ),
         )
     }
@@ -79,7 +78,7 @@ class RewardController(
                     bonus = reward.bonus,
                 ),
             attendance = attendance.toApi(),
-            currency = currency.toApi(),
+            currency = currency,
         )
 
     private fun LocalAttendanceStateResponse.toApi(): ApiAttendanceResponse =
