@@ -1,5 +1,7 @@
 package com.terraworld.api.reward
 
+import com.terraworld.api.reward.dto.AdRewardPayload
+import com.terraworld.api.reward.dto.AdRewardResponsePayload
 import com.terraworld.api.user.CurrencyBuilder
 import com.terraworld.common.audit.AuditService
 import com.terraworld.common.exception.BusinessException
