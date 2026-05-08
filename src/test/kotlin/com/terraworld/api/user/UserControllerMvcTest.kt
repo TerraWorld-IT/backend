@@ -8,6 +8,9 @@ import com.terraworld.api.user.dto.ProgressResponse
 import com.terraworld.api.user.dto.UserMeResponse
 import com.terraworld.api.userdevice.DeviceRegistrationResponse
 import com.terraworld.api.userdevice.UserDeviceService
+import com.terraworld.common.exception.BusinessException
+import com.terraworld.common.exception.ErrorCode
+import com.terraworld.common.exception.GlobalExceptionHandler
 import com.terraworld.security.JwtAuthenticationFilter
 import com.terraworld.security.ratelimit.RateLimitFilter
 import com.terraworld.test.AbstractMvcTest
@@ -19,6 +22,7 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest
 import org.springframework.boot.test.mock.mockito.MockBean
+import org.springframework.context.annotation.Import
 import org.springframework.http.MediaType
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
@@ -40,6 +44,7 @@ import io.terraworld.api.model.DeviceRegistrationRequest as ApiDeviceRegistratio
  */
 @WebMvcTest(UserController::class)
 @AutoConfigureMockMvc(addFilters = false)
+@Import(GlobalExceptionHandler::class)
 class UserControllerMvcTest : AbstractMvcTest() {
     @Autowired private lateinit var mockMvc: MockMvc
 
@@ -113,5 +118,18 @@ class UserControllerMvcTest : AbstractMvcTest() {
                     .content(objectMapper.writeValueAsString(payload)),
             ).andExpect(status().isOk)
             .andExpect(jsonPath("$.deviceId").value(42))
+    }
+
+    // ── Negative cases ────────────────────────────────────────────────────────────
+
+    @Test
+    fun `GET _api_v1_users_me 404 when user not found`() {
+        whenever(userService.getMe(eq(TEST_USER_ID), eq(TEST_USER_EMAIL)))
+            .thenThrow(BusinessException(ErrorCode.USER_NOT_FOUND))
+
+        mockMvc
+            .perform(get("/api/v1/users/me"))
+            .andExpect(status().isNotFound)
+            .andExpect(jsonPath("$.code").value("USER_NOT_FOUND"))
     }
 }

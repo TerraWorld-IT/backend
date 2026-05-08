@@ -1,5 +1,8 @@
 package com.terraworld.api.social
 
+import com.terraworld.common.exception.BusinessException
+import com.terraworld.common.exception.ErrorCode
+import com.terraworld.common.exception.GlobalExceptionHandler
 import com.terraworld.security.JwtAuthenticationFilter
 import com.terraworld.security.ratelimit.RateLimitFilter
 import com.terraworld.test.AbstractMvcTest
@@ -10,6 +13,7 @@ import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest
 import org.springframework.boot.test.mock.mockito.MockBean
+import org.springframework.context.annotation.Import
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
@@ -19,6 +23,7 @@ import java.time.OffsetDateTime
 
 @WebMvcTest(SocialController::class)
 @AutoConfigureMockMvc(addFilters = false)
+@Import(GlobalExceptionHandler::class)
 class SocialControllerMvcTest : AbstractMvcTest() {
     @Autowired private lateinit var mockMvc: MockMvc
 
@@ -58,5 +63,40 @@ class SocialControllerMvcTest : AbstractMvcTest() {
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.message").value("초대 수락 완료"))
             .andExpect(jsonPath("$.reward.specialCoins").value(5))
+    }
+
+    // ── Negative cases ────────────────────────────────────────────────────────────
+
+    @Test
+    fun `POST _api_v1_invites_code_accept 404 when invite not found`() {
+        whenever(inviteService.acceptInvite(eq(TEST_USER_ID), eq("BADCODE")))
+            .thenThrow(BusinessException(ErrorCode.INVITE_NOT_FOUND))
+
+        mockMvc
+            .perform(post("/api/v1/invites/BADCODE/accept"))
+            .andExpect(status().isNotFound)
+            .andExpect(jsonPath("$.code").value("INVITE_NOT_FOUND"))
+    }
+
+    @Test
+    fun `POST _api_v1_invites_code_accept 409 when invite already accepted`() {
+        whenever(inviteService.acceptInvite(eq(TEST_USER_ID), eq("USEDCODE")))
+            .thenThrow(BusinessException(ErrorCode.INVITE_ALREADY_ACCEPTED))
+
+        mockMvc
+            .perform(post("/api/v1/invites/USEDCODE/accept"))
+            .andExpect(status().isConflict)
+            .andExpect(jsonPath("$.code").value("INVITE_ALREADY_ACCEPTED"))
+    }
+
+    @Test
+    fun `POST _api_v1_invites_code_accept 400 when self accept`() {
+        whenever(inviteService.acceptInvite(eq(TEST_USER_ID), eq("SELFCODE")))
+            .thenThrow(BusinessException(ErrorCode.INVITE_SELF_ACCEPT))
+
+        mockMvc
+            .perform(post("/api/v1/invites/SELFCODE/accept"))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value("INVITE_SELF_ACCEPT"))
     }
 }
