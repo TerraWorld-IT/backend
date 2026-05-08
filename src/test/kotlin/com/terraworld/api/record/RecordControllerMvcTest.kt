@@ -1,11 +1,6 @@
 package com.terraworld.api.record
 
 import com.fasterxml.jackson.databind.ObjectMapper
-import com.terraworld.api.record.dto.CategoryCount
-import com.terraworld.api.record.dto.CreateRecordResponse
-import com.terraworld.api.record.dto.RecordResponse
-import com.terraworld.api.record.dto.RewardInfo
-import com.terraworld.api.record.dto.StatisticsResponse
 import com.terraworld.api.upload.PhotoUrlValidator
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
@@ -13,7 +8,12 @@ import com.terraworld.common.exception.GlobalExceptionHandler
 import com.terraworld.security.JwtAuthenticationFilter
 import com.terraworld.security.ratelimit.RateLimitFilter
 import com.terraworld.test.AbstractMvcTest
+import io.terraworld.api.model.CategoryCount
+import io.terraworld.api.model.CreateRecordResponse
 import io.terraworld.api.model.CurrencyResponse
+import io.terraworld.api.model.RecordResponse
+import io.terraworld.api.model.RewardInfo
+import io.terraworld.api.model.StatisticsResponse
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.doThrow
@@ -34,7 +34,7 @@ import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import java.time.LocalDate
-import java.time.LocalDateTime
+import java.time.OffsetDateTime
 import io.terraworld.api.model.CreateRecordRequest as ApiCreateRecordRequest
 
 @WebMvcTest(RecordController::class)
@@ -184,11 +184,12 @@ class RecordControllerMvcTest : AbstractMvcTest() {
             id = 1L,
             categoryId = 1L,
             categoryName = "산책",
+            recordedDate = LocalDate.parse("2026-05-07"),
+            createdAt = OffsetDateTime.parse("2026-05-07T10:00:00Z"),
             categoryEmoji = "🚶",
             memo = "오늘 산책",
             duration = 30,
-            recordedDate = LocalDate.parse("2026-05-07"),
-            createdAt = LocalDateTime.parse("2026-05-07T10:00:00"),
+            photoUrl = null,
         )
 
     private fun stubCurrency() =

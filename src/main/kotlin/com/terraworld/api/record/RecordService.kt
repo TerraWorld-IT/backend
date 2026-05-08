@@ -1,6 +1,6 @@
 package com.terraworld.api.record
 
-import com.terraworld.api.record.dto.*
+import com.terraworld.api.record.dto.CreateRecordRequest
 import com.terraworld.api.user.CurrencyBuilder
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
@@ -11,13 +11,32 @@ import com.terraworld.domain.social.InviteRepository
 import com.terraworld.domain.user.User
 import com.terraworld.domain.user.UserRepository
 import com.terraworld.domain.user.UserTokenRepository
+import io.terraworld.api.model.CategoryCount
+import io.terraworld.api.model.CreateRecordResponse
+import io.terraworld.api.model.RecordResponse
+import io.terraworld.api.model.RewardInfo
+import io.terraworld.api.model.StatisticsResponse
 import org.springframework.data.domain.Page
+import org.springframework.data.domain.PageImpl
 import org.springframework.data.domain.Pageable
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import java.net.URI
 import java.time.LocalDate
+import java.time.ZoneOffset
 import java.util.UUID
 
+/**
+ * ARCH-008-phase-11: 반환 타입을 generated DTO 직접 사용. local Record DTO (CreateRecordResponse /
+ * RecordResponse / StatisticsResponse / CategoryCount / RewardInfo) 삭제.
+ *
+ * 주의:
+ *  - generated `RecordResponse.createdAt` 은 `OffsetDateTime` — entity 의 `LocalDateTime` 을
+ *    `.atOffset(ZoneOffset.UTC)` 로 변환.
+ *  - generated `RecordResponse.photoUrl` 은 `URI?` — DB 에 저장된 String 을 `URI.create()` 로 변환.
+ *    잘못된 String 이 들어오면 `IllegalArgumentException` → global handler 가 500 처리 (silent loss
+ *    대신 fail-fast).
+ */
 @Service
 class RecordService(
     private val recordRepository: RecordRepository,
@@ -61,9 +80,6 @@ class RecordService(
         }
 
         // Joint record 검증 (지정 시)
-        // 1) 본인 자기참조 차단
-        // 2) 존재하지 않는 사용자 차단 (404 대신 INVALID_PARTNER 로 통일)
-        // 3) 친구 관계(수락된 invite) 미존재 차단 — 임의 userId 로 보상 가산 어뷰징 방지
         val partner: User? =
             request.partnerUserId
                 ?.takeIf { it.isNotBlank() }
@@ -117,7 +133,6 @@ class RecordService(
                 )
                 applyReward(partner, category)
             }
-            // partner 한도 초과 시에는 partner 보상만 skip — 본인 기록은 정상 진행 (UX 트레이드오프)
         }
 
         return CreateRecordResponse(
@@ -126,12 +141,12 @@ class RecordService(
                     id = record.id,
                     categoryId = category.id,
                     categoryName = category.name,
+                    recordedDate = record.recordedDate,
+                    createdAt = record.createdAt.atOffset(ZoneOffset.UTC),
                     categoryEmoji = category.emoji,
                     memo = record.memo,
                     duration = request.duration,
-                    recordedDate = record.recordedDate,
-                    createdAt = record.createdAt,
-                    photoUrl = record.photoUrl,
+                    photoUrl = record.photoUrl?.let { URI.create(it) },
                 ),
             reward =
                 RewardInfo(
@@ -178,10 +193,8 @@ class RecordService(
             val from = LocalDate.of(year, month, 1)
             val to = from.withDayOfMonth(from.lengthOfMonth())
             val records = recordRepository.findAllByUserIdAndRecordedDateBetweenAndIsDeletedFalse(userId, from, to)
-            // Convert to page manually for calendar view
             val responses = records.map { it.toResponse() }
-            return org.springframework.data.domain
-                .PageImpl(responses, pageable, responses.size.toLong())
+            return PageImpl(responses, pageable, responses.size.toLong())
         }
         return recordRepository
             .findAllByUserIdAndIsDeletedFalseOrderByCreatedAtDesc(userId, pageable)
@@ -192,7 +205,6 @@ class RecordService(
     fun getStatistics(userId: String): StatisticsResponse {
         val today = LocalDate.now()
         val weekAgo = today.minusDays(7)
-        // 시스템 카테고리 + 본인 커스텀
         val categories =
             categoryRepository.findAllByIsActiveTrueAndIsCustomFalse() +
                 categoryRepository.findAllByOwnerUserIdAndIsActiveTrue(userId)
@@ -208,8 +220,8 @@ class RecordService(
                     CategoryCount(
                         categoryId = cat.id,
                         categoryName = cat.name,
-                        emoji = cat.emoji,
                         count = countMap[cat.id] ?: 0,
+                        emoji = cat.emoji,
                     )
                 },
         )
@@ -234,11 +246,11 @@ class RecordService(
             id = id,
             categoryId = category.id,
             categoryName = category.name,
+            recordedDate = recordedDate,
+            createdAt = createdAt.atOffset(ZoneOffset.UTC),
             categoryEmoji = category.emoji,
             memo = memo,
             duration = null,
-            recordedDate = recordedDate,
-            createdAt = createdAt,
-            photoUrl = photoUrl,
+            photoUrl = photoUrl?.let { URI.create(it) },
         )
 }
