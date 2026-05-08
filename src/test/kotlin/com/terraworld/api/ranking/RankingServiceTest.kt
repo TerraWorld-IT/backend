@@ -103,10 +103,10 @@ class RankingServiceTest {
 
         val response = service.getMonthly("other", "engagement", currentYm, 50)
 
-        assertEquals(3, response.entries.size)
-        assertEquals(1, response.entries[0].rank)
-        assertEquals(1, response.entries[1].rank) // 동점
-        assertEquals(3, response.entries[2].rank) // 2 skip
+        assertEquals(3, response.propertyEntries.size)
+        assertEquals(1, response.propertyEntries[0].rank)
+        assertEquals(1, response.propertyEntries[1].rank) // 동점
+        assertEquals(3, response.propertyEntries[2].rank) // 2 skip
     }
 
     @Test
@@ -131,7 +131,7 @@ class RankingServiceTest {
 
         assertEquals(2, response.myRank)
         assertEquals(7L, response.myScore)
-        assertTrue(response.entries[1].isSelf)
+        assertTrue(response.propertyEntries[1].isSelf == true)
     }
 
     @Test
@@ -172,9 +172,9 @@ class RankingServiceTest {
         // mock() default — findDecorationRanking → [], countByUserAndPeriod → 0L
         val response = service.getMonthly("user-1", "decoration", currentYm, 50)
 
-        assertEquals("decoration", response.type)
+        assertEquals("decoration", response.type.value)
         assertEquals(currentYm, response.yearMonth)
-        assertTrue(response.entries.isEmpty())
+        assertTrue(response.propertyEntries.isEmpty())
         assertNull(response.myRank)
         assertNull(response.myScore)
     }
