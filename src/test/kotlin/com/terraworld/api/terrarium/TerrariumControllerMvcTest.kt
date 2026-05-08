@@ -1,21 +1,21 @@
 package com.terraworld.api.terrarium
 
 import com.fasterxml.jackson.databind.ObjectMapper
-import com.terraworld.api.terrarium.dto.BackgroundInfo
-import com.terraworld.api.terrarium.dto.HeartResponse
-import com.terraworld.api.terrarium.dto.PlacedItemDetail
-import com.terraworld.api.terrarium.dto.TerrariumResponse
-import com.terraworld.api.terrarium.dto.UpgradeTerrariumResponse
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
 import com.terraworld.common.exception.GlobalExceptionHandler
 import com.terraworld.security.JwtAuthenticationFilter
 import com.terraworld.security.ratelimit.RateLimitFilter
 import com.terraworld.test.AbstractMvcTest
+import io.terraworld.api.model.BackgroundInfo
 import io.terraworld.api.model.EvolutionStage
+import io.terraworld.api.model.HeartResponse
+import io.terraworld.api.model.PlacedItemDetail
 import io.terraworld.api.model.PlacementItem
 import io.terraworld.api.model.PlacementRequest
+import io.terraworld.api.model.TerrariumResponse
 import io.terraworld.api.model.UpgradeTerrariumRequest
+import io.terraworld.api.model.UpgradeTerrariumResponse
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.eq
@@ -162,16 +162,16 @@ class TerrariumControllerMvcTest : AbstractMvcTest() {
                     PlacedItemDetail(
                         id = 1L,
                         itemId = 10L,
-                        itemSlug = "item-10",
                         itemImage = "/item.png",
                         itemName = "테스트 아이템",
-                        itemLayout = "FOREGROUND",
+                        itemLayout = PlacedItemDetail.ItemLayout.forValue("FOREGROUND"),
                         isAnimated = false,
+                        itemSlug = "item-10",
                         slotId = 0,
                     ),
                 ),
             maxSlots = 20,
-            evolutionStage = "BOTTLE",
-            unlockedStages = listOf("POT", "BOTTLE"),
+            evolutionStage = EvolutionStage.BOTTLE,
+            unlockedStages = listOf(EvolutionStage.POT, EvolutionStage.BOTTLE),
         )
 }
