@@ -1,9 +1,6 @@
 package com.terraworld.api.reward
 
-import com.terraworld.api.attendance.AttendanceCheckInResponse
-import com.terraworld.api.attendance.AttendanceRewardInfo
 import com.terraworld.api.attendance.AttendanceService
-import com.terraworld.api.attendance.AttendanceStateResponse
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
 import com.terraworld.common.exception.GlobalExceptionHandler
@@ -12,6 +9,9 @@ import com.terraworld.security.ratelimit.RateLimitFilter
 import com.terraworld.test.AbstractMvcTest
 import io.terraworld.api.model.AdRewardResponse
 import io.terraworld.api.model.AdRewardResponseReward
+import io.terraworld.api.model.AttendanceCheckInResponse
+import io.terraworld.api.model.AttendanceCheckInResponseReward
+import io.terraworld.api.model.AttendanceResponse
 import io.terraworld.api.model.CurrencyResponse
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.eq
@@ -62,7 +62,7 @@ class RewardControllerMvcTest : AbstractMvcTest() {
     @Test
     fun `GET _api_v1_rewards_attendance 200`() {
         whenever(attendanceService.getState(eq(TEST_USER_ID))).thenReturn(
-            AttendanceStateResponse(
+            AttendanceResponse(
                 today = false,
                 streak = 3,
                 longestStreak = 7,
@@ -82,9 +82,9 @@ class RewardControllerMvcTest : AbstractMvcTest() {
     fun `POST _api_v1_rewards_attendance 200`() {
         whenever(attendanceService.checkIn(eq(TEST_USER_ID))).thenReturn(
             AttendanceCheckInResponse(
-                reward = AttendanceRewardInfo(basicCoins = 5, bonus = false),
+                reward = AttendanceCheckInResponseReward(basicCoins = 5, bonus = false),
                 attendance =
-                    AttendanceStateResponse(
+                    AttendanceResponse(
                         today = true,
                         streak = 4,
                         longestStreak = 7,

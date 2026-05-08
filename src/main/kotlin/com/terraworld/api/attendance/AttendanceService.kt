@@ -7,15 +7,18 @@ import com.terraworld.common.exception.ErrorCode
 import com.terraworld.domain.attendance.AttendanceLog
 import com.terraworld.domain.attendance.AttendanceLogRepository
 import com.terraworld.domain.user.UserRepository
-import io.terraworld.api.model.CurrencyResponse
+import io.terraworld.api.model.AttendanceCheckInResponse
+import io.terraworld.api.model.AttendanceCheckInResponseReward
+import io.terraworld.api.model.AttendanceResponse
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.LocalDate
 
 // NOTE: HTTP 진입점은 com.terraworld.api.reward.RewardController 로 이전됐다
-// (generated RewardApi 채택). 본 파일은 service + DTOs 만 보존한다. 후속
-// 슬라이스에서 generated AttendanceCheckInResponse / AttendanceResponse 로
-// 마이그레이션 후 본 local DTO 들을 제거할 예정.
+// (generated RewardApi 채택). 본 파일은 service 만 보존한다.
+//
+// ARCH-008-phase-6: 반환 타입을 generated DTO 직접 사용. local DTO 제거.
+// (이전 file 이름 AttendanceController.kt 그대로 유지 — 추후 AttendanceService.kt 로 rename 예정.)
 
 @Service
 class AttendanceService(
@@ -31,13 +34,13 @@ class AttendanceService(
     }
 
     @Transactional(readOnly = true)
-    fun getState(userId: String): AttendanceStateResponse {
+    fun getState(userId: String): AttendanceResponse {
         val today = LocalDate.now()
         val todayLog = attendanceRepository.findByUserIdAndCheckInDate(userId, today)
         val (currentStreak, _) = computeNextStreak(userId)
         val nextStreak = if (todayLog.isPresent) currentStreak else currentStreak + 1
         val bonusEligible = nextStreak > 0 && nextStreak % BONUS_INTERVAL == 0
-        return AttendanceStateResponse(
+        return AttendanceResponse(
             today = todayLog.isPresent,
             streak = currentStreak,
             longestStreak = attendanceRepository.findLongestStreak(userId),
@@ -89,9 +92,9 @@ class AttendanceService(
         )
 
         return AttendanceCheckInResponse(
-            reward = AttendanceRewardInfo(basicCoins = reward, bonus = bonus),
+            reward = AttendanceCheckInResponseReward(basicCoins = reward, bonus = bonus),
             attendance =
-                AttendanceStateResponse(
+                AttendanceResponse(
                     today = true,
                     streak = newStreak,
                     longestStreak = attendanceRepository.findLongestStreak(userId),
@@ -117,22 +120,3 @@ class AttendanceService(
         }
     }
 }
-
-data class AttendanceStateResponse(
-    val today: Boolean,
-    val streak: Int,
-    val longestStreak: Int,
-    val rewardBasicCoins: Int,
-    val bonusEligible: Boolean? = null,
-)
-
-data class AttendanceRewardInfo(
-    val basicCoins: Int,
-    val bonus: Boolean,
-)
-
-data class AttendanceCheckInResponse(
-    val reward: AttendanceRewardInfo,
-    val attendance: AttendanceStateResponse,
-    val currency: CurrencyResponse,
-)
