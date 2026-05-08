@@ -1,8 +1,6 @@
 package com.terraworld.api.exchange
 
 import com.fasterxml.jackson.databind.ObjectMapper
-import com.terraworld.api.exchange.dto.ExchangeInfo
-import com.terraworld.api.exchange.dto.ExchangeResponse
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
 import com.terraworld.common.exception.GlobalExceptionHandler
@@ -10,6 +8,8 @@ import com.terraworld.security.JwtAuthenticationFilter
 import com.terraworld.security.ratelimit.RateLimitFilter
 import com.terraworld.test.AbstractMvcTest
 import io.terraworld.api.model.CurrencyResponse
+import io.terraworld.api.model.ExchangeInfo
+import io.terraworld.api.model.ExchangeResponse
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.eq

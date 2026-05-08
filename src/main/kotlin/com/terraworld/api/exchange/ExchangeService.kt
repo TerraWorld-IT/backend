@@ -1,6 +1,7 @@
 package com.terraworld.api.exchange
 
-import com.terraworld.api.exchange.dto.*
+import com.terraworld.api.exchange.dto.SpecialToBasicRequest
+import com.terraworld.api.exchange.dto.TokenExchangeRequest
 import com.terraworld.api.user.CurrencyBuilder
 import com.terraworld.common.audit.AuditService
 import com.terraworld.common.exception.BusinessException
@@ -8,7 +9,8 @@ import com.terraworld.common.exception.ErrorCode
 import com.terraworld.domain.exchange.TokenExchangeRateRepository
 import com.terraworld.domain.user.UserRepository
 import com.terraworld.domain.user.UserTokenRepository
-import io.terraworld.api.model.CurrencyResponse
+import io.terraworld.api.model.ExchangeInfo
+import io.terraworld.api.model.ExchangeResponse
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import kotlin.math.floor
@@ -25,6 +27,10 @@ class ExchangeService(
         const val SPECIAL_TO_BASIC_RATE = 2.0
     }
 
+    /**
+     * ARCH-008-phase-8: 반환 타입을 generated [ExchangeResponse] 직접 사용.
+     * local ExchangeResponse / ExchangeInfo 삭제 + controller 매퍼 제거.
+     */
     @Transactional
     fun specialToBasic(
         userId: String,
@@ -55,8 +61,15 @@ class ExchangeService(
         )
 
         return ExchangeResponse(
-            exchanged = ExchangeInfo("SPECIAL_COIN", request.amount, "BASIC_COIN", received, SPECIAL_TO_BASIC_RATE),
-            updatedCurrency = buildCurrency(userId, user),
+            exchanged =
+                ExchangeInfo(
+                    fromType = "SPECIAL_COIN",
+                    fromAmount = request.amount,
+                    toType = "BASIC_COIN",
+                    toAmount = received,
+                    rate = SPECIAL_TO_BASIC_RATE,
+                ),
+            updatedCurrency = currencyBuilder.build(userId, user),
         )
     }
 
@@ -111,18 +124,13 @@ class ExchangeService(
         return ExchangeResponse(
             exchanged =
                 ExchangeInfo(
-                    fromToken.category.name,
-                    request.amount,
-                    toToken.category.name,
-                    received,
-                    1.0 / rate.rate,
+                    fromType = fromToken.category.name,
+                    fromAmount = request.amount,
+                    toType = toToken.category.name,
+                    toAmount = received,
+                    rate = 1.0 / rate.rate,
                 ),
-            updatedCurrency = buildCurrency(userId, user),
+            updatedCurrency = currencyBuilder.build(userId, user),
         )
     }
-
-    private fun buildCurrency(
-        userId: String,
-        user: com.terraworld.domain.user.User,
-    ): CurrencyResponse = currencyBuilder.build(userId, user)
 }

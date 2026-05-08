@@ -10,15 +10,14 @@ import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
 import com.terraworld.api.exchange.dto.SpecialToBasicRequest as LocalSpecialToBasicRequest
 import com.terraworld.api.exchange.dto.TokenExchangeRequest as LocalTokenExchangeRequest
-import io.terraworld.api.model.ExchangeInfo as ApiExchangeInfo
 import io.terraworld.api.model.ExchangeResponse as ApiExchangeResponse
 import io.terraworld.api.model.SpecialToBasicRequest as ApiSpecialToBasicRequest
 import io.terraworld.api.model.TokenExchangeRequest as ApiTokenExchangeRequest
 
 /**
- * ExchangeApi (2 endpoints) implement. ExchangeService 시그니처 (local
- * DTO) 그대로 두고 controller 에서 generated ↔ local mapper 만 추가 —
- * ExchangeServiceTest 영향 0.
+ * ExchangeApi (2 endpoints) implement. ARCH-008-phase-8 후: ExchangeService 가
+ * generated [ApiExchangeResponse] 직접 반환 — controller 매퍼 제거. local
+ * SpecialToBasicRequest / TokenExchangeRequest 만 잔존 (request 변환은 별도 phase).
  */
 @Tag(name = "Exchange", description = "재화 교환 API")
 @RestController
@@ -30,31 +29,19 @@ class ExchangeController(
     override fun exchangeSpecialToBasic(
         @Valid specialToBasicRequest: ApiSpecialToBasicRequest,
     ): ResponseEntity<ApiExchangeResponse> {
-        val local =
+        val response =
             exchangeService.specialToBasic(
                 userId = SecurityUtil.getCurrentUserId(),
                 request = LocalSpecialToBasicRequest(amount = specialToBasicRequest.amount),
             )
-        return ResponseEntity.ok(
-            ApiExchangeResponse(
-                exchanged =
-                    ApiExchangeInfo(
-                        fromType = local.exchanged.fromType,
-                        fromAmount = local.exchanged.fromAmount,
-                        toType = local.exchanged.toType,
-                        toAmount = local.exchanged.toAmount,
-                        rate = local.exchanged.rate,
-                    ),
-                updatedCurrency = local.updatedCurrency,
-            ),
-        )
+        return ResponseEntity.ok(response)
     }
 
     @Operation(summary = "토큰 교환", description = "카테고리 간 토큰 교환 (비율은 DB 설정 기준)")
     override fun exchangeTokens(
         @Valid tokenExchangeRequest: ApiTokenExchangeRequest,
     ): ResponseEntity<ApiExchangeResponse> {
-        val local =
+        val response =
             exchangeService.exchangeTokens(
                 userId = SecurityUtil.getCurrentUserId(),
                 request =
@@ -64,18 +51,6 @@ class ExchangeController(
                         amount = tokenExchangeRequest.amount,
                     ),
             )
-        return ResponseEntity.ok(
-            ApiExchangeResponse(
-                exchanged =
-                    ApiExchangeInfo(
-                        fromType = local.exchanged.fromType,
-                        fromAmount = local.exchanged.fromAmount,
-                        toType = local.exchanged.toType,
-                        toAmount = local.exchanged.toAmount,
-                        rate = local.exchanged.rate,
-                    ),
-                updatedCurrency = local.updatedCurrency,
-            ),
-        )
+        return ResponseEntity.ok(response)
     }
 }
