@@ -1,7 +1,7 @@
 # Plan: Service 계층 generated DTO 마이그레이션 (ARCH-008)
 
 **Date**: 2026-05-08
-**Status**: Draft
+**Status**: In Progress (phase 1~3 사실상 완료 — 코드 분석 결과 service 부재 + 이미 generated DTO 직접 반환)
 **Source**: `/code-review` ARCH-008 / SF-007 (followup tracking)
 
 ## Context
@@ -16,21 +16,21 @@ PR #27 (CurrencyMappers 추출) 과 PR #30 (dto 패키지 정리) 후 backend �
 
 ## Migration Order (ripple 적은 순)
 
-| Phase | Domain | Service test 수 | Controller mapper 수 | Risk |
-|-------|--------|----------------|---------------------|------|
-| 1 | Level | 0 | 0 (이미 generated 직접) | trivial |
-| 2 | Note | 0 | 0 | trivial |
-| 3 | Category | 0 | 0 | trivial |
-| 4 | Item / PhotoUpload | 1 (PhotoUpload) | 0 / 1 | low — single test |
-| 5 | Reward (claimAdReward) | 1 (RewardService) | 1 (AdRewardResponsePayload) | medium |
-| 6 | Attendance | 0 | 1 (Attendance toApi) | medium |
-| 7 | Purchase | 1 (PurchaseService) | 1 | medium |
-| 8 | Exchange | 1 (ExchangeService) | 1 | medium |
-| 9 | Ranking | 1 (RankingService) | 1 | medium |
-| 10 | Social (Invite) | 1 (InviteService) | 1 | medium |
-| 11 | Record (createRecord/list/stat) | 0 (no service test, but PR #28 의 photoUrl 이미 wired) | 큰 mapper | high |
-| 12 | Terrarium (4 endpoints + EvolutionStage enum) | 0 | 매우 큰 mapper | high |
-| 13 | User (getMe + UserMeResponse 의 nested 5종) | 0 | 가장 큰 mapper | high |
+| Phase | Domain | Service test 수 | Controller mapper 수 | Risk | Status |
+|-------|--------|----------------|---------------------|------|--------|
+| 1 | Level | 0 | 0 (이미 generated 직접) | trivial | **DONE** (코드 분석 — `LevelController` service 부재, repository 직접 + generated `LevelsResponse`/`LevelConfigResponse` 반환. ADR-019 의 spec drift 가드 (`mapRewardTypeOrLogDrift`) 도 이미 적용) |
+| 2 | Note | 0 | 0 | trivial | **DONE** (코드 분석 — `NoteController` service 부재, `dayNoteRepository`/`userRepository` 직접 + generated `NoteResponse`/`MessageResponse` 반환) |
+| 3 | Category | 0 | 0 | trivial | **DONE** (코드 분석 — `CategoryController` service 부재, repository 직접 + generated `CategoryListResponse`/`CategoryResponse`/`CreateCategoryRequest` 반환) |
+| 4 | Item / PhotoUpload | 1 (PhotoUpload) | 0 / 1 | low — single test | TODO |
+| 5 | Reward (claimAdReward) | 1 (RewardService) | 1 (AdRewardResponsePayload) | medium | TODO |
+| 6 | Attendance | 0 | 1 (Attendance toApi) | medium | TODO |
+| 7 | Purchase | 1 (PurchaseService) | 1 | medium | TODO |
+| 8 | Exchange | 1 (ExchangeService) | 1 | medium | TODO |
+| 9 | Ranking | 1 (RankingService) | 1 | medium | TODO |
+| 10 | Social (Invite) | 1 (InviteService) | 1 | medium | TODO |
+| 11 | Record (createRecord/list/stat) | 0 (no service test, but PR #28 의 photoUrl 이미 wired) | 큰 mapper | high | TODO |
+| 12 | Terrarium (4 endpoints + EvolutionStage enum) | 0 | 매우 큰 mapper | high | TODO |
+| 13 | User (getMe + UserMeResponse 의 nested 5종) | 0 | 가장 큰 mapper | high | TODO |
 
 ## Per-phase 작업 패턴
 
@@ -64,3 +64,8 @@ phase 5+ 에서 모든 controller 가 generated CurrencyResponse 를 반환하�
 - generated DTO 의 자체 변경 (spec 영향)
 - service test 인프라 마이그레이션 (`@Mock` → `@MockK` 등)
 - repository 계층 마이그레이션 (별도 plan)
+
+## 진행 이력
+
+- 2026-05-08 (작성): Draft 상태로 13 phase 분석
+- 2026-05-08 (코드 분석): phase 1~3 (Level/Note/Category) 가 사실상 마이그레이션 완료 상태로 확인 — controller 가 service 없이 repository 직접 사용 + 이미 generated DTO 반환. plan 의 "trivial" 평가는 "이미 끝남" 의 의미였음. **다음 시작점은 Phase 4 (Item / PhotoUpload).**
