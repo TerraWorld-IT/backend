@@ -1,7 +1,7 @@
 package com.terraworld.api.reward
 
 import com.terraworld.api.attendance.AttendanceService
-import com.terraworld.api.user.dto.toApi
+import com.terraworld.api.shared.dto.toApi
 import com.terraworld.security.SecurityUtil
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.tags.Tag
@@ -91,16 +91,3 @@ class RewardController(
             bonusEligible = bonusEligible,
         )
 }
-
-// RewardService.claimAdReward 의 반환 타입. 후속 슬라이스에서 generated
-// AdRewardResponse 로 마이그레이션 후 제거 예정.
-data class AdRewardResponsePayload(
-    val reward: AdRewardPayload,
-    val dailyWatchCount: Int,
-    val remainingToday: Int,
-    val updatedCurrency: com.terraworld.api.user.dto.CurrencyResponse,
-)
-
-data class AdRewardPayload(
-    val specialCoins: Int,
-)

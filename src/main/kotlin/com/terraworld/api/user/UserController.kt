@@ -1,6 +1,6 @@
 package com.terraworld.api.user
 
-import com.terraworld.api.user.dto.toApi
+import com.terraworld.api.shared.dto.toApi
 import com.terraworld.api.userdevice.UserDeviceService
 import com.terraworld.security.SecurityUtil
 import io.swagger.v3.oas.annotations.Operation

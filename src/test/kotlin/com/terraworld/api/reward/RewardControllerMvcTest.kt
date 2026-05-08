@@ -4,6 +4,8 @@ import com.terraworld.api.attendance.AttendanceCheckInResponse
 import com.terraworld.api.attendance.AttendanceRewardInfo
 import com.terraworld.api.attendance.AttendanceService
 import com.terraworld.api.attendance.AttendanceStateResponse
+import com.terraworld.api.reward.dto.AdRewardPayload
+import com.terraworld.api.reward.dto.AdRewardResponsePayload
 import com.terraworld.api.user.dto.CurrencyResponse
 import com.terraworld.security.JwtAuthenticationFilter
 import com.terraworld.security.ratelimit.RateLimitFilter
