@@ -2,7 +2,6 @@ package com.terraworld.api.item
 
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
-import com.terraworld.domain.item.Item
 import com.terraworld.domain.item.ItemLayout
 import com.terraworld.domain.item.ItemRepository
 import com.terraworld.domain.item.Rarity
@@ -19,10 +18,9 @@ import org.springframework.web.bind.annotation.RestController
  * ShopApi (2 endpoints — getItem, listItems) implement. spec PR #12 의
  * tag 분리 (Shop ↔ Purchase) 결과 ShopApi 는 카탈로그만 책임.
  *
- * local ItemResponse 데이터 클래스는 generated 와 동등하므로 제거하고
- * generated 직접 사용. 단 generated 는 priceType/rarity/layout 을 enum
- * 으로 강제 — domain enum (PriceType/Rarity/ItemLayout) 의 .name 을
- * forValue 로 변환.
+ * Entity → DTO 매핑은 [ItemMapper] 가 담당 (ARCH-001/002 cleanup).
+ * generated enum 변환 시 spec drift 가드 (ADR-019) 적용 — DB 의 enum 값이
+ * spec 에 없으면 warn log + fail-fast.
  */
 @Tag(name = "Shop", description = "상점 아이템 API (목록 / 상세)")
 @RestController
@@ -43,7 +41,7 @@ class ItemController(
                 layout != null -> itemRepository.findAllByIsActiveTrueAndLayout(ItemLayout.valueOf(layout))
                 else -> itemRepository.findAllByIsActiveTrue()
             }
-        return ResponseEntity.ok(ItemListResponse(items = items.map { it.toApi() }))
+        return ResponseEntity.ok(ItemListResponse(items = items.map(ItemMapper::toApi)))
     }
 
     @Operation(summary = "아이템 상세 조회")
@@ -52,23 +50,6 @@ class ItemController(
             itemRepository
                 .findById(itemId)
                 .orElseThrow { BusinessException(ErrorCode.ITEM_NOT_FOUND) }
-        return ResponseEntity.ok(item.toApi())
+        return ResponseEntity.ok(ItemMapper.toApi(item))
     }
-
-    private fun Item.toApi() =
-        ItemResponse(
-            id = id,
-            slug = slug,
-            name = name,
-            description = description,
-            categoryId = category?.id,
-            categoryName = category?.name,
-            priceType = ItemResponse.PriceType.forValue(priceType.name),
-            priceAmount = priceAmount,
-            tokenPrice = tokenPrice,
-            rarity = ItemResponse.Rarity.forValue(rarity.name),
-            assetUrl = assetUrl,
-            layout = ItemResponse.Layout.forValue(layout.name),
-            isAnimated = isAnimated,
-        )
 }
