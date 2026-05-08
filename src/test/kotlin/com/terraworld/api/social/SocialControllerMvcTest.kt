@@ -6,6 +6,9 @@ import com.terraworld.common.exception.GlobalExceptionHandler
 import com.terraworld.security.JwtAuthenticationFilter
 import com.terraworld.security.ratelimit.RateLimitFilter
 import com.terraworld.test.AbstractMvcTest
+import io.terraworld.api.model.InviteAcceptResponse
+import io.terraworld.api.model.InviteAcceptResponseReward
+import io.terraworld.api.model.InviteResponse
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.whenever
@@ -36,7 +39,7 @@ class SocialControllerMvcTest : AbstractMvcTest() {
     @Test
     fun `POST _api_v1_invites 200`() {
         whenever(inviteService.createInvite(eq(TEST_USER_ID))).thenReturn(
-            InviteCreateResponse(
+            InviteResponse(
                 inviteCode = "ABCD1234",
                 inviteLink = URI.create("https://terraworld.app/share/ABCD1234"),
                 expiresAt = OffsetDateTime.parse("2026-05-14T00:00:00Z"),
@@ -52,9 +55,9 @@ class SocialControllerMvcTest : AbstractMvcTest() {
     @Test
     fun `POST _api_v1_invites_code_accept 200`() {
         whenever(inviteService.acceptInvite(eq(TEST_USER_ID), eq("ABCD1234"))).thenReturn(
-            InviteAcceptResponsePayload(
+            InviteAcceptResponse(
                 message = "초대 수락 완료",
-                reward = InviteAcceptReward(specialCoins = 5),
+                reward = InviteAcceptResponseReward(specialCoins = 5),
             ),
         )
 
