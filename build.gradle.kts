@@ -5,6 +5,7 @@ plugins {
     kotlin("plugin.spring") version "2.1.10"
     kotlin("plugin.jpa") version "2.1.10"
     id("org.jlleitschuh.gradle.ktlint") version "12.1.1"
+    jacoco
 }
 
 group = "com.terraworld"
@@ -73,6 +74,38 @@ allOpen {
 
 tasks.withType<Test> {
     useJUnitPlatform()
+}
+
+// JaCoCo — 도입 1단계: 리포트만 생성 (XML/HTML), threshold 미강제.
+// 실제 baseline 측정 후 다음 PR 에서 jacocoTestCoverageVerification 추가 예정.
+// generated openapi-backend stub (io.terraworld.*) 와 Spring Boot 진입점은 제외.
+jacoco {
+    toolVersion = "0.8.12"
+}
+
+tasks.jacocoTestReport {
+    dependsOn(tasks.test)
+    reports {
+        xml.required.set(true)
+        html.required.set(true)
+        csv.required.set(false)
+    }
+    classDirectories.setFrom(
+        files(
+            classDirectories.files.map {
+                fileTree(it) {
+                    exclude(
+                        "**/io/terraworld/**",
+                        "**/com/terraworld/TerraworldApplication*",
+                    )
+                }
+            },
+        ),
+    )
+}
+
+tasks.test {
+    finalizedBy(tasks.jacocoTestReport)
 }
 
 // ktlint Kotlin 린트. openapi-backend submodule(자동 생성 stub)은 검사 제외.
