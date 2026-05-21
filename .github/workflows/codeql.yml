@@ -31,6 +31,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # openapi-backend 는 같은 org 의 private submodule (composite build).
+          # 미체크아웃 시 ':runtimeClasspath' 에서 io.terraworld:openapi-backend
+          # 해소 실패로 Gradle assemble 이 깨진다 (ci.yml 과 동일 설정).
+          submodules: recursive
+          token: ${{ secrets.OPENAPI_SUBMODULE_TOKEN || secrets.GITHUB_TOKEN }}
 
       - name: Setup JDK 21
         uses: actions/setup-java@v4
