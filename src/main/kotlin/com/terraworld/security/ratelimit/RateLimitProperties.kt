@@ -66,6 +66,8 @@ data class RateLimitProperties(
                 Rule(HttpMethod.POST, "/api/v1/uploads/photo", limit = 30),
                 Rule(HttpMethod.POST, "/api/v1/exchange/special-to-basic", limit = 60, failClosed = true),
                 Rule(HttpMethod.POST, "/api/v1/exchange/tokens", limit = 60, failClosed = true),
+                // N15: 토큰→이슬 교환 — 다른 exchange 와 동일 money flow
+                Rule(HttpMethod.POST, "/api/v1/exchange/token-to-basic", limit = 60, failClosed = true),
                 Rule(HttpMethod.POST, "/api/v1/invites", limit = 10, failClosed = true),
                 Rule(HttpMethod.POST, "/api/v1/invites/*/accept", limit = 30),
                 Rule(HttpMethod.POST, "/api/v1/categories", limit = 30),
@@ -79,6 +81,10 @@ data class RateLimitProperties(
                 // ARCH-005: device registration is a high-value abuse target
                 // (FCM token enumeration, app version harvesting).
                 Rule(HttpMethod.POST, "/api/v1/users/me/devices", limit = 30),
+                // code-review SEC-003 (2026-05-21): Play Billing webhook 은 미인증 public
+                // (X-Internal-Token 컨트롤러 게이트). money flow → failClosed. 미인증 abuse
+                // (constantTimeEquals + auditService.publish 비용 유발) 를 IP 버켓으로 차단.
+                Rule(HttpMethod.POST, "/api/v1/webhooks/play-billing", limit = 120, failClosed = true),
             )
     }
 }

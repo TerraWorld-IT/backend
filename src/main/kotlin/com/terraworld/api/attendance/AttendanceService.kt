@@ -4,6 +4,7 @@ import com.terraworld.api.user.CurrencyBuilder
 import com.terraworld.common.audit.AuditService
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
+import com.terraworld.common.time.KstTime
 import com.terraworld.domain.attendance.AttendanceLog
 import com.terraworld.domain.attendance.AttendanceLogRepository
 import com.terraworld.domain.user.UserRepository
@@ -26,6 +27,8 @@ class AttendanceService(
     private val attendanceRepository: AttendanceLogRepository,
     private val currencyBuilder: CurrencyBuilder,
     private val auditService: AuditService,
+    // N2 (구현 계획서 v4): 출석 보상 시 wallet_transactions 원장 기록
+    private val walletTransactionService: com.terraworld.api.wallet.WalletTransactionService,
 ) {
     companion object {
         const val BASE_REWARD = 5
@@ -35,7 +38,7 @@ class AttendanceService(
 
     @Transactional(readOnly = true)
     fun getState(userId: String): AttendanceResponse {
-        val today = LocalDate.now()
+        val today = KstTime.today()
         val todayLog = attendanceRepository.findByUserIdAndCheckInDate(userId, today)
         val (currentStreak, _) = computeNextStreak(userId)
         val nextStreak = if (todayLog.isPresent) currentStreak else currentStreak + 1
@@ -55,7 +58,7 @@ class AttendanceService(
             userRepository.findById(userId).orElseThrow {
                 BusinessException(ErrorCode.USER_NOT_FOUND)
             }
-        val today = LocalDate.now()
+        val today = KstTime.today()
 
         if (attendanceRepository.findByUserIdAndCheckInDate(userId, today).isPresent) {
             throw BusinessException(ErrorCode.ATTENDANCE_ALREADY_CHECKED)
@@ -66,18 +69,29 @@ class AttendanceService(
         val bonus = newStreak % BONUS_INTERVAL == 0
         val reward = if (bonus) BONUS_REWARD else BASE_REWARD
 
-        attendanceRepository.save(
-            AttendanceLog(
-                userId = userId,
-                checkInDate = today,
-                streak = newStreak,
-                rewardBasicCoins = reward,
-                bonus = bonus,
-            ),
-        )
+        val attendanceLog =
+            attendanceRepository.save(
+                AttendanceLog(
+                    userId = userId,
+                    checkInDate = today,
+                    streak = newStreak,
+                    rewardBasicCoins = reward,
+                    bonus = bonus,
+                ),
+            )
 
         user.basicCoin += reward
         userRepository.save(user)
+
+        // N2: wallet ledger — BASIC_COIN row
+        walletTransactionService.append(
+            user = user,
+            currencyType = com.terraworld.api.wallet.WalletTransactionService.CURRENCY_BASIC_COIN,
+            amount = reward.toLong(),
+            balanceAfter = user.basicCoin,
+            reason = com.terraworld.api.wallet.WalletTransactionService.REASON_ATTENDANCE,
+            referenceId = attendanceLog.id,
+        )
 
         auditService.publish(
             userId = userId,
@@ -112,7 +126,7 @@ class AttendanceService(
         val latest = attendanceRepository.findLatestByUserId(userId)
         if (!latest.isPresent) return 0 to null
         val log = latest.get()
-        val today = LocalDate.now()
+        val today = KstTime.today()
         return when {
             log.checkInDate == today -> log.streak to log.checkInDate
             log.checkInDate == today.minusDays(1) -> log.streak to log.checkInDate

@@ -43,7 +43,22 @@ class ExchangeServiceTest {
         rateRepo = FakeRateRepository()
         val currencyBuilder = CurrencyBuilder(tokenRepo)
         val auditService = org.mockito.Mockito.mock(AuditService::class.java)
-        service = ExchangeService(userRepo, tokenRepo, rateRepo, currencyBuilder, auditService)
+        // N2/N15 (구현 계획서 v4): ExchangeService 생성자에 walletTransactionService +
+        // categoryRepository 추가. 본 test 는 ledger / token→basic 경로 미검증 — mock.
+        val walletTransactionService =
+            org.mockito.Mockito.mock(com.terraworld.api.wallet.WalletTransactionService::class.java)
+        val categoryRepository =
+            org.mockito.Mockito.mock(com.terraworld.domain.category.CategoryRepository::class.java)
+        service =
+            ExchangeService(
+                userRepo,
+                tokenRepo,
+                rateRepo,
+                currencyBuilder,
+                auditService,
+                walletTransactionService,
+                categoryRepository,
+            )
 
         walkCategory = Category(id = 1L, name = "산책", tokenName = "산책토큰")
         readCategory = Category(id = 2L, name = "독서", tokenName = "독서토큰")

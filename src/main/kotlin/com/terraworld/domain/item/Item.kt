@@ -39,8 +39,9 @@ class Item(
     val width: Int = 512,
     @Column(nullable = false)
     val height: Int = 512,
+    // N5 (구현 계획서 v4): admin 아이템 활성/비활성 토글 — var (AdminService.setItemActive)
     @Column(name = "is_active", nullable = false)
-    val isActive: Boolean = true,
+    var isActive: Boolean = true,
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: LocalDateTime = LocalDateTime.now(),
 )

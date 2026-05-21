@@ -59,7 +59,7 @@ class TerrariumController(
         )
     }
 
-    @Operation(summary = "하트 클릭", description = "클릭당 기본코인 +0.1 지급")
+    @Operation(summary = "하트 클릭", description = "클릭당 기본코인 +1 지급 (Phase 4: DB BIGINT 정합)")
     override fun clickTerrariumHeart(): ResponseEntity<HeartResponse> {
         val response = terrariumService.heartClick(SecurityUtil.getCurrentUserId())
         return ResponseEntity.ok(response)

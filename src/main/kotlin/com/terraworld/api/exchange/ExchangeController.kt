@@ -13,6 +13,7 @@ import com.terraworld.api.exchange.dto.TokenExchangeRequest as LocalTokenExchang
 import io.terraworld.api.model.ExchangeResponse as ApiExchangeResponse
 import io.terraworld.api.model.SpecialToBasicRequest as ApiSpecialToBasicRequest
 import io.terraworld.api.model.TokenExchangeRequest as ApiTokenExchangeRequest
+import io.terraworld.api.model.TokenToBasicRequest as ApiTokenToBasicRequest
 
 /**
  * ExchangeApi (2 endpoints) implement. ARCH-008-phase-8 후: ExchangeService 가
@@ -50,6 +51,19 @@ class ExchangeController(
                         toCategoryId = tokenExchangeRequest.toCategoryId,
                         amount = tokenExchangeRequest.amount,
                     ),
+            )
+        return ResponseEntity.ok(response)
+    }
+
+    @Operation(summary = "토큰 → 이슬 교환", description = "N15: 카테고리 토큰을 기본 코인(이슬)으로 교환")
+    override fun exchangeTokenToBasic(
+        @Valid tokenToBasicRequest: ApiTokenToBasicRequest,
+    ): ResponseEntity<ApiExchangeResponse> {
+        val response =
+            exchangeService.tokenToBasic(
+                userId = SecurityUtil.getCurrentUserId(),
+                fromCategoryId = tokenToBasicRequest.fromCategoryId,
+                amount = tokenToBasicRequest.amount,
             )
         return ResponseEntity.ok(response)
     }

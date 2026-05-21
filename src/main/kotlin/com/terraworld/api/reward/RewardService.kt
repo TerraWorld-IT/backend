@@ -4,8 +4,10 @@ import com.terraworld.api.user.CurrencyBuilder
 import com.terraworld.common.audit.AuditService
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
+import com.terraworld.common.time.KstTime
 import com.terraworld.domain.reward.AdWatchLog
 import com.terraworld.domain.reward.AdWatchLogRepository
+import com.terraworld.domain.terrarium.TerrariumRepository
 import com.terraworld.domain.user.UserRepository
 import io.terraworld.api.model.AdRewardResponse
 import io.terraworld.api.model.AdRewardResponseReward
@@ -14,16 +16,18 @@ import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.Duration
-import java.time.LocalDate
 import java.time.LocalTime
 
 @Service
 class RewardService(
     private val adWatchLogRepository: AdWatchLogRepository,
     private val userRepository: UserRepository,
+    private val terrariumRepository: TerrariumRepository,
     private val redisTemplate: StringRedisTemplate,
     private val currencyBuilder: CurrencyBuilder,
     private val auditService: AuditService,
+    // N2 (구현 계획서 v4): 광고 보상 시 wallet_transactions 원장 기록
+    private val walletTransactionService: com.terraworld.api.wallet.WalletTransactionService,
 ) {
     companion object {
         const val DAILY_AD_LIMIT = 5
@@ -44,7 +48,7 @@ class RewardService(
                 .findById(userId)
                 .orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) }
 
-        val today = LocalDate.now()
+        val today = KstTime.today()
 
         // 1) Redis 빠른 게이트 — INCR + 25h TTL. 어뷰징 burst 차단.
         //    Redis 장애 시 아래 DB 검증으로 폴백 (graceful degradation).
@@ -72,9 +76,34 @@ class RewardService(
 
         user.specialCoin += REWARD_SPECIAL_COINS
         userRepository.save(user)
-        adWatchLogRepository.save(
-            AdWatchLog(userId = userId, rewardSpecialCoins = REWARD_SPECIAL_COINS),
+        val adLog =
+            adWatchLogRepository.save(
+                AdWatchLog(userId = userId, rewardSpecialCoins = REWARD_SPECIAL_COINS),
+            )
+
+        // N2: wallet ledger — SPECIAL_COIN row
+        walletTransactionService.append(
+            user = user,
+            currencyType = com.terraworld.api.wallet.WalletTransactionService.CURRENCY_SPECIAL_COIN,
+            amount = REWARD_SPECIAL_COINS.toLong(),
+            balanceAfter = user.specialCoin,
+            reason = com.terraworld.api.wallet.WalletTransactionService.REASON_AD_REWARD,
+            referenceId = adLog.id,
         )
+
+        // P-WILT-001 + J-WILT-001 (UltraPlan v3, 2026-05-18):
+        // 광고 시청 시 시들기 상태 reset. terrarium.wiltRecoveredAt 갱신 →
+        // 다음 computeWiltingState 호출 시 days = 0 → stage 0 (FRESH).
+        // 권장 default: 햇살 +1 만 (이슬 보너스 X, 이중 보상 회피).
+        val wiltReset =
+            terrariumRepository
+                .findByUserId(userId)
+                .map { terrarium ->
+                    terrarium.wiltRecoveredAt = KstTime.now()
+                    terrarium.updatedAt = KstTime.now()
+                    terrariumRepository.save(terrarium)
+                    true
+                }.orElse(false)
 
         val newCount = (watchedToday + 1).toInt()
         auditService.publish(
@@ -85,6 +114,7 @@ class RewardService(
                 mapOf(
                     "specialCoins" to REWARD_SPECIAL_COINS,
                     "dailyWatchCount" to newCount,
+                    "wiltReset" to wiltReset,
                 ),
         )
         return AdRewardResponse(

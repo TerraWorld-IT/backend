@@ -31,6 +31,7 @@ class UserService(
     private val terrariumRepository: TerrariumRepository,
     private val levelConfigRepository: LevelConfigRepository,
     private val currencyBuilder: CurrencyBuilder,
+    private val entitlementService: com.terraworld.api.entitlement.EntitlementService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -44,7 +45,13 @@ class UserService(
                 .orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) }
 
         val nextLevelConfig = levelConfigRepository.findByLevel(user.level + 1)
-        val expToNext = nextLevelConfig.map { it.requiredExp - user.totalExp }.orElse(0L)
+        // V14 (linear curve) migration 이후 totalExp > requiredExp 가능 (auto level-up 대기 상태).
+        // frontend WalletBar 는 자체 clamp 하지만 iOS 네이티브 / 외부 SDK 소비자 위해 backend 도 clamp.
+        // UserLevelService.checkAndApplyLevelUp 호출 직후라 0 이 되는 것이 정상.
+        val expToNext =
+            nextLevelConfig
+                .map { (it.requiredExp - user.totalExp).coerceAtLeast(0L) }
+                .orElse(0L)
 
         val ownedItems =
             userItemRepository
@@ -78,10 +85,20 @@ class UserService(
                 ),
             ownedItems = ownedItems,
             placedItems = placedItems,
+            // N3 (구현 계획서 v4): entitlement SoT = user_entitlement 테이블.
+            // user.entitlement* boolean 은 deprecated — EntitlementService 단일 조회.
             entitlements =
                 EntitlementsResponse(
-                    freePlacement = user.entitlementFreePlacement,
-                    premiumThemes = user.entitlementPremiumThemes,
+                    freePlacement =
+                        entitlementService.hasEntitlement(
+                            userId,
+                            com.terraworld.domain.entitlement.UserEntitlementId.FREE_PLACEMENT,
+                        ),
+                    premiumThemes =
+                        entitlementService.hasEntitlement(
+                            userId,
+                            com.terraworld.domain.entitlement.UserEntitlementId.PREMIUM_THEMES,
+                        ),
                 ),
         )
     }

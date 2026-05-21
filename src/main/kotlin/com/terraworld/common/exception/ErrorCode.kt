@@ -19,11 +19,15 @@ enum class ErrorCode(
     RECORD_NOT_FOUND(HttpStatus.NOT_FOUND, "기록을 찾을 수 없습니다"),
     NOTE_NOT_FOUND(HttpStatus.NOT_FOUND, "메모를 찾을 수 없습니다"),
     TERRARIUM_NOT_FOUND(HttpStatus.NOT_FOUND, "테라리움을 찾을 수 없습니다"),
+    PLACEMENT_NOT_FOUND(HttpStatus.NOT_FOUND, "배치 정보를 찾을 수 없습니다"),
 
     // Business
     INSUFFICIENT_FUNDS(HttpStatus.BAD_REQUEST, "재화가 부족합니다"),
     ALREADY_OWNED(HttpStatus.CONFLICT, "이미 보유한 아이템입니다"),
     INVALID_SLOT(HttpStatus.BAD_REQUEST, "해당 슬롯에 배치할 수 없는 아이템입니다"),
+
+    // V15 (slot_id partial UNIQUE) 위반 시 DataIntegrityViolationException 매핑 (Codex F3).
+    TERRARIUM_SLOT_CONFLICT(HttpStatus.CONFLICT, "해당 슬롯에 이미 다른 아이템이 배치되어 있습니다"),
     SAME_CATEGORY_EXCHANGE(HttpStatus.BAD_REQUEST, "같은 카테고리로는 교환할 수 없습니다"),
     DAILY_LIMIT_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, "일일 제한 횟수를 초과했습니다"),
     EXCHANGE_RATE_NOT_FOUND(HttpStatus.BAD_REQUEST, "교환 비율 정보를 찾을 수 없습니다"),
@@ -53,5 +57,8 @@ enum class ErrorCode(
     BAD_REQUEST(HttpStatus.BAD_REQUEST, "잘못된 요청입니다"),
     FORBIDDEN(HttpStatus.FORBIDDEN, "권한이 없습니다"),
     RATE_LIMIT_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, "요청이 너무 많습니다. 잠시 후 다시 시도해 주세요"),
+
+    // N10 (구현 계획서 v4): optimistic lock 충돌 (동시 재화/EXP 변동) — 클라이언트 재시도 유도
+    CONCURRENT_MODIFICATION(HttpStatus.CONFLICT, "다른 요청이 동시에 처리 중입니다. 잠시 후 다시 시도해 주세요"),
     INTERNAL_ERROR(HttpStatus.INTERNAL_SERVER_ERROR, "서버 오류가 발생했습니다"),
 }

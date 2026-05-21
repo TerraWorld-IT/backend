@@ -6,6 +6,7 @@ import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
 import com.terraworld.domain.reward.AdWatchLog
 import com.terraworld.domain.reward.AdWatchLogRepository
+import com.terraworld.domain.terrarium.TerrariumRepository
 import com.terraworld.domain.user.User
 import com.terraworld.domain.user.UserRepository
 import com.terraworld.domain.user.UserToken
@@ -60,7 +61,23 @@ class RewardServiceTest {
 
         currencyBuilder = CurrencyBuilder(tokenRepo)
         val auditService = mock(AuditService::class.java)
-        service = RewardService(logRepo, userRepo, redisTemplate, currencyBuilder, auditService)
+        // N1 fix: RewardService 생성자에 terrariumRepository 추가됨 (광고 시청 시 시들기 reset).
+        // 본 test 는 wilt reset 경로를 검증하지 않으므로 mock — findByUserId 는 Optional.empty() 반환 →
+        // claimAdReward 의 wiltReset = false 로 happy path 통과.
+        val terrariumRepository = mock(TerrariumRepository::class.java)
+        // N2 fix: RewardService 생성자에 walletTransactionService 추가됨 (광고 보상 ledger).
+        // 본 test 는 ledger 경로를 검증하지 않으므로 mock — append() 반환값은 미사용.
+        val walletTransactionService = mock(com.terraworld.api.wallet.WalletTransactionService::class.java)
+        service =
+            RewardService(
+                logRepo,
+                userRepo,
+                terrariumRepository,
+                redisTemplate,
+                currencyBuilder,
+                auditService,
+                walletTransactionService,
+            )
 
         userRepo.save(User(id = "user-1", nickname = "테스터"))
     }

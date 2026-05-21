@@ -1,0 +1,144 @@
+package com.terraworld.api.admin
+
+import com.terraworld.common.audit.AuditService
+import com.terraworld.common.exception.BusinessException
+import com.terraworld.domain.category.Category
+import com.terraworld.domain.category.CategoryRepository
+import com.terraworld.domain.exchange.TokenExchangeRateRepository
+import com.terraworld.domain.item.Item
+import com.terraworld.domain.item.ItemRepository
+import com.terraworld.domain.item.PriceType
+import com.terraworld.domain.level.LevelConfig
+import com.terraworld.domain.level.LevelConfigRepository
+import com.terraworld.domain.user.UserRepository
+import org.junit.jupiter.api.BeforeEach
+import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
+import org.mockito.Mockito.mock
+import org.mockito.Mockito.verify
+import org.mockito.Mockito.`when`
+import java.util.Optional
+import kotlin.test.assertEquals
+
+/**
+ * code-review CDX-004 (구현 계획서 v4, 2026-05-21): AdminService 검증/해피패스 커버.
+ * Mockito 기반 — repository 는 mock, 입력 검증 (require) + entity mutation + save 호출 확인.
+ */
+class AdminServiceTest {
+    private lateinit var categoryRepository: CategoryRepository
+    private lateinit var levelConfigRepository: LevelConfigRepository
+    private lateinit var exchangeRateRepository: TokenExchangeRateRepository
+    private lateinit var itemRepository: ItemRepository
+    private lateinit var userRepository: UserRepository
+    private lateinit var service: AdminService
+
+    private val admin = "admin-1"
+
+    @BeforeEach
+    fun setup() {
+        categoryRepository = mock(CategoryRepository::class.java)
+        levelConfigRepository = mock(LevelConfigRepository::class.java)
+        exchangeRateRepository = mock(TokenExchangeRateRepository::class.java)
+        itemRepository = mock(ItemRepository::class.java)
+        userRepository = mock(UserRepository::class.java)
+        service =
+            AdminService(
+                categoryRepository,
+                levelConfigRepository,
+                exchangeRateRepository,
+                itemRepository,
+                userRepository,
+                mock(AuditService::class.java),
+            )
+    }
+
+    @Test
+    fun `updateCategoryRewards 해피 패스 — 필드 갱신 후 save`() {
+        val category = Category(id = 1L, name = "산책", tokenName = "산책토큰")
+        `when`(categoryRepository.findById(1L)).thenReturn(Optional.of(category))
+
+        service.updateCategoryRewards(admin, categoryId = 1L, baseCoinReward = 30, baseTokenReward = 15, dailyLimit = 7)
+
+        assertEquals(30, category.baseCoinReward)
+        assertEquals(15, category.baseTokenReward)
+        assertEquals(7, category.dailyLimit)
+        verify(categoryRepository).save(category)
+    }
+
+    @Test
+    fun `updateCategoryRewards — 음수 보상은 IllegalArgumentException`() {
+        assertThrows<IllegalArgumentException> {
+            service.updateCategoryRewards(admin, categoryId = 1L, baseCoinReward = -1, baseTokenReward = 10, dailyLimit = 5)
+        }
+    }
+
+    @Test
+    fun `updateLevelConfig — 미존재 레벨은 BusinessException`() {
+        `when`(levelConfigRepository.findById(99)).thenReturn(Optional.empty())
+        assertThrows<BusinessException> {
+            service.updateLevelConfig(admin, level = 99, requiredExp = 100, rewardType = null, rewardValue = null, maxItems = 10)
+        }
+    }
+
+    @Test
+    fun `updateLevelConfig 해피 패스 — required_exp 갱신`() {
+        val config = LevelConfig(level = 3, requiredExp = 300)
+        `when`(levelConfigRepository.findById(3)).thenReturn(Optional.of(config))
+
+        service.updateLevelConfig(admin, level = 3, requiredExp = 250, rewardType = "COIN", rewardValue = 50, maxItems = 12)
+
+        assertEquals(250, config.requiredExp)
+        assertEquals("COIN", config.rewardType)
+        assertEquals(12, config.maxItems)
+        verify(levelConfigRepository).save(config)
+    }
+
+    @Test
+    fun `updateExchangeRate — 0 이하 비율은 IllegalArgumentException`() {
+        assertThrows<IllegalArgumentException> {
+            service.updateExchangeRate(admin, rateId = 1L, rate = 0f, isActive = true)
+        }
+    }
+
+    @Test
+    fun `updateExchangeRate — 무한대 비율은 IllegalArgumentException`() {
+        assertThrows<IllegalArgumentException> {
+            service.updateExchangeRate(admin, rateId = 1L, rate = Float.POSITIVE_INFINITY, isActive = true)
+        }
+    }
+
+    @Test
+    fun `dashboard — 카운트 집계`() {
+        `when`(userRepository.count()).thenReturn(10L)
+        `when`(itemRepository.count()).thenReturn(20L)
+        `when`(categoryRepository.count()).thenReturn(4L)
+        `when`(levelConfigRepository.count()).thenReturn(10L)
+
+        val d = service.dashboard()
+
+        assertEquals(10L, d.totalUsers)
+        assertEquals(20L, d.totalItems)
+        assertEquals(4L, d.totalCategories)
+        assertEquals(10L, d.totalLevels)
+    }
+
+    @Test
+    fun `setItemActive — 아이템 활성 토글 후 save`() {
+        val item =
+            Item(id = 1L, name = "테스트 아이템", priceType = PriceType.BASIC, priceAmount = 100, assetUrl = "x.png")
+        `when`(itemRepository.findById(1L)).thenReturn(Optional.of(item))
+
+        service.setItemActive(admin, itemId = 1L, active = false)
+
+        assertEquals(false, item.isActive)
+        verify(itemRepository).save(item)
+    }
+
+    @Test
+    fun `setItemActive — 미존재 아이템은 BusinessException`() {
+        `when`(itemRepository.findById(99L)).thenReturn(Optional.empty())
+        assertThrows<BusinessException> {
+            service.setItemActive(admin, itemId = 99L, active = true)
+        }
+    }
+}

@@ -50,6 +50,13 @@ class SecurityConfig(
                     // bypass the header check.
                     .requestMatchers("/api/v1/internal/**")
                     .permitAll()
+                    // code-review SEC-001/CDX-001 (HIGH, 2026-05-21): Play Billing RTDN
+                    // webhook 은 Bearer JWT 가 아닌 X-Internal-Token 헤더로 호출된다.
+                    // permitAll 누락 시 Spring Security 가 컨트롤러의 constant-time 토큰
+                    // 검증에 도달하기 전 401 → 결제 grant/revoke webhook 전면 무력화.
+                    // 실 인증 게이트는 PlayBillingWebhookController 의 토큰 검증.
+                    .requestMatchers("/api/v1/webhooks/**")
+                    .permitAll()
                     // Auth (sign-in / sign-up / session) is owned by better-auth
                     // on the Nuxt/Nitro side. Spring only validates bearer JWTs
                     // for protected domain endpoints.

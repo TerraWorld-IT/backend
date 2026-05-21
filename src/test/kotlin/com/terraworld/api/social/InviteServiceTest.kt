@@ -32,7 +32,24 @@ class InviteServiceTest {
     fun setup() {
         inviteRepo = FakeInviteRepository()
         userRepo = FakeUserRepository()
-        service = InviteService(inviteRepo, userRepo, "https://terraworld.app/share")
+        // N2/N8/N16 (구현 계획서 v4): InviteService 생성자에 walletTransactionService +
+        // eventPublisher + terrariumService 추가. 본 test 는 ledger / FCM / share 경로를
+        // 검증하지 않으므로 mock.
+        val walletTransactionService =
+            org.mockito.Mockito.mock(com.terraworld.api.wallet.WalletTransactionService::class.java)
+        val eventPublisher =
+            org.mockito.Mockito.mock(org.springframework.context.ApplicationEventPublisher::class.java)
+        val terrariumService =
+            org.mockito.Mockito.mock(com.terraworld.api.terrarium.TerrariumService::class.java)
+        service =
+            InviteService(
+                inviteRepo,
+                userRepo,
+                walletTransactionService,
+                eventPublisher,
+                terrariumService,
+                "https://terraworld.app/share",
+            )
 
         userRepo.save(User(id = "inviter-1", nickname = "테스터1"))
         userRepo.save(User(id = "invitee-1", nickname = "테스터2"))
@@ -171,6 +188,12 @@ class InviteServiceTest {
                         (i.inviterUserId == userIdA && i.inviteeUserId == userIdB) ||
                             (i.inviterUserId == userIdB && i.inviteeUserId == userIdA)
                     )
+            }
+
+        // P-FRIEND-001 (구현 계획서 v4): 친구 목록 쿼리 fake 구현.
+        override fun findAcceptedInvolvingUser(userId: String): List<Invite> =
+            store.values.filter { i ->
+                i.acceptedAt != null && (i.inviterUserId == userId || i.inviteeUserId == userId)
             }
     }
 

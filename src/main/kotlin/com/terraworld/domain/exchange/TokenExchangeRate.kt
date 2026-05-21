@@ -14,8 +14,9 @@ class TokenExchangeRate(
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "to_category_id", nullable = false)
     val toCategory: Category,
+    // N5 (구현 계획서 v4): admin 교환 비율 조정 — 필드 var (AdminService.updateExchangeRate)
     @Column(nullable = false)
-    val rate: Float = 2.0f,
+    var rate: Float = 2.0f,
     @Column(name = "is_active", nullable = false)
-    val isActive: Boolean = true,
+    var isActive: Boolean = true,
 )

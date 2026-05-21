@@ -51,6 +51,11 @@ dependencies {
     // if the spec drifts from the controller signature.
     implementation("io.terraworld:openapi-backend")
 
+    // UltraPlan M1 — FCM (Firebase Cloud Messaging).
+    // Service account JSON 은 환경변수 FCM_SERVICE_ACCOUNT_JSON 또는 GOOGLE_APPLICATION_CREDENTIALS
+    // path 로 주입. 부재 시 FcmService bean 가 noop mode 로 init (테스트/dev 환경).
+    implementation("com.google.firebase:firebase-admin:9.4.3")
+
     // Test
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.springframework.security:spring-security-test")

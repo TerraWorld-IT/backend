@@ -4,6 +4,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication
 import org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
 import org.springframework.boot.context.properties.ConfigurationPropertiesScan
 import org.springframework.boot.runApplication
+import org.springframework.scheduling.annotation.EnableScheduling
 
 @SpringBootApplication(
     // We own authentication via JwtAuthenticationFilter + better-auth JWKS.
@@ -12,6 +13,8 @@ import org.springframework.boot.runApplication
     exclude = [UserDetailsServiceAutoConfiguration::class],
 )
 @ConfigurationPropertiesScan
+// N14 (구현 계획서 v4): WiltScheduler 의 @Scheduled cron 활성화.
+@EnableScheduling
 class TerraWorldApplication
 
 fun main(args: Array<String>) {

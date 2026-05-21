@@ -2,6 +2,7 @@ package com.terraworld.api.terrarium
 
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
+import com.terraworld.common.time.KstTime
 import com.terraworld.domain.item.ItemLayout
 import com.terraworld.domain.item.ItemRepository
 import com.terraworld.domain.item.UserItemRepository
@@ -25,7 +26,6 @@ import io.terraworld.api.model.WiltingState
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
-import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 import io.terraworld.api.model.EvolutionStage as ApiEvolutionStage
 
@@ -46,6 +46,7 @@ class TerrariumService(
     private val levelConfigRepository: LevelConfigRepository,
     private val recordRepository: RecordRepository,
     private val placementHistoryRepository: TerrariumPlacementHistoryRepository,
+    private val entitlementService: com.terraworld.api.entitlement.EntitlementService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -108,7 +109,12 @@ class TerrariumService(
         if (target !in unlocked) {
             throw BusinessException(ErrorCode.FORBIDDEN_EVOLUTION, "레벨이 부족합니다 (필요: ${target.unlockLevel})")
         }
-        if (target == EvolutionStage.CUSTOM && !user.entitlementFreePlacement) {
+        // N3 (구현 계획서 v4): entitlement SoT = user_entitlement 테이블.
+        // 이전 user.entitlementFreePlacement boolean 은 deprecated — EntitlementService 가
+        // grant/revoke 의 단일 SoT 이므로 IAP webhook 이 갱신하는 테이블을 직접 조회.
+        if (target == EvolutionStage.CUSTOM &&
+            !entitlementService.hasEntitlement(userId, com.terraworld.domain.entitlement.UserEntitlementId.FREE_PLACEMENT)
+        ) {
             throw BusinessException(ErrorCode.FORBIDDEN_EVOLUTION, "자유배치 권리(freePlacement)가 필요합니다")
         }
 
@@ -131,11 +137,28 @@ class TerrariumService(
         return UpgradeTerrariumResponse(terrarium = getTerrarium(userId), message = message)
     }
 
+    /**
+     * P-WILT-001 + J-WILT-001 (UltraPlan v3, 2026-05-18):
+     *
+     * 시들기 단계는 max(마지막 record date, terrarium.wiltRecoveredAt) 기준의
+     * 경과 일수로 계산. RewardService.claimAdReward 가 wiltRecoveredAt 을 now() 로
+     * 갱신하면 본 함수가 stage 0 으로 자동 reset (Codex pre-audit J-WILT 해결).
+     *
+     * 둘 다 null = 기록 없는 신규 사용자 → stage 0 / daysSinceRecord null.
+     */
     private fun computeWiltingState(userId: String): WiltingState {
-        val latest =
-            recordRepository.findMaxRecordedDate(userId)
+        val lastRecordDate = recordRepository.findMaxRecordedDate(userId)
+        val wiltRecoveredDate =
+            terrariumRepository
+                .findByUserId(userId)
+                .map { it.wiltRecoveredAt?.toLocalDate() }
+                .orElse(null)
+
+        val effective =
+            listOfNotNull(lastRecordDate, wiltRecoveredDate).maxOrNull()
                 ?: return WiltingState(stage = 0, daysSinceRecord = null)
-        val days = ChronoUnit.DAYS.between(latest, LocalDate.now())
+
+        val days = ChronoUnit.DAYS.between(effective, KstTime.today())
         val stage =
             when {
                 days >= WILT_STAGE_3_DAYS -> 3
@@ -209,9 +232,20 @@ class TerrariumService(
             userRepository
                 .findById(userId)
                 .orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) }
-        user.basicCoin += 1
+        // /analyze 2026-05-18 발견 (Codex C-1): 기존 코드 `basicCoin += 1` ↔ `reward = 0.1`
+        // 10× mismatch — response 가 실제 DB 누적과 불일치. spec example 도 +0.1 였으나
+        // DB 컬럼 BIGINT 와 fractional 모델 충돌. autonomous default (Phase 4 pre-launch):
+        //   - DB schema 유지 (BIGINT)
+        //   - response 의 `reward` 와 `updatedBasicCoins` 가 실 DB state 와 정확히 일치
+        //   - spec example 도 1.0 으로 정정 (별 PR)
+        // 어뷰징 cooldown 정책은 별 cycle (현재 client side throttle 만 존재).
+        val rewardCoins = 1L
+        user.basicCoin += rewardCoins
         userRepository.save(user)
-        return HeartResponse(reward = 0.1, updatedBasicCoins = user.basicCoin.toDouble())
+        return HeartResponse(
+            reward = rewardCoins.toDouble(),
+            updatedBasicCoins = user.basicCoin.toDouble(),
+        )
     }
 
     /**

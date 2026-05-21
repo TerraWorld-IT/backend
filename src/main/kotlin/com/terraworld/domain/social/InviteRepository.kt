@@ -28,4 +28,19 @@ interface InviteRepository : JpaRepository<Invite, Long> {
         @Param("a") userIdA: String,
         @Param("b") userIdB: String,
     ): Boolean
+
+    /**
+     * P-FRIEND-001 (구현 계획서 v4): 사용자가 관여한 수락된 invite 전체 (친구 목록 SoT).
+     * inviter 또는 invitee 어느 쪽이든. 친구 관계 = 수락된 invite (별도 friendship 테이블 불요).
+     */
+    @Query(
+        """
+        SELECT i FROM Invite i
+        WHERE i.acceptedAt IS NOT NULL
+          AND (i.inviterUserId = :userId OR i.inviteeUserId = :userId)
+        """,
+    )
+    fun findAcceptedInvolvingUser(
+        @Param("userId") userId: String,
+    ): List<Invite>
 }

@@ -7,12 +7,13 @@ import jakarta.persistence.*
 class LevelConfig(
     @Id
     val level: Int,
+    // N5 (구현 계획서 v4): admin 레벨 설정 조정 — 필드 var (AdminService.updateLevel)
     @Column(name = "required_exp", nullable = false)
-    val requiredExp: Long,
+    var requiredExp: Long,
     @Column(name = "reward_type", length = 30)
-    val rewardType: String? = null,
+    var rewardType: String? = null,
     @Column(name = "reward_value")
-    val rewardValue: Int? = null,
+    var rewardValue: Int? = null,
     @Column(name = "max_items", nullable = false)
-    val maxItems: Int = 20,
+    var maxItems: Int = 20,
 )

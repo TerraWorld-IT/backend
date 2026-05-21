@@ -4,6 +4,7 @@ import com.terraworld.api.record.dto.CreateRecordRequest
 import com.terraworld.api.user.CurrencyBuilder
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
+import com.terraworld.common.time.KstTime
 import com.terraworld.domain.category.CategoryRepository
 import com.terraworld.domain.record.ActivityRecord
 import com.terraworld.domain.record.RecordRepository
@@ -45,6 +46,10 @@ class RecordService(
     private val categoryRepository: CategoryRepository,
     private val inviteRepository: InviteRepository,
     private val currencyBuilder: CurrencyBuilder,
+    // UltraPlan v3 J-EVO-001 (2026-05-18): EXP 가산 후 level-up 자동 트리거
+    private val userLevelService: com.terraworld.api.user.UserLevelService,
+    // N2 (구현 계획서 v4): record reward 시 wallet_transactions 원장 기록
+    private val walletTransactionService: com.terraworld.api.wallet.WalletTransactionService,
 ) {
     @Transactional
     fun createRecord(
@@ -69,7 +74,7 @@ class RecordService(
         val todayCount =
             recordRepository.countByUserIdAndRecordedDateAndCategoryIdAndIsDeletedFalse(
                 userId,
-                LocalDate.now(),
+                KstTime.today(),
                 category.id,
             )
         if (todayCount >= category.dailyLimit) {
@@ -104,34 +109,35 @@ class RecordService(
                     category = category,
                     memo = request.note,
                     photoUrl = request.photoUrl,
-                    recordedDate = LocalDate.now(),
+                    recordedDate = KstTime.today(),
                     partnerUserId = partner?.id,
                     jointSessionId = jointSessionId,
                 ),
             )
-        applyReward(user, category)
+        applyReward(record, category)
 
         // Partner 기록 (있을 때) — partner 의 daily limit 체크 후, 미달이면 보상 가산
         if (partner != null) {
             val partnerTodayCount =
                 recordRepository.countByUserIdAndRecordedDateAndCategoryIdAndIsDeletedFalse(
                     partner.id,
-                    LocalDate.now(),
+                    KstTime.today(),
                     category.id,
                 )
             if (partnerTodayCount < category.dailyLimit) {
-                recordRepository.save(
-                    ActivityRecord(
-                        user = partner,
-                        category = category,
-                        memo = request.note,
-                        photoUrl = request.photoUrl,
-                        recordedDate = LocalDate.now(),
-                        partnerUserId = userId,
-                        jointSessionId = jointSessionId,
-                    ),
-                )
-                applyReward(partner, category)
+                val partnerRecord =
+                    recordRepository.save(
+                        ActivityRecord(
+                            user = partner,
+                            category = category,
+                            memo = request.note,
+                            photoUrl = request.photoUrl,
+                            recordedDate = KstTime.today(),
+                            partnerUserId = userId,
+                            jointSessionId = jointSessionId,
+                        ),
+                    )
+                applyReward(partnerRecord, category)
             }
         }
 
@@ -158,13 +164,35 @@ class RecordService(
         )
     }
 
+    /**
+     * N2 (구현 계획서 v4): record reward 적용 + wallet_transactions 원장 INSERT x2
+     * (BASIC_COIN + CATEGORY_TOKEN). spec records.yaml:73 명시. EXP 는 wallet currency 가
+     * 아니므로 ledger 미기록.
+     */
     private fun applyReward(
-        user: User,
+        record: ActivityRecord,
         category: com.terraworld.domain.category.Category,
     ) {
+        val user = record.user
         user.basicCoin += category.baseCoinReward
         user.totalExp += 10
         userRepository.save(user)
+
+        // wallet ledger — BASIC_COIN row
+        walletTransactionService.append(
+            user = user,
+            currencyType = com.terraworld.api.wallet.WalletTransactionService.CURRENCY_BASIC_COIN,
+            amount = category.baseCoinReward.toLong(),
+            balanceAfter = user.basicCoin,
+            reason = com.terraworld.api.wallet.WalletTransactionService.REASON_RECORD_REWARD,
+            referenceId = record.id,
+        )
+
+        // UltraPlan v3 J-EVO-001 (Codex pre-audit HIGH):
+        // EXP 가산 직후 level-up 자동 체크. level_config 임계값 (V12 seed, 선형 N×100, 상한 10)
+        // 도달 시 user.level 자동 갱신 + AuditService LEVEL_UP 기록.
+        // Decay 없음 (광고 복구·환불·시들기 모두 EXP 변동 X — 사용자 박탈감 회피).
+        userLevelService.checkAndApplyLevelUp(user)
 
         val token =
             userTokenRepository.findByUserIdAndCategoryId(user.id, category.id).orElseGet {
@@ -179,6 +207,17 @@ class RecordService(
             }
         token.amount += category.baseTokenReward
         userTokenRepository.save(token)
+
+        // wallet ledger — CATEGORY_TOKEN row
+        walletTransactionService.append(
+            user = user,
+            currencyType = com.terraworld.api.wallet.WalletTransactionService.CURRENCY_CATEGORY_TOKEN,
+            amount = category.baseTokenReward.toLong(),
+            balanceAfter = token.amount.toLong(),
+            reason = com.terraworld.api.wallet.WalletTransactionService.REASON_RECORD_REWARD,
+            category = category,
+            referenceId = record.id,
+        )
     }
 
     @Transactional(readOnly = true)
@@ -203,7 +242,7 @@ class RecordService(
 
     @Transactional(readOnly = true)
     fun getStatistics(userId: String): StatisticsResponse {
-        val today = LocalDate.now()
+        val today = KstTime.today()
         val weekAgo = today.minusDays(7)
         val categories =
             categoryRepository.findAllByIsActiveTrueAndIsCustomFalse() +

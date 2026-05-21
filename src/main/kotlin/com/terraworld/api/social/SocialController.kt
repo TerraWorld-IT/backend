@@ -6,6 +6,7 @@ import io.swagger.v3.oas.annotations.tags.Tag
 import io.terraworld.api.api.SocialApi
 import io.terraworld.api.model.InviteAcceptResponse
 import io.terraworld.api.model.InviteResponse
+import io.terraworld.api.model.ShareResponse
 import org.springframework.http.ResponseEntity
 import org.springframework.validation.annotation.Validated
 import org.springframework.web.bind.annotation.RequestMapping
@@ -40,6 +41,15 @@ class SocialController(
     )
     override fun acceptInvite(code: String): ResponseEntity<InviteAcceptResponse> {
         val response = inviteService.acceptInvite(SecurityUtil.getCurrentUserId(), code)
+        return ResponseEntity.ok(response)
+    }
+
+    @Operation(
+        summary = "공유 테라리움 조회 (공개)",
+        description = "N16: invite code 로 발신자 테라리움 + 닉네임 조회. 인증 불요 — 미가입자도 접근.",
+    )
+    override fun getSharedTerrarium(code: String): ResponseEntity<ShareResponse> {
+        val response = inviteService.getSharedTerrarium(code)
         return ResponseEntity.ok(response)
     }
 }

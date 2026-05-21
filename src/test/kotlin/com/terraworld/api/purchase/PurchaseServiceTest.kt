@@ -51,7 +51,20 @@ class PurchaseServiceTest {
 
         val currencyBuilder = CurrencyBuilder(tokenRepo)
         val auditService = org.mockito.Mockito.mock(AuditService::class.java)
-        service = PurchaseService(userRepo, tokenRepo, itemRepo, userItemRepo, currencyBuilder, auditService)
+        // N2 (구현 계획서 v4): PurchaseService 생성자에 walletTransactionService 추가됨 (구매 ledger).
+        // 본 test 는 ledger 경로를 검증하지 않으므로 mock — append() 반환값 미사용.
+        val walletTransactionService =
+            org.mockito.Mockito.mock(com.terraworld.api.wallet.WalletTransactionService::class.java)
+        service =
+            PurchaseService(
+                userRepo,
+                tokenRepo,
+                itemRepo,
+                userItemRepo,
+                currencyBuilder,
+                auditService,
+                walletTransactionService,
+            )
 
         walkCategory = Category(id = 1L, name = "산책", tokenName = "산책토큰")
         user = User(id = "user-1", nickname = "테스터", basicCoin = 100, specialCoin = 30)
