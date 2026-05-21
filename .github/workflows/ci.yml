@@ -75,11 +75,20 @@ jobs:
         run: ./gradlew ktlintCheck
 
       - name: Test
+        # `./gradlew test` 가 finalizedBy 로 jacocoTestReport 도 자동 실행한다.
         run: ./gradlew test
         env:
           SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/terraworld_test
           SPRING_DATASOURCE_USERNAME: terraworld
           SPRING_DATASOURCE_PASSWORD: terraworld
+
+      - name: Upload JaCoCo coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jacoco-coverage-${{ github.sha }}
+          path: build/reports/jacoco/test/
+          retention-days: 14
 
       - name: Build
         run: ./gradlew bootJar
