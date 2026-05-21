@@ -50,9 +50,15 @@ jobs:
           languages: ${{ matrix.language }}
           # 권장 default: extended query suite — CRITICAL + HIGH + MEDIUM
           queries: security-extended,security-and-quality
+          # CodeQL extractor 가 runner RAM 의 ~90% 를 선점하면 Kotlin 컴파일러
+          # worker 가 굶어 GC overhead OOM → 6GB 로 제한해 빌드에 여유 확보.
+          ram: 6144
 
       - name: Build (Gradle)
         run: ./gradlew --no-daemon assemble
+        env:
+          # Gradle daemon + Kotlin 컴파일 worker heap 확보 (기본 512m~1g 는 부족).
+          GRADLE_OPTS: '-Dorg.gradle.jvmargs=-Xmx6g'
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v3
