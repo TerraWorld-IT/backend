@@ -35,6 +35,9 @@ enum class ErrorCode(
     // Phase 2 — 광고 보상
     AD_DAILY_LIMIT_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, "오늘 광고 시청 한도를 모두 사용했습니다"),
 
+    // N9 (구현 계획서 v4, 2026-05-26): 같은 nonce 로 이미 광고 보상 수령됨 (replay 차단)
+    NONCE_ALREADY_CONSUMED(HttpStatus.CONFLICT, "이미 처리된 광고 시청 요청입니다"),
+
     // Phase 2 — 초대
     INVITE_NOT_FOUND(HttpStatus.NOT_FOUND, "초대 코드를 찾을 수 없습니다"),
     INVITE_EXPIRED(HttpStatus.GONE, "만료된 초대 코드입니다"),

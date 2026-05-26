@@ -94,6 +94,15 @@ app:
     allowed-hosts: ${APP_PHOTO_URL_HOSTS:cdn.terraworld.app,terraworld.app}
     allowed-data-mimes: ${APP_PHOTO_URL_DATA_MIMES:image/jpeg,image/png,image/webp}
 
+# N9 (구현 계획서 v4, 2026-05-26): 광고 보상 nonce 정책.
+# - Phase 4 비공개 테스트 중 false 유지 (legacy 호환). 종료 후 true 전환.
+# - true 이면 RewardService.claimAdReward 가 nonce 미제공 시 400 INVALID_INPUT 차단.
+# - Codex round 2 RD2-3 정정: prod 배포 시 환경변수 명시 권장 (자동화 hook 없음 → 운영자 수동).
+reward:
+  ad:
+    nonce:
+      required: ${REWARD_AD_NONCE_REQUIRED:false}
+
 springdoc:
   api-docs:
     path: /api-docs
@@ -121,3 +130,10 @@ cors:
   # Missing CORS_ALLOWED_ORIGINS aborts startup in prod. Never include
   # localhost entries — SecurityConfig enforces this at boot.
   allowed-origins: ${CORS_ALLOWED_ORIGINS}
+
+# N9 (Codex round 2 RD2-3): prod 에서 reward.ad.nonce.required 가 true 로 전환됐는지
+# 명시. 미설정 시 default false (legacy 호환) — Phase 4 비공개 테스트 종료 후 true 권장.
+reward:
+  ad:
+    nonce:
+      required: ${REWARD_AD_NONCE_REQUIRED:false}

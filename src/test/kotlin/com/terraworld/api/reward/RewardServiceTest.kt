@@ -4,6 +4,7 @@ import com.terraworld.api.user.CurrencyBuilder
 import com.terraworld.common.audit.AuditService
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
+import com.terraworld.domain.reward.AdRewardNonceInboxRepository
 import com.terraworld.domain.reward.AdWatchLog
 import com.terraworld.domain.reward.AdWatchLogRepository
 import com.terraworld.domain.terrarium.TerrariumRepository
@@ -19,6 +20,8 @@ import org.mockito.ArgumentMatchers.any
 import org.mockito.ArgumentMatchers.anyString
 import org.mockito.Mockito.lenient
 import org.mockito.Mockito.mock
+import org.mockito.Mockito.never
+import org.mockito.Mockito.verify
 import org.mockito.Mockito.`when`
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.data.redis.core.ValueOperations
@@ -37,6 +40,7 @@ class RewardServiceTest {
     private lateinit var userRepo: FakeUserRepository
     private lateinit var logRepo: FakeAdWatchLogRepository
     private lateinit var tokenRepo: FakeUserTokenRepository
+    private lateinit var nonceInboxRepository: AdRewardNonceInboxRepository
     private lateinit var redisTemplate: StringRedisTemplate
     private lateinit var valueOps: ValueOperations<String, String>
     private lateinit var currencyBuilder: CurrencyBuilder
@@ -68,6 +72,10 @@ class RewardServiceTest {
         // N2 fix: RewardService 생성자에 walletTransactionService 추가됨 (광고 보상 ledger).
         // 본 test 는 ledger 경로를 검증하지 않으므로 mock — append() 반환값은 미사용.
         val walletTransactionService = mock(com.terraworld.api.wallet.WalletTransactionService::class.java)
+        // N9 (구현 계획서 v4, 2026-05-26): nonce inbox mock — 본 test 는 nonce 미전달
+        // (backward-compat 경로) 만 검증하므로 insertIfAbsent 는 호출되지 않음. nonce 검증 분기
+        // 자체의 test 는 별 cycle (RewardServiceNonceTest).
+        nonceInboxRepository = mock(AdRewardNonceInboxRepository::class.java)
         service =
             RewardService(
                 logRepo,
@@ -77,6 +85,8 @@ class RewardServiceTest {
                 currencyBuilder,
                 auditService,
                 walletTransactionService,
+                nonceInboxRepository,
+                nonceRequired = false,
             )
 
         userRepo.save(User(id = "user-1", nickname = "테스터"))
@@ -96,6 +106,9 @@ class RewardServiceTest {
             userRepo.findById("user-1").get().specialCoin,
         )
         assertEquals(1, logRepo.all().size)
+
+        // Codex LOW 5: legacy path 는 inbox 에 절대 INSERT 하지 않음을 verify 로 잠금.
+        verify(nonceInboxRepository, never()).insertIfAbsent(anyString(), anyString(), anyString())
     }
 
     @Test

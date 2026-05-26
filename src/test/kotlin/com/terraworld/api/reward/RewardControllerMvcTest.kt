@@ -14,6 +14,8 @@ import io.terraworld.api.model.AttendanceCheckInResponseReward
 import io.terraworld.api.model.AttendanceResponse
 import io.terraworld.api.model.CurrencyResponse
 import org.junit.jupiter.api.Test
+import org.mockito.kotlin.any
+import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.whenever
 import org.springframework.beans.factory.annotation.Autowired
@@ -21,6 +23,7 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest
 import org.springframework.boot.test.mock.mockito.MockBean
 import org.springframework.context.annotation.Import
+import org.springframework.http.MediaType
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
@@ -43,7 +46,10 @@ class RewardControllerMvcTest : AbstractMvcTest() {
 
     @Test
     fun `POST _api_v1_rewards_ad 200`() {
-        whenever(rewardService.claimAdReward(eq(TEST_USER_ID))).thenReturn(
+        // N9 (구현 계획서 v4): claimAdReward 시그니처가 (userId, nonce?, nonceSource) 로 확장됨.
+        // controller 는 1-arg 로 호출 (default args), mock 은 any() 로 매칭하여 default arg
+        // 까지 cover.
+        whenever(rewardService.claimAdReward(eq(TEST_USER_ID), anyOrNull(), any<String>())).thenReturn(
             AdRewardResponse(
                 reward = AdRewardResponseReward(specialCoins = 1),
                 dailyWatchCount = 1,
@@ -52,8 +58,10 @@ class RewardControllerMvcTest : AbstractMvcTest() {
             ),
         )
 
+        // N9 codegen sync: controller 가 consumes = application/json 요구 — body 가 nullable
+        // 이라도 Content-Type 헤더 필요. 빈 body "{}" + JSON content type.
         mockMvc
-            .perform(post("/api/v1/rewards/ad"))
+            .perform(post("/api/v1/rewards/ad").contentType(MediaType.APPLICATION_JSON).content("{}"))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.reward.specialCoins").value(1))
             .andExpect(jsonPath("$.dailyWatchCount").value(1))
@@ -105,12 +113,39 @@ class RewardControllerMvcTest : AbstractMvcTest() {
     // ── Negative cases ────────────────────────────────────────────────────────────
 
     @Test
-    fun `POST _api_v1_rewards_ad 429 when daily limit exceeded`() {
-        whenever(rewardService.claimAdReward(eq(TEST_USER_ID)))
-            .thenThrow(BusinessException(ErrorCode.AD_DAILY_LIMIT_EXCEEDED))
+    fun `POST _api_v1_rewards_ad with nonce body — nonce 가 service 에 전달됨`() {
+        // Codex round 2 RD2-2 (LOW): body 의 nonce 가 controller → service 로 정확히 전달되는지
+        // 회귀 검증. 위 200 case 는 `{}` body 만 보내 nonce 없는 backward-compat 경로만 cover.
+        // 본 case 는 specific nonce string 을 eq() 로 verify 하여 mapping 회귀 차단.
+        val testNonce = "550e8400-e29b-41d4-a716-446655440000"
+        whenever(rewardService.claimAdReward(eq(TEST_USER_ID), eq(testNonce), eq("CLIENT"))).thenReturn(
+            AdRewardResponse(
+                reward = AdRewardResponseReward(specialCoins = 1),
+                dailyWatchCount = 1,
+                remainingToday = 4,
+                updatedCurrency = currency(),
+            ),
+        )
 
         mockMvc
-            .perform(post("/api/v1/rewards/ad"))
+            .perform(
+                post("/api/v1/rewards/ad")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"nonce\":\"$testNonce\"}"),
+            ).andExpect(status().isOk)
+            .andExpect(jsonPath("$.reward.specialCoins").value(1))
+    }
+
+    @Test
+    fun `POST _api_v1_rewards_ad 429 when daily limit exceeded`() {
+        // N9: 시그니처 확장에 따른 any() 매칭 (위 200 case 와 동일).
+        whenever(rewardService.claimAdReward(eq(TEST_USER_ID), anyOrNull(), any<String>()))
+            .thenThrow(BusinessException(ErrorCode.AD_DAILY_LIMIT_EXCEEDED))
+
+        // N9 codegen sync: controller 가 consumes = application/json 요구 — body 가 nullable
+        // 이라도 Content-Type 헤더 필요. 빈 body "{}" + JSON content type.
+        mockMvc
+            .perform(post("/api/v1/rewards/ad").contentType(MediaType.APPLICATION_JSON).content("{}"))
             .andExpect(status().isTooManyRequests)
             .andExpect(jsonPath("$.code").value("AD_DAILY_LIMIT_EXCEEDED"))
     }

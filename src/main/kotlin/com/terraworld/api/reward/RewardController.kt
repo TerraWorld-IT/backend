@@ -1,10 +1,12 @@
 package com.terraworld.api.reward
 
 import com.terraworld.api.attendance.AttendanceService
+import com.terraworld.domain.reward.AdRewardNonceInbox
 import com.terraworld.security.SecurityUtil
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.tags.Tag
 import io.terraworld.api.api.RewardApi
+import io.terraworld.api.model.AdRewardRequest
 import io.terraworld.api.model.AdRewardResponse
 import io.terraworld.api.model.AttendanceCheckInResponse
 import io.terraworld.api.model.AttendanceResponse
@@ -30,8 +32,16 @@ class RewardController(
         summary = "광고 시청 보상 수령",
         description = "하루 최대 5회까지 광고 시청 시 스페셜 코인 1개 지급.",
     )
-    override fun claimAdReward(): ResponseEntity<AdRewardResponse> {
-        val response = rewardService.claimAdReward(SecurityUtil.getCurrentUserId())
+    override fun claimAdReward(adRewardRequest: AdRewardRequest?): ResponseEntity<AdRewardResponse> {
+        // N9 (구현 계획서 v4, 2026-05-26): generated interface 가 nullable body 를 받음.
+        // body.nonce 가 있으면 service 에 전달 — `ad_reward_nonce_inbox` dedup 활성.
+        // body=null 또는 nonce=null 은 backward-compat (legacy warn + audit legacy=true).
+        val response =
+            rewardService.claimAdReward(
+                userId = SecurityUtil.getCurrentUserId(),
+                nonce = adRewardRequest?.nonce,
+                nonceSource = AdRewardNonceInbox.SOURCE_CLIENT,
+            )
         return ResponseEntity.ok(response)
     }
 
