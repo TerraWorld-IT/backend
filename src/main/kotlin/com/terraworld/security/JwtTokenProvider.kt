@@ -70,6 +70,10 @@ class JwtTokenProvider(
     private val httpClient: HttpClient =
         HttpClient
             .newBuilder()
+            // HTTP/1.1 강제 — Nuxt/Nitro dev server 가 HTTP/2 upgrade 미지원이라 Java 11+
+            // default HTTP/2 client 가 "header parser received no bytes" 로 fail. dev e2e
+            // 환경의 JWKS fetch 안정성 ↑. production HTTPS 도 H2 명시 negotiation 가능.
+            .version(HttpClient.Version.HTTP_1_1)
             .connectTimeout(Duration.ofSeconds(5))
             .build()
 
