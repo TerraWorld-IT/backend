@@ -29,6 +29,7 @@ class ItemController(
     private val itemRepository: ItemRepository,
 ) : ShopApi {
     @Operation(summary = "아이템 목록 조회")
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
     override fun listItems(
         categoryId: Long?,
         rarity: String?,
