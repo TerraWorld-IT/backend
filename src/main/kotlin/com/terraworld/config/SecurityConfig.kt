@@ -57,6 +57,11 @@ class SecurityConfig(
                     // 실 인증 게이트는 PlayBillingWebhookController 의 토큰 검증.
                     .requestMatchers("/api/v1/webhooks/**")
                     .permitAll()
+                    // AdMob Rewarded SSV 콜백 — Google 서버가 Bearer JWT 없이 GET 호출.
+                    // permitAll 누락 시 AdSsvCallbackController 의 ECDSA 서명 검증에 도달 전 401.
+                    // 실 인증 게이트는 컨트롤러의 서명 검증(위조 콜백 차단).
+                    .requestMatchers("/api/v1/rewards/ad/ssv-callback")
+                    .permitAll()
                     // Auth (sign-in / sign-up / session) is owned by better-auth
                     // on the Nuxt/Nitro side. Spring only validates bearer JWTs
                     // for protected domain endpoints.

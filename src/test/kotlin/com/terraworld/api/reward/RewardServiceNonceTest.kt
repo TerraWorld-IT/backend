@@ -224,6 +224,23 @@ class RewardServiceNonceTest {
             store[nonce] = AdRewardNonceInbox(nonce = nonce, userId = userId, source = source)
             return 1
         }
+
+        override fun insertSsvIfAbsent(
+            nonceHash: String,
+            userId: String,
+            transactionId: String,
+        ): Int {
+            // ON CONFLICT DO NOTHING 모사 — nonce(PK) 또는 transaction_id 중복이면 0.
+            if (store.containsKey(nonceHash) || store.values.any { it.transactionId == transactionId }) return 0
+            store[nonceHash] =
+                AdRewardNonceInbox(
+                    nonce = nonceHash,
+                    userId = userId,
+                    source = AdRewardNonceInbox.SOURCE_SSV_CALLBACK,
+                    transactionId = transactionId,
+                )
+            return 1
+        }
     }
 
     private class FakeAdWatchLogRepository :

@@ -71,4 +71,30 @@ interface AdRewardNonceInboxRepository : JpaRepository<AdRewardNonceInbox, Strin
         @Param("userId") userId: String,
         @Param("source") source: String,
     ): Int
+
+    /**
+     * SSV 콜백 전용 원자적 insert. source='SSV_CALLBACK' 이면 transaction_id 필수
+     * (chk_ad_reward_nonce_ssv_tx CHECK) 라 insertIfAbsent 로는 불가 — 본 메서드가 transaction_id 를 함께 INSERT.
+     *
+     * nonce(PK, ≤64) = transaction_id 의 SHA-256 hex(64) — transaction_id 길이(≤128)가 PK 한계를
+     * 넘어도 안전하고 deterministic. dedup 은 nonce PK + uq_ad_reward_nonce_tx_id 양쪽으로 보장되며
+     * `ON CONFLICT DO NOTHING` (target 무지정) 이 둘 중 어느 충돌이든 흡수.
+     *
+     * @return 1 = 신규 SSV transaction / 0 = 이미 처리된 transaction (중복 콜백 — Google 재시도 등)
+     */
+    @Modifying
+    @Query(
+        value =
+            """
+            INSERT INTO ad_reward_nonce_inbox (nonce, user_id, source, transaction_id, consumed_at)
+            VALUES (:nonceHash, :userId, 'SSV_CALLBACK', :transactionId, NOW())
+            ON CONFLICT DO NOTHING
+            """,
+        nativeQuery = true,
+    )
+    fun insertSsvIfAbsent(
+        @Param("nonceHash") nonceHash: String,
+        @Param("userId") userId: String,
+        @Param("transactionId") transactionId: String,
+    ): Int
 }
