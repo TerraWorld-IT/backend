@@ -202,14 +202,37 @@ class TerrariumService(
         }
 
         val existingItemIds = terrarium.placedItems.map { it.item.id }.toSet()
+        // J-FREE-001 (2026-06-02): 슬롯 재배치는 delete-recreate 이므로, 그대로 두면
+        // PlacementService 가 저장한 자유배치 좌표(free_x/y_pixel + is_free_placement)가
+        // 함께 wiped 된다. 재배치되어 살아남는 placement 의 free 좌표를 (itemId, slotId) 기준으로
+        // 보존 후 복원. (Codex audit LOW: itemId 단독 키는 같은 아이템이 두 슬롯에 있을 때
+        // last-write-wins 로 충돌 — slotId 까지 포함해 placement 단위로 매칭. 슬롯이 바뀌면
+        // free 좌표는 의도적으로 리셋.)
+        val freeBySlot =
+            terrarium.placedItems
+                .filter { it.isFreePlacement || it.freeXPixel != null }
+                .associate { (it.item.id to it.slotId) to Triple(it.freeXPixel, it.freeYPixel, it.isFreePlacement) }
 
         terrariumPlacementRepository.deleteAllByTerrariumId(terrarium.id)
         terrarium.placedItems.clear()
+        // 사전존재 버그 (2026-06-02 e2e 발견): delete(deferred) + 재INSERT 를 한 트랜잭션에서 하면
+        // Hibernate action queue 가 INSERT 를 DELETE 보다 먼저 실행 → 같은 slot_id 재배치 시
+        // ux_terrarium_items_terrarium_slot 유니크 위반 (TERRARIUM_SLOT_CONFLICT 409). 슬롯 재저장이
+        // 항상 실패하던 문제. flush() 로 DELETE 를 재INSERT 전에 강제 실행.
+        terrariumPlacementRepository.flush()
 
         request.placedItems.forEach { p ->
             val item = itemRepository.findById(p.itemId).orElseThrow()
+            val free = freeBySlot[item.id to p.slotId]
             terrarium.placedItems.add(
-                TerrariumPlacement(terrarium = terrarium, item = item, slotId = p.slotId),
+                TerrariumPlacement(
+                    terrarium = terrarium,
+                    item = item,
+                    slotId = p.slotId,
+                    freeXPixel = free?.first,
+                    freeYPixel = free?.second,
+                    isFreePlacement = free?.third ?: false,
+                ),
             )
             if (item.id !in existingItemIds) {
                 placementHistoryRepository.save(
