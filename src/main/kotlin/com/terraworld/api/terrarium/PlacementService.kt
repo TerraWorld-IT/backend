@@ -83,8 +83,9 @@ class PlacementService(
         // permille(0~10000) 로 재사용 — 0.01% 정밀도, 별도 migration 불요.
         private const val STORE_SCALE = 10_000
 
-        private fun ratioToStore(ratio: Double): Int = (ratio.coerceIn(0.0, 1.0) * STORE_SCALE).roundToInt()
+        // internal: round-trip 정밀도 단위테스트(PlacementServiceConversionTest)에서 직접 호출.
+        internal fun ratioToStore(ratio: Double): Int = (ratio.coerceIn(0.0, 1.0) * STORE_SCALE).roundToInt()
 
-        private fun storeToRatio(stored: Int?): Double = (stored ?: 0) / STORE_SCALE.toDouble()
+        internal fun storeToRatio(stored: Int?): Double = (stored ?: 0) / STORE_SCALE.toDouble()
     }
 }
