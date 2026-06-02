@@ -1,5 +1,6 @@
 package com.terraworld.api.billing
 
+import com.fasterxml.jackson.databind.ObjectMapper
 import com.terraworld.api.entitlement.EntitlementService
 import com.terraworld.common.audit.AuditService
 import com.terraworld.domain.billing.WebhookInboxRepository
@@ -16,8 +17,12 @@ import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestHeader
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
+import java.net.URI
+import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
 import java.security.MessageDigest
-import java.util.Locale
+import java.time.Duration
 
 /**
  * UltraPlan v3 J-FREE-001 + Codex audit (2026-05-18):
@@ -47,12 +52,17 @@ class PlayBillingWebhookController(
     private val environment: Environment,
     // N11 (구현 계획서 v4): webhook 중복 수신 dedup inbox
     private val webhookInboxRepository: WebhookInboxRepository,
+    private val objectMapper: ObjectMapper,
     @Value("\${terraworld.internal-api-token:}")
     private val expectedInternalToken: String,
     @Value("\${terraworld.billing.alert-discord-webhook:}")
     private val alertDiscordWebhook: String,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
+
+    private val discordHttpClient: HttpClient by lazy {
+        HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build()
+    }
 
     /**
      * PAY-001 fix: prod profile 부팅 시 internal-api-token 미설정 = fail-fast.
@@ -271,9 +281,23 @@ class PlayBillingWebhookController(
             log.info("billing.alert.discord-skip — webhook URL 미설정. message: {}", message)
             return
         }
-        // 본 cycle 의 별 cycle 작업 — Discord webhook POST. 본 함수는 placeholder.
-        // RestTemplate 또는 WebClient 추가 + 본 함수의 try/catch 로 alert 실패 시 main flow 차단 안 함.
-        log.info("billing.alert.discord-todo message={} (별 cycle 활성화 필요)".lowercase(Locale.US), message)
+        // best-effort: alert 실패(네트워크/타임아웃)가 webhook main flow 를 막지 않도록 try/catch swallow.
+        try {
+            val payload = objectMapper.writeValueAsString(mapOf("content" to message))
+            val request =
+                HttpRequest
+                    .newBuilder(URI.create(alertDiscordWebhook))
+                    .timeout(Duration.ofSeconds(5))
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(payload, Charsets.UTF_8))
+                    .build()
+            val response = discordHttpClient.send(request, HttpResponse.BodyHandlers.discarding())
+            if (response.statusCode() !in 200..299) {
+                log.warn("billing.alert.discord-fail status={} message={}", response.statusCode(), message)
+            }
+        } catch (e: Exception) {
+            log.warn("billing.alert.discord-error {} (message={})", e.message, message)
+        }
     }
 }
 
