@@ -64,7 +64,12 @@ class R2PhotoStorage(
             }
         val key = "photos/${UUID.randomUUID()}.$ext"
         client.putObject(
-            PutObjectRequest.builder().bucket(bucket).key(key).contentType(mime).build(),
+            PutObjectRequest
+                .builder()
+                .bucket(bucket)
+                .key(key)
+                .contentType(mime)
+                .build(),
             RequestBody.fromBytes(bytes),
         )
         log.info("r2.put key={}", key)

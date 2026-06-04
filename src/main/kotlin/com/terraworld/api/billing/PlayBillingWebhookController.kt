@@ -251,15 +251,6 @@ class PlayBillingWebhookController(
     }
 
     /**
-     * Google Play product ID → entitlement key 매핑.
-     *
-     * UltraPlan v3 §3.A 의 권장 default (§4.2.A 자율 진행) 가격:
-     *  - free_placement_unlock (₩1,900, 1회 영구) → free_placement
-     *  - season_pass_2026q4 (₩3,900/월) → season_pass_2026q4
-     *  - limited_figure_* (₩2,900/팩) → limited_figure_*
-     *  - memo_theme_pack_* (₩1,900/팩) → theme_pack_*
-     */
-    /**
      * Google Play RTDN — 실 Pub/Sub push 포맷 ingestion. (fullstack-ultraplan WP-1-F, 2026-06-04)
      *
      * Pub/Sub push envelope: { message: { data: <base64 JSON>, messageId }, subscription }.
