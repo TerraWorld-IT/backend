@@ -131,7 +131,7 @@ ARCH-008 (service 가 generated DTO 직접 반환) 마이그레이션: **Phase 1
 | TerrariumController | Terrarium | TerrariumService | ✅ Phase 12 (#47) |
 | RankingController | Ranking | RankingService | ✅ Phase 9 (#43) |
 | SocialController | Social | InviteService | ✅ Phase 10 (#44) |
-| UploadController | Upload | PhotoUploadService | ✅ Phase 4 (#37) (R2 presigned URL 전환은 UltraPlan M2 — spec 변경 필요) |
+| UploadController | Upload | PhotoUploadService | ✅ Phase 4 (#37) (R2PhotoStorage 구현 완료 2026-06-04 — R2_* 키 설정 시 PutObject→CDN, 미설정 base64) |
 | InternalController | Internal | (controller 직접) | N/A — ADR-018 의도적 제외 |
 
 서비스 DTO 마이그레이션 SoT plan: [docs/plans/2026-05-08-service-dto-migration.md](docs/plans/2026-05-08-service-dto-migration.md).
@@ -142,8 +142,11 @@ ARCH-008 (service 가 generated DTO 직접 반환) 마이그레이션: **Phase 1
 
 ## External Integrations
 
-- **Cloudflare R2** — Upload PoC 완료 (Phase 4 production presigned URL 전환 진행 중)
-- **FCM** — token 저장만, push 발송 로직 미구현 (UltraPlan M1)
+- **Cloudflare R2** — `R2PhotoStorage`(AWS S3 SDK) 구현 완료 (2026-06-04) — `R2_*` 키 설정 시 PutObject→CDN URL, 미설정 시 base64 PoC. (presigned 아닌 서버측 PutObject 방식.)
+- **Google Play IAP** — `PlayPurchaseVerifier` 실 Play Developer API 검증 + `IapVerifyController`(POST `/billing/iap/verify`, @Hidden) + RTDN 실 Pub/Sub ingestion(`PlayBillingWebhookController.handlePubSubRtdn`) 구현 완료 (2026-06-04) — Play Console service account 키 대기.
+- **AdMob SSV** — `AdSsvCallbackController`(GET `/rewards/ad/ssv-callback`, @Hidden) + `AdSsvSignatureVerifier`(ECDSA P-256 SHA-256, JDK 내장) 구현 완료 (2026-06-04) — AdMob production ID + SSV public key URL 대기.
+- **Admin** — `AdminController.createItem`(POST `/admin/items`, @Hidden) 아이템 생성 추가 (2026-06-04, slug/카테고리/SSRF 검증).
+- **FCM** — `FcmService` 코드 완성(.env-ready, noop fallback + Micrometer 카운터) — Firebase service account JSON 키 대기.
 - **Discord webhook** — spec drift / 운영 알림 (`deploy/` 측 webhook URL 보관)
 - **PostgreSQL** — main DB (Flyway V1~V10)
 - **Redis** — rate-limit bucket
