@@ -1,74 +1,181 @@
 package com.terraworld.api.billing
 
+import com.fasterxml.jackson.databind.ObjectMapper
+import com.google.auth.oauth2.GoogleCredentials
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Component
+import java.io.FileInputStream
+import java.net.URI
+import java.net.URLEncoder
+import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
+import java.nio.charset.StandardCharsets
+import java.time.Duration
 
 /**
- * UltraPlan v3 — Codex audit PAY-002 fix (2026-05-18, HIGH):
+ * Google Play Developer API 로 purchaseToken 의 진위 + user 매핑을 검증한다.
+ * (fullstack-ultraplan WP-1, 2026-06-04 실 API 구현)
  *
- * Google Play Developer API 로 purchaseToken 의 진위 + user 매핑 검증.
+ * 구현 메모: 무거운 `google-api-services-androidpublisher` SDK 대신, 이미 firebase-admin 이
+ * 제공하는 `com.google.auth:google-auth-library-oauth2-http` + JDK `java.net.http` 로 REST 호출
+ * → 신규 의존성 0.
+ *   GET https://androidpublisher.googleapis.com/androidpublisher/v3/applications/{pkg}/purchases/products/{productId}/tokens/{token}
+ *   scope = https://www.googleapis.com/auth/androidpublisher
  *
- * 본 cycle = skeleton + interface. 실 API 호출은 별 cycle 에서 `google-api-services-androidpublisher`
- * SDK + Firebase service account JSON 으로 활성화 (E-FIREBASE-001 + Play Console service account 의존).
+ * 응답 `purchaseState`: 0=PURCHASED · 1=CANCELED · 2=PENDING.
+ * 응답 `obfuscatedExternalAccountId`: client 가 구매 시 setObfuscatedAccountId(userId) 로 심은 값.
+ *   존재 시 expectedUserId 와 cross-check(다른 user 의 token replay 차단). 부재 시 skip(권고: client 가 설정).
  *
- * 보안 흐름 (별 cycle 활성화 후):
- *  1) RTDN webhook 수신 → purchaseToken 추출
- *  2) Play API GET /androidpublisher/v3/applications/{packageName}/purchases/products/{productId}/tokens/{token}
- *     → purchaseState + developerPayload 응답
- *  3) developerPayload (또는 별 user_purchase_ledger) 의 userId 와 webhook body 의 userId 일치 검증
- *  4) 불일치 시 401 + audit "billing.verify.mismatch" 영구 기록
- *  5) 일치 + purchaseState=0(PURCHASED) 시 EntitlementService.grant 호출
+ * gating: `terraworld.billing.play.service-account-json-path` 가 비면 [VerificationResult.disabled]
+ *   → caller(IapVerifyController/Webhook)가 test-mode/개발 경로로 처리. 운영(prod)은 주입 필수.
  *
- * 본 cycle 의 skeleton 은 disabled 모드 — 별 secret 주입 시 활성화.
+ * ⚠️ 실 purchaseToken 트래픽 미검증(.env-ready) — Play Console service account 주입 + 내부테스트
+ *   트랙 실구매 후 1회 검증 필요.
  */
 @Component
 class PlayPurchaseVerifier(
-    @Value("\${terraworld.billing.play.package-name:com.terraworld.app}")
+    @Value("\${terraworld.billing.play.package-name:app.terraworld.mobile}")
     private val packageName: String,
     @Value("\${terraworld.billing.play.service-account-json-path:}")
     private val serviceAccountJsonPath: String,
+    private val objectMapper: ObjectMapper,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
+    private val httpClient: HttpClient =
+        HttpClient
+            .newBuilder()
+            .connectTimeout(Duration.ofSeconds(5))
+            .version(HttpClient.Version.HTTP_1_1)
+            .build()
+
     /**
-     * @return [VerificationResult] purchase 의 발신자 (Google) 가 확인한 user/product 매핑.
-     *   별 cycle 의 실 API 활성화 전까지는 [VerificationResult.disabled] 반환 — caller (WebhookController) 가
-     *   본 결과를 보고 grant/revoke 진행 여부 결정.
+     * service-account 주입 여부 = 실 Play API 검증 가능 상태.
+     * caller(RTDN/IAP)가 "검증 비활성(미설정)" 과 "검증 결과 not-found" 를 구분하게 한다
+     * (Codex SEC-002: prod 미설정 시 silent-drop 대신 fail-loud 분기).
      */
+    fun isEnabled(): Boolean = serviceAccountJsonPath.isNotBlank()
+
     fun verifyToken(
         productId: String,
         purchaseToken: String,
         expectedUserId: String,
     ): VerificationResult {
         if (serviceAccountJsonPath.isBlank()) {
-            // 별 secret 미주입 — 본 cycle 의 운영 모드 (E-FIREBASE-001 미배포)
-            log.info(
-                "billing.verify.disabled — service-account-json-path 없음. " +
-                    "운영 시 별 secret 주입 + 본 verifier 활성화 필수 (PAY-002 HIGH)",
-            )
+            log.info("billing.verify.disabled — service-account-json-path 없음(개발/test-mode 경로)")
             return VerificationResult.disabled()
         }
-
-        // TODO (별 cycle, E-FIREBASE-001 의존):
-        //   1) google-api-services-androidpublisher SDK + GoogleCredentials.fromStream(FileInputStream(serviceAccountJsonPath))
-        //   2) AndroidPublisher.Purchases.Products().get(packageName, productId, purchaseToken).execute()
-        //   3) response.purchaseState 0(PURCHASED) / 1(CANCELED) / 2(PENDING) 분기
-        //   4) response.developerPayload 또는 별 ledger 의 user 매핑 cross-check
-        //   5) 불일치 시 VerificationResult.userMismatch(expected, actual)
-        log.warn("billing.verify.todo productId={} — 별 cycle 실 API 호출 필요", productId)
-        return VerificationResult.disabled()
+        return try {
+            val accessToken = fetchAccessToken()
+            val url =
+                "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/" +
+                    "${enc(packageName)}/purchases/products/${enc(productId)}/tokens/${enc(purchaseToken)}"
+            val req =
+                HttpRequest
+                    .newBuilder()
+                    .uri(URI.create(url))
+                    .header("Authorization", "Bearer $accessToken")
+                    .timeout(Duration.ofSeconds(8))
+                    .GET()
+                    .build()
+            val res = httpClient.send(req, HttpResponse.BodyHandlers.ofString())
+            when (res.statusCode()) {
+                200 -> parsePurchase(res.body(), expectedUserId)
+                404, 410 -> VerificationResult.invalidToken("not_found_or_consumed")
+                else -> {
+                    log.warn("billing.verify.api-status status={} product={}", res.statusCode(), productId)
+                    VerificationResult.invalidToken("api_status_${res.statusCode()}")
+                }
+            }
+        } catch (e: Exception) {
+            log.error("billing.verify.error product={} msg={}", productId, e.message)
+            // 검증 불능 = 안전하게 invalidToken(grant 금지). caller 가 4xx.
+            VerificationResult.invalidToken("verify_exception")
+        }
     }
+
+    /**
+     * RTDN(Pub/Sub) 처리용 — purchaseToken 의 obfuscatedExternalAccountId(=userId) 조회.
+     * service-account 미설정/미구매/오류 시 null. (fullstack-ultraplan WP-1-F)
+     */
+    fun resolveObfuscatedAccountId(
+        productId: String,
+        purchaseToken: String,
+    ): String? {
+        if (serviceAccountJsonPath.isBlank()) return null
+        return try {
+            val accessToken = fetchAccessToken()
+            val url =
+                "https://androidpublisher.googleapis.com/androidpublisher/v3/applications/" +
+                    "${enc(packageName)}/purchases/products/${enc(productId)}/tokens/${enc(purchaseToken)}"
+            val req =
+                HttpRequest
+                    .newBuilder()
+                    .uri(URI.create(url))
+                    .header("Authorization", "Bearer $accessToken")
+                    .timeout(Duration.ofSeconds(8))
+                    .GET()
+                    .build()
+            val res = httpClient.send(req, HttpResponse.BodyHandlers.ofString())
+            if (res.statusCode() != 200) {
+                return null
+            }
+            objectMapper
+                .readTree(res.body())
+                .get("obfuscatedExternalAccountId")
+                ?.asText()
+                ?.takeIf { it.isNotBlank() }
+        } catch (e: Exception) {
+            log.warn("billing.resolve-account.error product={} msg={}", productId, e.message)
+            null
+        }
+    }
+
+    private fun fetchAccessToken(): String {
+        // Codex 보안 LOW: FileInputStream use{} 로 FD 누수 방지.
+        val creds =
+            FileInputStream(serviceAccountJsonPath).use { stream ->
+                GoogleCredentials
+                    .fromStream(stream)
+                    .createScoped(listOf("https://www.googleapis.com/auth/androidpublisher"))
+            }
+        creds.refreshIfExpired()
+        return creds.accessToken.tokenValue
+    }
+
+    private fun parsePurchase(
+        body: String,
+        expectedUserId: String,
+    ): VerificationResult {
+        val node = objectMapper.readTree(body)
+        val purchaseState = node.get("purchaseState")?.asInt() ?: -1
+        if (purchaseState != 0) {
+            return VerificationResult.invalidToken("purchase_state_$purchaseState")
+        }
+        // Codex 보안 HIGH: obfuscatedExternalAccountId 부재 시 user-binding 불가 → 다른 user 가
+        // 동일 purchaseToken 을 제출해 grant 받는 replay 위험. client(usePayment)가 구매 시
+        // obfuscatedAccountId=userId 를 심어야 하며, 부재는 fail-closed 로 거부.
+        val obfuscated = node.get("obfuscatedExternalAccountId")?.asText()
+        if (obfuscated.isNullOrBlank()) {
+            return VerificationResult.invalidToken("missing_obfuscated_account_id")
+        }
+        if (obfuscated != expectedUserId) {
+            return VerificationResult.userMismatch(expectedUserId, obfuscated)
+        }
+        return VerificationResult.ok()
+    }
+
+    private fun enc(s: String): String = URLEncoder.encode(s, StandardCharsets.UTF_8)
 }
 
 /**
  * Verification 결과 — caller 가 grant/revoke 진입 여부 결정.
- *
- *  - [ok]: Google API 확인 + user 매핑 일치 → grant/revoke 진행
- *  - [disabled]: 본 cycle 운영 모드 (별 secret 미주입) — caller 가 권한 검증 X로 진행
- *    (개발 환경 / 본 cycle 의 사용자 메타 결정 § 4.2.A 권장 default: revoke 보수적 적용 + alert)
- *  - [userMismatch]: user 매핑 불일치 — caller 가 401 + audit 기록
- *  - [invalidToken]: purchaseToken 무효 / 만료 — caller 가 400 + audit
+ *  - [Ok]: Google API 확인 + user 매핑 일치 → grant 진행
+ *  - [Disabled]: service-account 미주입(개발/test-mode) — caller 가 별도 처리
+ *  - [UserMismatch]: user 매핑 불일치 → 401 + audit
+ *  - [InvalidToken]: purchaseToken 무효/만료/검증 불능 → 400 + audit
  */
 sealed class VerificationResult {
     object Ok : VerificationResult()

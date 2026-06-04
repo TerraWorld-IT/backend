@@ -26,7 +26,9 @@ class PhotoUploadServiceTest {
 
     @BeforeEach
     fun setup() {
-        service = PhotoUploadService()
+        // R2 전체 env 미설정 → isEnabled()=false → base64 dataURL PoC 경로 유지 (본 테스트의 contract).
+        val disabledR2 = R2PhotoStorage(endpoint = "", accessKeyId = "", secretAccessKey = "", bucket = "", publicBaseUrl = "")
+        service = PhotoUploadService(r2 = disabledR2)
     }
 
     @Test

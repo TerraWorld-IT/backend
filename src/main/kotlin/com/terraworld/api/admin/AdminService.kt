@@ -5,12 +5,17 @@ import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
 import com.terraworld.domain.category.CategoryRepository
 import com.terraworld.domain.exchange.TokenExchangeRateRepository
+import com.terraworld.domain.item.Item
+import com.terraworld.domain.item.ItemLayout
 import com.terraworld.domain.item.ItemRepository
+import com.terraworld.domain.item.PriceType
+import com.terraworld.domain.item.Rarity
 import com.terraworld.domain.level.LevelConfigRepository
 import com.terraworld.domain.user.UserRepository
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import java.net.URI
 
 /**
  * N5 / P-ADMIN-001 (구현 계획서 v4, 2026-05-21): 관리자 backend API.
@@ -105,6 +110,69 @@ class AdminService(
         log.info("admin.exchange.rate user={} rate={} value={}", adminUserId, rateId, rate)
     }
 
+    /**
+     * 아이템 생성 (admin 상점 카탈로그 등록). (WP-W9, fullstack-ultraplan 2026-06-04)
+     *
+     * slug 제공 시 고유성 검증(중복 = 409). category 지정 시 존재 검증(부재 = 404).
+     * 생성 직후 isActive=true. 입력 검증은 generated DTO(@Min/@Size) + 본 가드 이중.
+     */
+    @Transactional
+    fun createItem(
+        adminUserId: String,
+        name: String,
+        slug: String?,
+        description: String?,
+        categoryId: Long?,
+        priceType: PriceType,
+        priceAmount: Int,
+        tokenPrice: Int?,
+        rarity: Rarity,
+        assetUrl: String,
+        layout: ItemLayout,
+        isAnimated: Boolean,
+        width: Int,
+        height: Int,
+    ): Item {
+        require(name.isNotBlank()) { "name 은 공백 불가" }
+        require(assetUrl.isNotBlank()) { "assetUrl 은 공백 불가" }
+        require(priceAmount >= 0) { "priceAmount 는 음수 불가" }
+        require(tokenPrice == null || tokenPrice >= 0) { "tokenPrice 는 음수 불가" }
+        require(width >= 1 && height >= 1) { "width/height 는 1 이상" }
+        // Codex SEC-003: assetUrl 이 URL 형태면 https + 사설망/localhost reject (stored tracking pixel + 내부망 SSRF 차단).
+        validateAssetUrl(assetUrl.trim())
+
+        val normalizedSlug = slug?.trim()?.takeIf { it.isNotBlank() }
+        if (normalizedSlug != null && itemRepository.findBySlug(normalizedSlug).isPresent) {
+            throw BusinessException(ErrorCode.ITEM_SLUG_DUPLICATE)
+        }
+        val category =
+            categoryId?.let {
+                categoryRepository.findById(it).orElseThrow { BusinessException(ErrorCode.CATEGORY_NOT_FOUND) }
+            }
+        val saved =
+            itemRepository.save(
+                Item(
+                    slug = normalizedSlug,
+                    name = name.trim(),
+                    description = description?.trim()?.takeIf { it.isNotBlank() },
+                    category = category,
+                    priceType = priceType,
+                    priceAmount = priceAmount,
+                    tokenPrice = tokenPrice,
+                    rarity = rarity,
+                    assetUrl = assetUrl.trim(),
+                    layout = layout,
+                    isAnimated = isAnimated,
+                    width = width,
+                    height = height,
+                    isActive = true,
+                ),
+            )
+        audit(adminUserId, "ADMIN_CREATE_ITEM", "Item", saved.id.toString())
+        log.info("admin.item.create user={} item={} name={}", adminUserId, saved.id, saved.name)
+        return saved
+    }
+
     /** 아이템 활성/비활성 토글 (상점 노출 제어 — soft delete 대용). */
     @Transactional
     fun setItemActive(
@@ -131,6 +199,38 @@ class AdminService(
             totalCategories = categoryRepository.count(),
             totalLevels = levelConfigRepository.count(),
         )
+
+    /**
+     * Codex SEC-003: assetUrl SSRF/tracking 가드.
+     * 스킴 없는 값(이모지·상대경로)은 허용. URL 형태면 https 강제 + 사설망/localhost/link-local/metadata host reject.
+     */
+    private fun validateAssetUrl(assetUrl: String) {
+        if (!assetUrl.contains("://")) return // 이모지 또는 상대경로
+        val uri =
+            runCatching { URI(assetUrl) }.getOrNull()
+                ?: throw BusinessException(ErrorCode.INVALID_INPUT, "assetUrl 형식이 올바르지 않습니다")
+        if (!uri.scheme.equals("https", ignoreCase = true)) {
+            throw BusinessException(ErrorCode.INVALID_INPUT, "assetUrl 은 https URL 또는 이모지만 허용됩니다")
+        }
+        val host =
+            uri.host?.lowercase()
+                ?: throw BusinessException(ErrorCode.INVALID_INPUT, "assetUrl host 가 없습니다")
+        if (isPrivateOrLocalHost(host)) {
+            throw BusinessException(ErrorCode.INVALID_INPUT, "사설망/로컬 host 는 허용되지 않습니다")
+        }
+    }
+
+    private fun isPrivateOrLocalHost(host: String): Boolean {
+        if (host == "localhost" || host.endsWith(".localhost") || host == "127.0.0.1" || host == "::1") return true
+        if (host == "169.254.169.254") return true // cloud metadata endpoint
+        if (host.startsWith("10.") || host.startsWith("192.168.") || host.startsWith("169.254.")) return true
+        // 172.16.0.0 – 172.31.255.255
+        Regex("""^172\.(\d{1,3})\.""").find(host)?.let { m ->
+            val second = m.groupValues[1].toIntOrNull()
+            if (second != null && second in 16..31) return true
+        }
+        return false
+    }
 
     private fun audit(
         adminUserId: String,

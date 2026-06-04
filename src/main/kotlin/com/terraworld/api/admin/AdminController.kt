@@ -1,10 +1,19 @@
 package com.terraworld.api.admin
 
+import com.terraworld.api.item.ItemMapper
+import com.terraworld.domain.item.ItemLayout
+import com.terraworld.domain.item.PriceType
+import com.terraworld.domain.item.Rarity
 import com.terraworld.security.SecurityUtil
 import io.swagger.v3.oas.annotations.Hidden
+import io.terraworld.api.model.AdminItemCreateRequest
+import io.terraworld.api.model.ItemResponse
+import jakarta.validation.Valid
+import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
+import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.PutMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
@@ -27,6 +36,30 @@ class AdminController(
 ) {
     @GetMapping("/dashboard")
     fun dashboard(): ResponseEntity<AdminDashboard> = ResponseEntity.ok(adminService.dashboard())
+
+    @PostMapping("/items")
+    fun createItem(
+        @Valid @RequestBody body: AdminItemCreateRequest,
+    ): ResponseEntity<ItemResponse> {
+        val item =
+            adminService.createItem(
+                adminUserId = SecurityUtil.getCurrentUserId(),
+                name = body.name,
+                slug = body.slug,
+                description = body.description,
+                categoryId = body.categoryId,
+                priceType = PriceType.valueOf(body.priceType.value),
+                priceAmount = body.priceAmount,
+                tokenPrice = body.tokenPrice,
+                rarity = Rarity.valueOf((body.rarity ?: AdminItemCreateRequest.Rarity.COMMON).value),
+                assetUrl = body.assetUrl,
+                layout = ItemLayout.valueOf((body.layout ?: AdminItemCreateRequest.Layout.FOREGROUND).value),
+                isAnimated = body.isAnimated ?: false,
+                width = body.width ?: 512,
+                height = body.height ?: 512,
+            )
+        return ResponseEntity.status(HttpStatus.CREATED).body(ItemMapper.toApi(item))
+    }
 
     @PutMapping("/categories/{categoryId}/rewards")
     fun updateCategoryRewards(

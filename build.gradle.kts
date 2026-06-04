@@ -57,6 +57,10 @@ dependencies {
     // path 로 주입. 부재 시 FcmService bean 가 noop mode 로 init (테스트/dev 환경).
     implementation("com.google.firebase:firebase-admin:9.4.3")
 
+    // WP-4 (2026-06-04) — Cloudflare R2(S3 호환) 사진 업로드. R2_* 미설정 시 base64 PoC 유지.
+    implementation(platform("software.amazon.awssdk:bom:2.28.16"))
+    implementation("software.amazon.awssdk:s3")
+
     // Test
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("org.springframework.security:spring-security-test")

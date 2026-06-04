@@ -24,6 +24,7 @@ enum class ErrorCode(
     // Business
     INSUFFICIENT_FUNDS(HttpStatus.BAD_REQUEST, "재화가 부족합니다"),
     ALREADY_OWNED(HttpStatus.CONFLICT, "이미 보유한 아이템입니다"),
+    ITEM_SLUG_DUPLICATE(HttpStatus.CONFLICT, "이미 존재하는 슬러그입니다"),
     INVALID_SLOT(HttpStatus.BAD_REQUEST, "해당 슬롯에 배치할 수 없는 아이템입니다"),
 
     // V15 (slot_id partial UNIQUE) 위반 시 DataIntegrityViolationException 매핑 (Codex F3).

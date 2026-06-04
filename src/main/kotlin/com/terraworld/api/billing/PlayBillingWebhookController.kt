@@ -1,5 +1,7 @@
 package com.terraworld.api.billing
 
+import com.fasterxml.jackson.core.JsonProcessingException
+import com.fasterxml.jackson.databind.ObjectMapper
 import com.terraworld.api.entitlement.EntitlementService
 import com.terraworld.common.audit.AuditService
 import com.terraworld.domain.billing.WebhookInboxRepository
@@ -15,9 +17,15 @@ import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestHeader
 import org.springframework.web.bind.annotation.RequestMapping
+import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
+import java.net.URI
+import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
 import java.security.MessageDigest
-import java.util.Locale
+import java.time.Duration
+import java.util.Base64
 
 /**
  * UltraPlan v3 J-FREE-001 + Codex audit (2026-05-18):
@@ -44,6 +52,7 @@ class PlayBillingWebhookController(
     private val entitlementService: EntitlementService,
     private val verifier: PlayPurchaseVerifier,
     private val auditService: AuditService,
+    private val objectMapper: ObjectMapper,
     private val environment: Environment,
     // N11 (구현 계획서 v4): webhook 중복 수신 dedup inbox
     private val webhookInboxRepository: WebhookInboxRepository,
@@ -53,6 +62,9 @@ class PlayBillingWebhookController(
     private val alertDiscordWebhook: String,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
+
+    private val httpClient: HttpClient =
+        HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build()
 
     /**
      * PAY-001 fix: prod profile 부팅 시 internal-api-token 미설정 = fail-fast.
@@ -185,8 +197,15 @@ class PlayBillingWebhookController(
                 return ResponseEntity.status(400).build()
             }
             VerificationResult.Disabled -> {
-                // 본 cycle 운영 모드 — verifier 미활성. caller 가 grant/revoke 진행.
-                log.info("billing.webhook.verify-disabled productId={} (별 cycle 활성화 권장)", productId)
+                // Codex 보안 HIGH: prod 에서 verifier 미설정(service-account 부재) = Google 검증 없이
+                // internal-token-authed body 만으로 entitlement 변경 가능 → 거부(503).
+                // non-prod 는 dev/test mock 경로로 진행 허용.
+                val isProd = environment.activeProfiles.any { it.equals("prod", ignoreCase = true) }
+                if (isProd) {
+                    log.error("billing.webhook.verify-disabled-in-prod productId={} — service-account 주입 필수", productId)
+                    return ResponseEntity.status(503).build()
+                }
+                log.info("billing.webhook.verify-disabled productId={} (dev/test 경로)", productId)
             }
             VerificationResult.Ok -> {
                 log.info("billing.webhook.verify-ok productId={}", productId)
@@ -240,14 +259,96 @@ class PlayBillingWebhookController(
      *  - limited_figure_* (₩2,900/팩) → limited_figure_*
      *  - memo_theme_pack_* (₩1,900/팩) → theme_pack_*
      */
-    private fun mapProductIdToEntitlementKey(productId: String): String? =
-        when {
-            productId == "free_placement_unlock" -> "free_placement"
-            productId.startsWith("season_pass_") -> productId
-            productId.startsWith("limited_figure_") -> productId
-            productId.startsWith("memo_theme_pack_") -> productId.replace("memo_theme_pack_", "theme_pack_")
-            else -> null
+    /**
+     * Google Play RTDN — 실 Pub/Sub push 포맷 ingestion. (fullstack-ultraplan WP-1-F, 2026-06-04)
+     *
+     * Pub/Sub push envelope: { message: { data: <base64 JSON>, messageId }, subscription }.
+     * data 디코드 = { packageName, eventTimeMillis, oneTimeProductNotification: { notificationType, purchaseToken, sku } }.
+     * userId 는 body 에 없음 → purchaseToken 으로 Play API 의 obfuscatedExternalAccountId(=userId) 조회.
+     *
+     * 인증: Pub/Sub push subscription URL 의 `?token=<shared secret>`(INTERNAL_API_TOKEN), constant-time.
+     * one-time notificationType: 1=PURCHASED→grant, 2=CANCELED→revoke. messageId dedup.
+     * ⚠️ 실 RTDN 트래픽 미검증(.env-ready) — Pub/Sub 구독 + service-account 후 1회 검증 필요.
+     */
+    @PostMapping("/play-billing/pubsub")
+    @Transactional
+    fun handlePubSubRtdn(
+        @RequestParam(name = "token", required = false) token: String?,
+        @RequestBody envelope: PubSubEnvelope,
+    ): ResponseEntity<Void> {
+        if (expectedInternalToken.isBlank() || token.isNullOrBlank() || !constantTimeEquals(token, expectedInternalToken)) {
+            log.warn("billing.pubsub.unauthorized")
+            return ResponseEntity.status(401).build()
         }
+        // SEC-002 (Codex MEDIUM): verifier 미설정(service-account 부재) 시 purchaseToken→userId resolve 불가.
+        // prod 에서 조용히 200 ACK-drop 하면 실 구매/취소 알림이 유실 → fail-loud. dedup insert *이전* 에
+        // 검사해 503 반환 → @Transactional 롤백 없이도 dedup 미기록 → Pub/Sub 가 재전송/dead-letter 로
+        // misconfig 를 surface (dedup 이후 503 이면 다음 재전송이 dup-skip 돼 영구 은폐됨).
+        if (!verifier.isEnabled()) {
+            val isProd = environment.activeProfiles.any { it.equals("prod", ignoreCase = true) }
+            if (isProd) {
+                log.error("billing.pubsub.verifier-disabled-in-prod — service-account 주입 필수 (Pub/Sub 재전송 유도)")
+                return ResponseEntity.status(503).build()
+            }
+            log.info("billing.pubsub.verifier-disabled (dev no-op)")
+            return ResponseEntity.ok().build()
+        }
+
+        val dataB64 = envelope.message?.data
+        if (dataB64.isNullOrBlank()) {
+            return ResponseEntity.ok().build()
+        }
+        val messageId = envelope.message.messageId
+        if (messageId != null && webhookInboxRepository.insertIfAbsent(messageId, "pubsub") == 0) {
+            log.info("billing.pubsub.duplicate-skip messageId={}", messageId)
+            return ResponseEntity.ok().build()
+        }
+        // SEC-001 (Codex MEDIUM): malformed base64/JSON 은 200 OK 로 ACK (messageId 는 위에서 insert 완료).
+        // throw 시 @Transactional 롤백 → dedup insert 취소 → 동일 메시지 무한 redelivery storm. 차단.
+        val root =
+            try {
+                objectMapper.readTree(String(Base64.getDecoder().decode(dataB64), Charsets.UTF_8))
+            } catch (e: IllegalArgumentException) {
+                log.warn("billing.pubsub.malformed-base64 messageId={} msg={}", messageId, e.message)
+                return ResponseEntity.ok().build()
+            } catch (e: JsonProcessingException) {
+                log.warn("billing.pubsub.malformed-json messageId={} msg={}", messageId, e.message)
+                return ResponseEntity.ok().build()
+            }
+        val otp = root.get("oneTimeProductNotification")
+        if (otp == null || otp.isNull) {
+            log.info("billing.pubsub.ignore — non one-time notification")
+            return ResponseEntity.ok().build()
+        }
+        val notifType = otp.get("notificationType")?.asInt() ?: -1
+        val purchaseToken = otp.get("purchaseToken")?.asText()
+        val sku = otp.get("sku")?.asText()
+        if (purchaseToken.isNullOrBlank() || sku.isNullOrBlank()) {
+            // 필드 누락 = 처리 불능. dedup 은 이미 커밋(위 insert) → ACK 로 재전송 차단.
+            log.warn("billing.pubsub.missing-fields messageId={}", messageId)
+            return ResponseEntity.ok().build()
+        }
+        val entitlementKey = mapProductIdToEntitlementKey(sku)
+        if (entitlementKey == null) {
+            sendDiscordAlert("⚠️ Unknown Play product (pubsub): `$sku`")
+            return ResponseEntity.ok().build()
+        }
+        // userId 해석 — verifier enabled 확정 상태. 부재 = genuine not-found (client setObfuscatedAccountId 누락 추정).
+        val userId = verifier.resolveObfuscatedAccountId(sku, purchaseToken)
+        if (userId.isNullOrBlank()) {
+            log.warn("billing.pubsub.no-account sku={} (obfuscatedAccountId 부재)", sku)
+            return ResponseEntity.ok().build()
+        }
+        when (notifType) {
+            1 -> entitlementService.grant(userId, entitlementKey, EntitlementEvent.REASON_PURCHASE, txRef = purchaseToken)
+            2 -> entitlementService.revoke(userId, entitlementKey, EntitlementEvent.REASON_CHARGEBACK, txRef = purchaseToken)
+            else -> log.info("billing.pubsub.ignore-type type={}", notifType)
+        }
+        return ResponseEntity.ok().build()
+    }
+
+    // 매핑 단일 SoT = ProductEntitlementMapper (IapVerifyController 와 공유 — 2026-06-04 dedupe).
+    private fun mapProductIdToEntitlementKey(productId: String): String? = ProductEntitlementMapper.toEntitlementKey(productId)
 
     /** PAY-001 fix: timing attack 방어. SHA-256 후 MessageDigest.isEqual (constant-time). */
     private fun constantTimeEquals(
@@ -266,14 +367,27 @@ class PlayBillingWebhookController(
         return token.take(4) + "..." + token.takeLast(4)
     }
 
+    /** Discord webhook alert (실구현, 2026-06-04 WP-1). alert 실패는 main flow 비차단(try/catch). */
     private fun sendDiscordAlert(message: String) {
         if (alertDiscordWebhook.isBlank()) {
             log.info("billing.alert.discord-skip — webhook URL 미설정. message: {}", message)
             return
         }
-        // 본 cycle 의 별 cycle 작업 — Discord webhook POST. 본 함수는 placeholder.
-        // RestTemplate 또는 WebClient 추가 + 본 함수의 try/catch 로 alert 실패 시 main flow 차단 안 함.
-        log.info("billing.alert.discord-todo message={} (별 cycle 활성화 필요)".lowercase(Locale.US), message)
+        try {
+            // Codex MED: 수동 escape 대신 Jackson 직렬화 — \r \t 등 제어문자/injection 안전.
+            val body = objectMapper.writeValueAsString(mapOf("content" to message))
+            val req =
+                HttpRequest
+                    .newBuilder()
+                    .uri(URI.create(alertDiscordWebhook))
+                    .timeout(Duration.ofSeconds(5))
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(body))
+                    .build()
+            httpClient.send(req, HttpResponse.BodyHandlers.discarding())
+        } catch (e: Exception) {
+            log.warn("billing.alert.discord-failed msg={}", e.message)
+        }
     }
 }
 
@@ -284,4 +398,15 @@ data class PlayBillingNotification(
     val purchaseToken: String,
     // N11 (구현 계획서 v4): webhook dedup 키 (Pub/Sub messageId 등). 미제공 시 dedup 우회.
     val notificationId: String? = null,
+)
+
+/** Google Pub/Sub push envelope (RTDN 실 포맷). (WP-1-F, 2026-06-04) */
+data class PubSubEnvelope(
+    val message: PubSubMessage? = null,
+    val subscription: String? = null,
+)
+
+data class PubSubMessage(
+    val data: String? = null,
+    val messageId: String? = null,
 )

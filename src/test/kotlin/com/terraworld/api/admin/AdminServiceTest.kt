@@ -141,4 +141,149 @@ class AdminServiceTest {
             service.setItemActive(admin, itemId = 99L, active = true)
         }
     }
+
+    @Test
+    fun `createItem 해피 패스 — slug 고유 + 카테고리 없음 → save 후 반환`() {
+        `when`(itemRepository.findBySlug("plant-1")).thenReturn(Optional.empty())
+        `when`(itemRepository.save(org.mockito.kotlin.any<Item>())).thenAnswer { it.arguments[0] as Item }
+
+        val created =
+            service.createItem(
+                adminUserId = admin,
+                name = "작은 선인장",
+                slug = "plant-1",
+                description = "데스크 위 친구",
+                categoryId = null,
+                priceType = PriceType.BASIC,
+                priceAmount = 30,
+                tokenPrice = null,
+                rarity = com.terraworld.domain.item.Rarity.COMMON,
+                assetUrl = "🌵",
+                layout = com.terraworld.domain.item.ItemLayout.FOREGROUND,
+                isAnimated = false,
+                width = 512,
+                height = 512,
+            )
+
+        assertEquals("작은 선인장", created.name)
+        assertEquals("plant-1", created.slug)
+        assertEquals(true, created.isActive)
+        verify(itemRepository).save(org.mockito.kotlin.any<Item>())
+    }
+
+    @Test
+    fun `createItem — slug 중복은 BusinessException`() {
+        val existing =
+            Item(id = 7L, slug = "dup", name = "기존", priceType = PriceType.BASIC, priceAmount = 10, assetUrl = "x")
+        `when`(itemRepository.findBySlug("dup")).thenReturn(Optional.of(existing))
+
+        assertThrows<BusinessException> {
+            service.createItem(
+                adminUserId = admin,
+                name = "새 아이템",
+                slug = "dup",
+                description = null,
+                categoryId = null,
+                priceType = PriceType.BASIC,
+                priceAmount = 10,
+                tokenPrice = null,
+                rarity = com.terraworld.domain.item.Rarity.COMMON,
+                assetUrl = "y",
+                layout = com.terraworld.domain.item.ItemLayout.FOREGROUND,
+                isAnimated = false,
+                width = 512,
+                height = 512,
+            )
+        }
+    }
+
+    @Test
+    fun `createItem — 미존재 카테고리는 BusinessException`() {
+        `when`(categoryRepository.findById(99L)).thenReturn(Optional.empty())
+
+        assertThrows<BusinessException> {
+            service.createItem(
+                adminUserId = admin,
+                name = "새 아이템",
+                slug = null,
+                description = null,
+                categoryId = 99L,
+                priceType = PriceType.BASIC,
+                priceAmount = 10,
+                tokenPrice = null,
+                rarity = com.terraworld.domain.item.Rarity.COMMON,
+                assetUrl = "y",
+                layout = com.terraworld.domain.item.ItemLayout.FOREGROUND,
+                isAnimated = false,
+                width = 512,
+                height = 512,
+            )
+        }
+    }
+
+    @Test
+    fun `createItem — assetUrl 사설망 host 는 BusinessException (SEC-003 SSRF)`() {
+        assertThrows<BusinessException> {
+            service.createItem(
+                adminUserId = admin,
+                name = "새 아이템",
+                slug = null,
+                description = null,
+                categoryId = null,
+                priceType = PriceType.BASIC,
+                priceAmount = 10,
+                tokenPrice = null,
+                rarity = com.terraworld.domain.item.Rarity.COMMON,
+                assetUrl = "https://169.254.169.254/x.png",
+                layout = com.terraworld.domain.item.ItemLayout.FOREGROUND,
+                isAnimated = false,
+                width = 512,
+                height = 512,
+            )
+        }
+    }
+
+    @Test
+    fun `createItem — assetUrl http(비 https) 는 BusinessException`() {
+        assertThrows<BusinessException> {
+            service.createItem(
+                adminUserId = admin,
+                name = "새 아이템",
+                slug = null,
+                description = null,
+                categoryId = null,
+                priceType = PriceType.BASIC,
+                priceAmount = 10,
+                tokenPrice = null,
+                rarity = com.terraworld.domain.item.Rarity.COMMON,
+                assetUrl = "http://cdn.example.com/x.png",
+                layout = com.terraworld.domain.item.ItemLayout.FOREGROUND,
+                isAnimated = false,
+                width = 512,
+                height = 512,
+            )
+        }
+    }
+
+    @Test
+    fun `createItem — 음수 가격은 IllegalArgumentException`() {
+        assertThrows<IllegalArgumentException> {
+            service.createItem(
+                adminUserId = admin,
+                name = "새 아이템",
+                slug = null,
+                description = null,
+                categoryId = null,
+                priceType = PriceType.BASIC,
+                priceAmount = -1,
+                tokenPrice = null,
+                rarity = com.terraworld.domain.item.Rarity.COMMON,
+                assetUrl = "y",
+                layout = com.terraworld.domain.item.ItemLayout.FOREGROUND,
+                isAnimated = false,
+                width = 512,
+                height = 512,
+            )
+        }
+    }
 }

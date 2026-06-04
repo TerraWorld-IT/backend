@@ -11,7 +11,9 @@ import java.net.URI
 import java.util.Base64
 
 @Service
-class PhotoUploadService {
+class PhotoUploadService(
+    private val r2: R2PhotoStorage,
+) {
     companion object {
         private const val MAX_BYTES = 5L * 1024 * 1024 // 5MB
         private val ALLOWED_MIMES = setOf("image/jpeg", "image/png", "image/webp")
@@ -50,6 +52,13 @@ class PhotoUploadService {
             throw BusinessException(ErrorCode.BAD_REQUEST)
         }
 
+        // WP-4 (2026-06-04): R2 설정 시 객체 스토리지 PutObject → CDN URL. 미설정 시 base64 PoC.
+        if (r2.isEnabled()) {
+            return PhotoUploadResponse(
+                photoUrl = URI.create(r2.put(bytes, mime)),
+                expiresAt = null,
+            )
+        }
         val base64 = Base64.getEncoder().encodeToString(bytes)
         val dataUrl = "data:$mime;base64,$base64"
         return PhotoUploadResponse(

@@ -57,6 +57,11 @@ class SecurityConfig(
                     // 실 인증 게이트는 PlayBillingWebhookController 의 토큰 검증.
                     .requestMatchers("/api/v1/webhooks/**")
                     .permitAll()
+                    // WP-3 (2026-06-04): AdMob SSV callback 은 Google 서버가 무인증 GET 호출.
+                    // 실 인증 게이트는 AdSsvCallbackController 의 ECDSA 서명검증 레이어.
+                    // POST /api/v1/rewards/ad (client nonce) 는 인증 유지 — ssv-callback 만 permit.
+                    .requestMatchers("/api/v1/rewards/ad/ssv-callback")
+                    .permitAll()
                     // Auth (sign-in / sign-up / session) is owned by better-auth
                     // on the Nuxt/Nitro side. Spring only validates bearer JWTs
                     // for protected domain endpoints.
