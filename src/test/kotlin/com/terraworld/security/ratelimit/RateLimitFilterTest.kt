@@ -281,6 +281,38 @@ class RateLimitFilterTest {
     }
 
     @Test
+    fun `heart endpoint is per-user rate-limited by DEFAULT_RULES (limit=30) — 31번째 클릭은 429`() {
+        // 기존 Redis rate-limit 인프라 재사용: DEFAULT_RULES 안에 heart rule 이 등록돼
+        // 있어 별도 필터/애너테이션 없이 분당 30회로 제한된다 (anti-spam, 코인 인플레 차단).
+        val heartRule =
+            RateLimitProperties.DEFAULT_RULES.single {
+                it.method == HttpMethod.POST && it.path == "/api/v1/terrarium/heart"
+            }
+        assertThat(heartRule.limit).isEqualTo(30)
+
+        val filter = newFilter(RateLimitProperties.DEFAULT_RULES)
+        val auth =
+            UsernamePasswordAuthenticationToken(
+                AuthenticatedUser(id = "user-heart", email = "u@example.com"),
+                null,
+                emptyList(),
+            )
+        SecurityContextHolder.getContext().authentication = auth
+
+        val request = MockHttpServletRequest("POST", "/api/v1/terrarium/heart").apply { remoteAddr = "10.0.0.9" }
+        val response = MockHttpServletResponse()
+        val chain: FilterChain = mock()
+        // 한도(30) 를 넘긴 31번째 클릭 — count > limit 이므로 차단.
+        whenever(valueOps.increment("terraworld:rl:POST:/api/v1/terrarium/heart:u:user-heart")).thenReturn(31L)
+
+        filter.doFilter(request, response, chain)
+
+        assertThat(response.status).isEqualTo(429)
+        assertThat(response.contentAsString).contains("RATE_LIMIT_EXCEEDED")
+        verify(chain, never()).doFilter(any(), any())
+    }
+
+    @Test
     fun `Ant-style wildcard matches dynamic path segment`() {
         val rule = RateLimitProperties.Rule(HttpMethod.POST, "/api/v1/invites/*/accept", limit = 3)
         val filter = newFilter(listOf(rule))

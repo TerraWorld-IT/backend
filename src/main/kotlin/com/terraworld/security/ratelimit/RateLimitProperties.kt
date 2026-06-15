@@ -75,7 +75,10 @@ data class RateLimitProperties(
                 Rule(HttpMethod.POST, "/api/v1/purchases", limit = 30, failClosed = true),
                 Rule(HttpMethod.POST, "/api/v1/rewards/attendance", limit = 5, failClosed = true),
                 Rule(HttpMethod.POST, "/api/v1/rewards/ad", limit = 30, failClosed = true),
-                Rule(HttpMethod.POST, "/api/v1/terrarium/heart", limit = 60),
+                // 하트 클릭은 클릭당 기본코인 +1 지급 — 매크로/자동탭 어뷰징으로 코인 인플레가
+                // 생긴다. 분당 30회로 제한 (실 사용에는 충분히 관대 — 약 2초당 1회). 다른 30/min
+                // 엔드포인트(uploads/categories/devices)와 동일 anti-spam 기준.
+                Rule(HttpMethod.POST, "/api/v1/terrarium/heart", limit = 30),
                 Rule(HttpMethod.POST, "/api/v1/terrarium/upgrade", limit = 10, failClosed = true),
                 Rule(HttpMethod.PUT, "/api/v1/terrarium/placements", limit = 60),
                 // ARCH-005: device registration is a high-value abuse target
