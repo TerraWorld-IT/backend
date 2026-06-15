@@ -23,6 +23,7 @@ import org.mockito.Mockito.mock
 import org.mockito.Mockito.verify
 import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.eq
+import org.mockito.kotlin.whenever
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.Pageable
 import java.time.LocalDate
@@ -44,6 +45,12 @@ import kotlin.test.assertTrue
  *  - dailyLimit 도달 시 DAILY_LIMIT_EXCEEDED (todayCount >= dailyLimit)
  *  - dailyLimit 직전 (todayCount = limit-1) 은 정상 통과
  *  - 사용자 미존재 USER_NOT_FOUND / 카테고리 미존재 CATEGORY_NOT_FOUND
+ *
+ * partner/joint-record 분기 (RecordService.kt:87-142):
+ *  - 본인을 partner 로 지정 시 INVALID_PARTNER
+ *  - 존재하지 않는 partner 지정 시 INVALID_PARTNER
+ *  - 친구 아님(existsAcceptedBetween=false) 시 INVALID_PARTNER
+ *  - 해피 co-record: 양쪽 record 저장 (동일 jointSessionId, 상호 partnerUserId) + partner 도 보상 가산
  */
 class RecordServiceTest {
     private lateinit var recordRepo: FakeRecordRepository
@@ -209,6 +216,109 @@ class RecordServiceTest {
                 service.createRecord("user-1", CreateRecordRequest(categoryId = 999L))
             }
         assertEquals(ErrorCode.CATEGORY_NOT_FOUND, ex.errorCode)
+    }
+
+    // ─── partner / joint-record 분기 (RecordService.kt:87-142) ──
+
+    @Test
+    fun `createRecord — 본인을 partner 로 지정하면 INVALID_PARTNER`() {
+        val ex =
+            assertThrows<BusinessException> {
+                service.createRecord(
+                    "user-1",
+                    CreateRecordRequest(categoryId = 1L, partnerUserId = "user-1"),
+                )
+            }
+        assertEquals(ErrorCode.INVALID_PARTNER, ex.errorCode)
+
+        // 검증 실패 시 본인 record/보상도 발생하지 않는다
+        val u = userRepo.findById("user-1").get()
+        assertEquals(0, u.basicCoin)
+        assertEquals(0, u.totalExp)
+        assertTrue(recordRepo.all().isEmpty())
+    }
+
+    @Test
+    fun `createRecord — 존재하지 않는 partner 는 INVALID_PARTNER`() {
+        val ex =
+            assertThrows<BusinessException> {
+                service.createRecord(
+                    "user-1",
+                    CreateRecordRequest(categoryId = 1L, partnerUserId = "ghost"),
+                )
+            }
+        assertEquals(ErrorCode.INVALID_PARTNER, ex.errorCode)
+
+        val u = userRepo.findById("user-1").get()
+        assertEquals(0, u.basicCoin)
+        assertEquals(0, u.totalExp)
+        assertTrue(recordRepo.all().isEmpty())
+    }
+
+    @Test
+    fun `createRecord — 친구가 아닌 partner(existsAcceptedBetween=false)는 INVALID_PARTNER`() {
+        userRepo.save(User(id = "partner-1", nickname = "짝꿍", basicCoin = 0, totalExp = 0, level = 1))
+        // 친구 아님 — existsAcceptedBetween 가 false (mock 기본값이지만 명시 stub)
+        whenever(inviteRepo.existsAcceptedBetween("user-1", "partner-1")).thenReturn(false)
+
+        val ex =
+            assertThrows<BusinessException> {
+                service.createRecord(
+                    "user-1",
+                    CreateRecordRequest(categoryId = 1L, partnerUserId = "partner-1"),
+                )
+            }
+        assertEquals(ErrorCode.INVALID_PARTNER, ex.errorCode)
+
+        // partner 가 존재해도 친구 관계 아니면 본인 record/보상 미발생
+        val u = userRepo.findById("user-1").get()
+        assertEquals(0, u.basicCoin)
+        assertEquals(0, u.totalExp)
+        assertTrue(recordRepo.all().isEmpty())
+    }
+
+    @Test
+    fun `createRecord — 친구 partner 와의 co-record 는 양쪽 record 저장 + partner 도 보상 가산`() {
+        userRepo.save(User(id = "partner-1", nickname = "짝꿍", basicCoin = 0, totalExp = 0, level = 1))
+        // 친구 관계 성립 — joint record 통과
+        whenever(inviteRepo.existsAcceptedBetween("user-1", "partner-1")).thenReturn(true)
+
+        val response =
+            service.createRecord(
+                "user-1",
+                CreateRecordRequest(categoryId = 1L, partnerUserId = "partner-1"),
+            )
+
+        // 양쪽 record 저장 (본인 + partner)
+        val all = recordRepo.all()
+        assertEquals(2, all.size)
+
+        // 본인 record: partnerUserId = partner.id + jointSessionId 비-null
+        val ownRecord = all.first { it.user.id == "user-1" }
+        assertEquals("partner-1", ownRecord.partnerUserId)
+        assertTrue(ownRecord.jointSessionId != null)
+
+        // partner record: partnerUserId = 본인 id, 동일한 jointSessionId 공유
+        val partnerRecord = all.first { it.user.id == "partner-1" }
+        assertEquals("user-1", partnerRecord.partnerUserId)
+        assertEquals(ownRecord.jointSessionId, partnerRecord.jointSessionId)
+
+        // 본인 보상 가산
+        val u = userRepo.findById("user-1").get()
+        assertEquals(20, u.basicCoin)
+        assertEquals(10, u.totalExp)
+
+        // partner 도 보상 가산 (basicCoin/EXP + category token row 생성)
+        val p = userRepo.findById("partner-1").get()
+        assertEquals(20, p.basicCoin)
+        assertEquals(10, p.totalExp)
+        val partnerToken = tokenRepo.findByUserIdAndCategoryId("partner-1", 1L).get()
+        assertEquals(10, partnerToken.amount)
+
+        // 응답 reward 는 본인 기준
+        assertEquals(20, response.reward.basicCoins)
+        assertEquals(10, response.reward.categoryTokens)
+        assertEquals(10, response.reward.experienceGained)
     }
 
     // ─── Fakes ─────────────────────────────────────────────────

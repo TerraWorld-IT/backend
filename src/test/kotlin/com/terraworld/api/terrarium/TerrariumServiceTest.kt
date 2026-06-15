@@ -33,7 +33,8 @@ import io.terraworld.api.model.EvolutionStage as ApiEvolutionStage
  *
  * - heartClick: 해피 (basicCoin += 1, reward/updatedBasicCoins 정확 일치) / USER_NOT_FOUND
  * - getTerrarium: 해피 (evolutionStage 매핑 = toApiEvolutionStageOrNull) / TERRARIUM_NOT_FOUND
- * - computeWiltingState: 기록 없음 stage 0 / 5일 경과 stage 1 / 10일 경과 stage 2
+ * - computeWiltingState: 임계치 경계(3/7/14일) 직전·직후 모두 잠금 — stage 0/1/2/3
+ *   (TerrariumService.WILT_STAGE_1/2/3_DAYS = 3/7/14, days>=14->3 / >=7->2 / >=3->1 / else 0)
  */
 class TerrariumServiceTest {
     private lateinit var terrariumRepo: FakeTerrariumRepository
@@ -149,26 +150,86 @@ class TerrariumServiceTest {
         assertEquals(ErrorCode.TERRARIUM_NOT_FOUND, ex.errorCode)
     }
 
+    // computeWiltingState: 임계치 3/7/14일(WILT_STAGE_1/2/3_DAYS)을 경계 양쪽에서 잠근다.
+    // 중간 대역(5/10일) 값은 임계치가 3->5 / 7->10 으로 회귀해도 통과해버리므로
+    // "직전 일수 → 낮은 stage" + "임계 당일 → 높은 stage" 를 한 쌍으로 검증.
+    // 모든 seeding 은 KstTime.today().minusDays(N) 상대 기준 (절대 날짜 hardcode 금지).
+
     @Test
-    fun `getTerrarium wilting — 마지막 기록 5일 전이면 stage 1`() {
+    fun `getTerrarium wilting — 오늘 기록이면 stage 0`() {
         saveTerrarium()
-        recordRepo.maxRecordedDate = KstTime.today().minusDays(5)
+        recordRepo.maxRecordedDate = KstTime.today().minusDays(0)
+
+        val response = service.getTerrarium("user-1")
+
+        assertEquals(0, response.wilting?.stage)
+        assertEquals(0, response.wilting?.daysSinceRecord)
+    }
+
+    @Test
+    fun `getTerrarium wilting — 2일 전(임계 3 직전)이면 stage 0`() {
+        saveTerrarium()
+        recordRepo.maxRecordedDate = KstTime.today().minusDays(2)
+
+        val response = service.getTerrarium("user-1")
+
+        assertEquals(0, response.wilting?.stage)
+        assertEquals(2, response.wilting?.daysSinceRecord)
+    }
+
+    @Test
+    fun `getTerrarium wilting — 3일 전(임계 3 당일)이면 stage 1`() {
+        saveTerrarium()
+        recordRepo.maxRecordedDate = KstTime.today().minusDays(3)
 
         val response = service.getTerrarium("user-1")
 
         assertEquals(1, response.wilting?.stage)
-        assertEquals(5, response.wilting?.daysSinceRecord)
+        assertEquals(3, response.wilting?.daysSinceRecord)
     }
 
     @Test
-    fun `getTerrarium wilting — 마지막 기록 10일 전이면 stage 2`() {
+    fun `getTerrarium wilting — 6일 전(임계 7 직전)이면 stage 1`() {
         saveTerrarium()
-        recordRepo.maxRecordedDate = KstTime.today().minusDays(10)
+        recordRepo.maxRecordedDate = KstTime.today().minusDays(6)
+
+        val response = service.getTerrarium("user-1")
+
+        assertEquals(1, response.wilting?.stage)
+        assertEquals(6, response.wilting?.daysSinceRecord)
+    }
+
+    @Test
+    fun `getTerrarium wilting — 7일 전(임계 7 당일)이면 stage 2`() {
+        saveTerrarium()
+        recordRepo.maxRecordedDate = KstTime.today().minusDays(7)
 
         val response = service.getTerrarium("user-1")
 
         assertEquals(2, response.wilting?.stage)
-        assertEquals(10, response.wilting?.daysSinceRecord)
+        assertEquals(7, response.wilting?.daysSinceRecord)
+    }
+
+    @Test
+    fun `getTerrarium wilting — 13일 전(임계 14 직전)이면 stage 2`() {
+        saveTerrarium()
+        recordRepo.maxRecordedDate = KstTime.today().minusDays(13)
+
+        val response = service.getTerrarium("user-1")
+
+        assertEquals(2, response.wilting?.stage)
+        assertEquals(13, response.wilting?.daysSinceRecord)
+    }
+
+    @Test
+    fun `getTerrarium wilting — 14일 전(임계 14 당일)이면 stage 3`() {
+        saveTerrarium()
+        recordRepo.maxRecordedDate = KstTime.today().minusDays(14)
+
+        val response = service.getTerrarium("user-1")
+
+        assertEquals(3, response.wilting?.stage)
+        assertEquals(14, response.wilting?.daysSinceRecord)
     }
 
     // ─── Fakes ─────────────────────────────────────────────────
