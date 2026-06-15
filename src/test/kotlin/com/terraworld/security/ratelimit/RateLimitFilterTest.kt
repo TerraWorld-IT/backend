@@ -313,6 +313,39 @@ class RateLimitFilterTest {
     }
 
     @Test
+    fun `heart endpoint — 30번째 클릭(한도 경계)은 통과(forward)`() {
+        // pass 경계 잠금: count == limit(30) 은 통과해야 한다 (차단은 count > limit).
+        // `count > limit` → `count >= limit` off-by-one 회귀 시 30번째가 silent block 되는 것을 검출.
+        val filter = newFilter(RateLimitProperties.DEFAULT_RULES)
+        val auth =
+            UsernamePasswordAuthenticationToken(
+                AuthenticatedUser(id = "user-heart2", email = "u2@example.com"),
+                null,
+                emptyList(),
+            )
+        SecurityContextHolder.getContext().authentication = auth
+
+        val request = MockHttpServletRequest("POST", "/api/v1/terrarium/heart").apply { remoteAddr = "10.0.0.10" }
+        val response = MockHttpServletResponse()
+        val chain: FilterChain = mock()
+        whenever(valueOps.increment("terraworld:rl:POST:/api/v1/terrarium/heart:u:user-heart2")).thenReturn(30L)
+
+        filter.doFilter(request, response, chain)
+
+        verify(chain).doFilter(request, response)
+        assertThat(response.status).isEqualTo(200)
+    }
+
+    @Test
+    fun `heart rule 은 money flow 라 failClosed=true (코인 발행 — Redis 장애 시 503)`() {
+        val heartRule =
+            RateLimitProperties.DEFAULT_RULES.single {
+                it.method == HttpMethod.POST && it.path == "/api/v1/terrarium/heart"
+            }
+        assertThat(heartRule.failClosed).isTrue()
+    }
+
+    @Test
     fun `Ant-style wildcard matches dynamic path segment`() {
         val rule = RateLimitProperties.Rule(HttpMethod.POST, "/api/v1/invites/*/accept", limit = 3)
         val filter = newFilter(listOf(rule))
