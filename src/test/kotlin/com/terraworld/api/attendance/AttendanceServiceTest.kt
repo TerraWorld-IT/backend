@@ -191,6 +191,49 @@ class AttendanceServiceTest {
         assertEquals(false, state.bonusEligible)
     }
 
+    @Test
+    fun `getState — 오늘 이미 체크인했으면 today=true + nextStreak 미증가`() {
+        // 오늘 로그(streak 3) 존재 → today=true, nextStreak = currentStreak(3) (증가 없음).
+        attendanceRepo.save(
+            AttendanceLog(
+                userId = "user-1",
+                checkInDate = today,
+                streak = 3,
+                rewardBasicCoins = 5,
+                bonus = false,
+            ),
+        )
+
+        val state = service.getState("user-1")
+
+        assertTrue(state.today)
+        assertEquals(3, state.streak)
+        // nextStreak=3 → 7 배수 아님 → 보너스 아님
+        assertEquals(false, state.bonusEligible)
+        assertEquals(5, state.rewardBasicCoins)
+    }
+
+    @Test
+    fun `getState — 어제 streak 6 이면 nextStreak 7 로 보너스 자격(20)`() {
+        // 어제 로그(streak 6) + 오늘 미체크인 → nextStreak = 6+1 = 7 → 보너스 자격.
+        attendanceRepo.save(
+            AttendanceLog(
+                userId = "user-1",
+                checkInDate = yesterday,
+                streak = 6,
+                rewardBasicCoins = 5,
+                bonus = false,
+            ),
+        )
+
+        val state = service.getState("user-1")
+
+        assertFalse(state.today)
+        assertEquals(6, state.streak)
+        assertEquals(true, state.bonusEligible)
+        assertEquals(20, state.rewardBasicCoins)
+    }
+
     // ─── Fakes ─────────────────────────────────────────────────
 
     private class FakeUserRepository :
