@@ -75,7 +75,12 @@ data class RateLimitProperties(
                 Rule(HttpMethod.POST, "/api/v1/purchases", limit = 30, failClosed = true),
                 Rule(HttpMethod.POST, "/api/v1/rewards/attendance", limit = 5, failClosed = true),
                 Rule(HttpMethod.POST, "/api/v1/rewards/ad", limit = 30, failClosed = true),
-                Rule(HttpMethod.POST, "/api/v1/terrarium/heart", limit = 60),
+                // 하트 클릭은 클릭당 기본코인 +1 지급 — 매크로/자동탭 어뷰징으로 코인 인플레가
+                // 생긴다. 분당 30회로 제한 (실 사용에는 충분히 관대 — 약 2초당 1회).
+                // SEC-002: 클릭당 코인을 mint 하는 money flow 이므로 failClosed=true.
+                // (rewards/ad 등 다른 보상 지급 룰과 동일) — Redis 장애 시 fail-open 으로
+                // 무제한 코인 farming 되는 것을 차단. 도메인 일일 cap 부재라 더욱 중요.
+                Rule(HttpMethod.POST, "/api/v1/terrarium/heart", limit = 30, failClosed = true),
                 Rule(HttpMethod.POST, "/api/v1/terrarium/upgrade", limit = 10, failClosed = true),
                 Rule(HttpMethod.PUT, "/api/v1/terrarium/placements", limit = 60),
                 // ARCH-005: device registration is a high-value abuse target
