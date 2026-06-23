@@ -20,9 +20,18 @@ import org.springframework.stereotype.Component
  * + `user/dto/{CurrencyResponse,CategoryTokenAmount}` 모두 obsolete.
  */
 @Component
-class CurrencyBuilder(
+class WalletBuilder(
     private val userTokenRepository: UserTokenRepository,
 ) {
+    companion object {
+        // code-review: 4개 시스템 카테고리 ID — legacy compat 필드(walk/read/run/draw) 매핑.
+        // seed(V1/V22) 의 산책=1 / 독서=2 / 러닝=3 / 낙서=4 와 정합. seed 재번호 시 본 상수만 갱신.
+        const val WALK_CATEGORY_ID = 1L
+        const val READ_CATEGORY_ID = 2L
+        const val RUN_CATEGORY_ID = 3L
+        const val DRAW_CATEGORY_ID = 4L
+    }
+
     /** Build from the user object plus a fresh token query. */
     fun build(
         userId: String,
@@ -49,10 +58,10 @@ class CurrencyBuilder(
         return CurrencyResponse(
             basicCoins = user.basicCoin.toDouble(),
             specialCoins = user.specialCoin.toDouble(),
-            walkTokens = (tokenMap[1L]?.amount ?: 0).toDouble(),
-            readTokens = (tokenMap[2L]?.amount ?: 0).toDouble(),
-            runTokens = (tokenMap[3L]?.amount ?: 0).toDouble(),
-            drawTokens = (tokenMap[4L]?.amount ?: 0).toDouble(),
+            walkTokens = (tokenMap[WALK_CATEGORY_ID]?.amount ?: 0).toDouble(),
+            readTokens = (tokenMap[READ_CATEGORY_ID]?.amount ?: 0).toDouble(),
+            runTokens = (tokenMap[RUN_CATEGORY_ID]?.amount ?: 0).toDouble(),
+            drawTokens = (tokenMap[DRAW_CATEGORY_ID]?.amount ?: 0).toDouble(),
             categoryTokens = all,
         )
     }

@@ -1,6 +1,6 @@
 package com.terraworld.api.reward
 
-import com.terraworld.api.user.CurrencyBuilder
+import com.terraworld.api.user.WalletBuilder
 import com.terraworld.common.audit.AuditService
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
@@ -28,7 +28,7 @@ class RewardService(
     private val userRepository: UserRepository,
     private val terrariumRepository: TerrariumRepository,
     private val redisTemplate: StringRedisTemplate,
-    private val currencyBuilder: CurrencyBuilder,
+    private val walletBuilder: WalletBuilder,
     private val auditService: AuditService,
     // N2 (구현 계획서 v4): 광고 보상 시 wallet_transactions 원장 기록
     private val walletTransactionService: com.terraworld.api.wallet.WalletTransactionService,
@@ -180,7 +180,7 @@ class RewardService(
             reward = AdRewardResponseReward(specialCoins = REWARD_SPECIAL_COINS),
             dailyWatchCount = newCount,
             remainingToday = DAILY_AD_LIMIT - newCount,
-            updatedCurrency = currencyBuilder.build(userId, user),
+            updatedCurrency = walletBuilder.build(userId, user),
         )
     }
 }

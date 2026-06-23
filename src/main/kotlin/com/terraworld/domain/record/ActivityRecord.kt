@@ -19,6 +19,8 @@ class ActivityRecord(
     val category: Category,
     @Column(columnDefinition = "TEXT")
     val memo: String? = null,
+    @Column(name = "duration_minutes")
+    val durationMinutes: Int? = null,
     @Column(name = "photo_url", length = 2048)
     val photoUrl: String? = null,
     @Column(name = "recorded_date", nullable = false)

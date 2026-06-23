@@ -30,7 +30,7 @@ class UserService(
     private val userItemRepository: UserItemRepository,
     private val terrariumRepository: TerrariumRepository,
     private val levelConfigRepository: LevelConfigRepository,
-    private val currencyBuilder: CurrencyBuilder,
+    private val walletBuilder: WalletBuilder,
     private val entitlementService: com.terraworld.api.entitlement.EntitlementService,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
@@ -76,7 +76,7 @@ class UserService(
             email = email,
             nickname = user.nickname,
             role = mapRoleOrFallback(user.role.name),
-            currency = currencyBuilder.build(userId, user),
+            currency = walletBuilder.build(userId, user),
             progress =
                 ProgressResponse(
                     level = user.level,

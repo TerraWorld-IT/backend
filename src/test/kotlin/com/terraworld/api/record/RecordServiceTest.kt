@@ -1,8 +1,8 @@
 package com.terraworld.api.record
 
 import com.terraworld.api.record.dto.CreateRecordRequest
-import com.terraworld.api.user.CurrencyBuilder
 import com.terraworld.api.user.UserLevelService
+import com.terraworld.api.user.WalletBuilder
 import com.terraworld.api.wallet.WalletTransactionService
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
@@ -25,6 +25,7 @@ import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.eq
 import org.mockito.kotlin.whenever
 import org.springframework.data.domain.Page
+import org.springframework.data.domain.PageImpl
 import org.springframework.data.domain.Pageable
 import java.time.LocalDate
 import java.util.Optional
@@ -38,7 +39,7 @@ import kotlin.test.assertTrue
  * - InviteRepository 는 비-partner 경로에서 미사용 → Mockito mock.
  * - UserLevelService / WalletTransactionService 는 concrete @Service — side-effect 협력자라 Mockito mock
  *   후 호출 여부만 verify (level_config seed / ledger DB 의존성 회피).
- * - CurrencyBuilder 는 ExchangeServiceTest 와 동일하게 실제 객체 (tokenRepo 주입) 사용.
+ * - WalletBuilder 는 ExchangeServiceTest 와 동일하게 실제 객체 (tokenRepo 주입) 사용.
  *
  * 커버:
  *  - 해피 패스: EXP +10 누적 + basicCoin/token 보상 가산 + record 저장 + level-up hook 호출 + ledger append x2
@@ -74,7 +75,7 @@ class RecordServiceTest {
         inviteRepo = mock(InviteRepository::class.java)
         userLevelService = mock(UserLevelService::class.java)
         walletTransactionService = mock(WalletTransactionService::class.java)
-        val currencyBuilder = CurrencyBuilder(tokenRepo)
+        val walletBuilder = WalletBuilder(tokenRepo)
 
         service =
             RecordService(
@@ -83,7 +84,7 @@ class RecordServiceTest {
                 tokenRepo,
                 categoryRepo,
                 inviteRepo,
-                currencyBuilder,
+                walletBuilder,
                 userLevelService,
                 walletTransactionService,
             )
@@ -321,6 +322,33 @@ class RecordServiceTest {
         assertEquals(10, response.reward.experienceGained)
     }
 
+    @Test
+    fun `createRecord — duration(분)이 영속화되고 목록 reload(toResponse)에서 유지된다 (P0-1 silent-drop fix)`() {
+        // create 응답뿐 아니라 read 경로(getRecords→toResponse)에서도 duration 이 살아있어야 한다.
+        // 이전엔 toResponse() 가 duration=null 하드코딩이라 reload 시 소실됐다 (silent drop).
+        val created = service.createRecord("user-1", CreateRecordRequest(categoryId = 1L, duration = 30))
+        assertEquals(30, created.record.duration)
+
+        // 목록 reload (default 경로 — findAllByUserIdAndIsDeletedFalseOrderByCreatedAtDesc → toResponse)
+        val reloaded = service.getRecords("user-1", null, null, null, Pageable.unpaged())
+        assertEquals(1, reloaded.content.size)
+        assertEquals(30, reloaded.content.first().duration)
+
+        // 월별 조회 경로(findAllByUserIdAndRecordedDateBetween → toResponse)에서도 유지
+        val today =
+            com.terraworld.common.time.KstTime
+                .today()
+        val monthly = service.getRecords("user-1", null, today.year, today.monthValue, Pageable.unpaged())
+        assertEquals(30, monthly.content.first().duration)
+    }
+
+    @Test
+    fun `createRecord — duration 미입력 시 null 로 저장되고 reload 시에도 null`() {
+        service.createRecord("user-1", CreateRecordRequest(categoryId = 1L))
+        val reloaded = service.getRecords("user-1", null, null, null, Pageable.unpaged())
+        assertEquals(null, reloaded.content.first().duration)
+    }
+
     // ─── Fakes ─────────────────────────────────────────────────
 
     /**
@@ -360,13 +388,24 @@ class RecordServiceTest {
         override fun findAllByUserIdAndIsDeletedFalseOrderByCreatedAtDesc(
             userId: String,
             pageable: Pageable,
-        ): Page<ActivityRecord> = Page.empty()
+        ): Page<ActivityRecord> =
+            PageImpl(
+                store.values
+                    .filter { it.user.id == userId && !it.isDeleted }
+                    .sortedByDescending { it.createdAt },
+            )
 
         override fun findAllByUserIdAndRecordedDateBetweenAndIsDeletedFalse(
             userId: String,
             from: LocalDate,
             to: LocalDate,
-        ): List<ActivityRecord> = emptyList()
+        ): List<ActivityRecord> =
+            store.values.filter {
+                it.user.id == userId &&
+                    !it.isDeleted &&
+                    !it.recordedDate.isBefore(from) &&
+                    !it.recordedDate.isAfter(to)
+            }
 
         override fun countByUserIdAndIsDeletedFalse(userId: String): Long = 0
 

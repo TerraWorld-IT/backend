@@ -1,6 +1,6 @@
 package com.terraworld.api.attendance
 
-import com.terraworld.api.user.CurrencyBuilder
+import com.terraworld.api.user.WalletBuilder
 import com.terraworld.common.audit.AuditService
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
@@ -25,7 +25,7 @@ import java.time.LocalDate
 class AttendanceService(
     private val userRepository: UserRepository,
     private val attendanceRepository: AttendanceLogRepository,
-    private val currencyBuilder: CurrencyBuilder,
+    private val walletBuilder: WalletBuilder,
     private val auditService: AuditService,
     // N2 (구현 계획서 v4): 출석 보상 시 wallet_transactions 원장 기록
     private val walletTransactionService: com.terraworld.api.wallet.WalletTransactionService,
@@ -115,7 +115,7 @@ class AttendanceService(
                     rewardBasicCoins = if ((newStreak + 1) % BONUS_INTERVAL == 0) BONUS_REWARD else BASE_REWARD,
                     bonusEligible = (newStreak + 1) % BONUS_INTERVAL == 0,
                 ),
-            currency = currencyBuilder.build(userId, user),
+            currency = walletBuilder.build(userId, user),
         )
     }
 

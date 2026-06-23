@@ -1,7 +1,7 @@
 package com.terraworld.api.purchase
 
 import com.terraworld.api.purchase.dto.PurchaseRequest
-import com.terraworld.api.user.CurrencyBuilder
+import com.terraworld.api.user.WalletBuilder
 import com.terraworld.common.audit.AuditService
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
@@ -22,7 +22,7 @@ class PurchaseService(
     private val userTokenRepository: UserTokenRepository,
     private val itemRepository: ItemRepository,
     private val userItemRepository: UserItemRepository,
-    private val currencyBuilder: CurrencyBuilder,
+    private val walletBuilder: WalletBuilder,
     private val auditService: AuditService,
     // N2 (구현 계획서 v4): 아이템 구매 시 wallet_transactions 원장 기록 (재화 차감 = 음수)
     private val walletTransactionService: com.terraworld.api.wallet.WalletTransactionService,
@@ -163,7 +163,7 @@ class PurchaseService(
 
         return PurchaseResponse(
             purchasedItem = PurchasedItemInfo(id = item.id, slug = item.slug, name = item.name),
-            updatedCurrency = currencyBuilder.build(userId, user),
+            updatedCurrency = walletBuilder.build(userId, user),
             ownedItems = ownedSlugs,
         )
     }

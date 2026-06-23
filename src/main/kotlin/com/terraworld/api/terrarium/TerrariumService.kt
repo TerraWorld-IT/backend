@@ -109,9 +109,9 @@ class TerrariumService(
         if (target !in unlocked) {
             throw BusinessException(ErrorCode.FORBIDDEN_EVOLUTION, "레벨이 부족합니다 (필요: ${target.unlockLevel})")
         }
-        // N3 (구현 계획서 v4): entitlement SoT = user_entitlement 테이블.
-        // 이전 user.entitlementFreePlacement boolean 은 deprecated — EntitlementService 가
-        // grant/revoke 의 단일 SoT 이므로 IAP webhook 이 갱신하는 테이블을 직접 조회.
+        // N3 (구현 계획서 v4): entitlement SoT = user_entitlement 테이블 (deprecated boolean 컬럼은
+        // V24/P2-1 에서 제거). EntitlementService 가 grant/revoke 단일 SoT 이므로 IAP webhook 이
+        // 갱신하는 테이블을 직접 조회.
         if (target == EvolutionStage.CUSTOM &&
             !entitlementService.hasEntitlement(userId, com.terraworld.domain.entitlement.UserEntitlementId.FREE_PLACEMENT)
         ) {
