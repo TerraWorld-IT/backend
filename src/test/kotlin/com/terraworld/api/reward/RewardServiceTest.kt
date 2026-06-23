@@ -1,6 +1,6 @@
 package com.terraworld.api.reward
 
-import com.terraworld.api.user.CurrencyBuilder
+import com.terraworld.api.user.WalletBuilder
 import com.terraworld.common.audit.AuditService
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
@@ -43,7 +43,7 @@ class RewardServiceTest {
     private lateinit var nonceInboxRepository: AdRewardNonceInboxRepository
     private lateinit var redisTemplate: StringRedisTemplate
     private lateinit var valueOps: ValueOperations<String, String>
-    private lateinit var currencyBuilder: CurrencyBuilder
+    private lateinit var walletBuilder: WalletBuilder
     private lateinit var service: RewardService
 
     @BeforeEach
@@ -63,7 +63,7 @@ class RewardServiceTest {
         // expire 는 호출만 받고 무시
         lenient().`when`(redisTemplate.expire(anyString(), any())).thenReturn(true)
 
-        currencyBuilder = CurrencyBuilder(tokenRepo)
+        walletBuilder = WalletBuilder(tokenRepo)
         val auditService = mock(AuditService::class.java)
         // N1 fix: RewardService 생성자에 terrariumRepository 추가됨 (광고 시청 시 시들기 reset).
         // 본 test 는 wilt reset 경로를 검증하지 않으므로 mock — findByUserId 는 Optional.empty() 반환 →
@@ -82,7 +82,7 @@ class RewardServiceTest {
                 userRepo,
                 terrariumRepository,
                 redisTemplate,
-                currencyBuilder,
+                walletBuilder,
                 auditService,
                 walletTransactionService,
                 nonceInboxRepository,

@@ -1,6 +1,6 @@
 package com.terraworld.api.reward
 
-import com.terraworld.api.user.CurrencyBuilder
+import com.terraworld.api.user.WalletBuilder
 import com.terraworld.common.audit.AuditService
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
@@ -45,7 +45,7 @@ class RewardServiceNonceTest {
     private lateinit var nonceInbox: FakeAdRewardNonceInboxRepository
     private lateinit var redisTemplate: StringRedisTemplate
     private lateinit var valueOps: ValueOperations<String, String>
-    private lateinit var currencyBuilder: CurrencyBuilder
+    private lateinit var walletBuilder: WalletBuilder
     private lateinit var service: RewardService
 
     @BeforeEach
@@ -64,7 +64,7 @@ class RewardServiceNonceTest {
         `when`(valueOps.increment(anyString())).thenAnswer { ++redisCount }
         lenient().`when`(redisTemplate.expire(anyString(), any())).thenReturn(true)
 
-        currencyBuilder = CurrencyBuilder(tokenRepo)
+        walletBuilder = WalletBuilder(tokenRepo)
         val auditService = mock(AuditService::class.java)
         val terrariumRepository = mock(TerrariumRepository::class.java)
         val walletTransactionService = mock(com.terraworld.api.wallet.WalletTransactionService::class.java)
@@ -74,7 +74,7 @@ class RewardServiceNonceTest {
                 userRepo,
                 terrariumRepository,
                 redisTemplate,
-                currencyBuilder,
+                walletBuilder,
                 auditService,
                 walletTransactionService,
                 nonceInbox,
@@ -175,7 +175,7 @@ class RewardServiceNonceTest {
                 userRepo,
                 mock(TerrariumRepository::class.java),
                 redisTemplate,
-                currencyBuilder,
+                walletBuilder,
                 mock(AuditService::class.java),
                 mock(com.terraworld.api.wallet.WalletTransactionService::class.java),
                 nonceInbox,
@@ -198,7 +198,7 @@ class RewardServiceNonceTest {
                 userRepo,
                 mock(TerrariumRepository::class.java),
                 redisTemplate,
-                currencyBuilder,
+                walletBuilder,
                 mock(AuditService::class.java),
                 mock(com.terraworld.api.wallet.WalletTransactionService::class.java),
                 nonceInbox,

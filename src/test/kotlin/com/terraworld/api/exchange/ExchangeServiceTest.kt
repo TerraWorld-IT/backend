@@ -2,7 +2,7 @@ package com.terraworld.api.exchange
 
 import com.terraworld.api.exchange.dto.SpecialToBasicRequest
 import com.terraworld.api.exchange.dto.TokenExchangeRequest
-import com.terraworld.api.user.CurrencyBuilder
+import com.terraworld.api.user.WalletBuilder
 import com.terraworld.common.audit.AuditService
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
@@ -41,7 +41,7 @@ class ExchangeServiceTest {
         userRepo = FakeUserRepository()
         tokenRepo = FakeUserTokenRepository()
         rateRepo = FakeRateRepository()
-        val currencyBuilder = CurrencyBuilder(tokenRepo)
+        val walletBuilder = WalletBuilder(tokenRepo)
         val auditService = org.mockito.Mockito.mock(AuditService::class.java)
         // N2/N15 (구현 계획서 v4): ExchangeService 생성자에 walletTransactionService +
         // categoryRepository 추가. 본 test 는 ledger / token→basic 경로 미검증 — mock.
@@ -54,7 +54,7 @@ class ExchangeServiceTest {
                 userRepo,
                 tokenRepo,
                 rateRepo,
-                currencyBuilder,
+                walletBuilder,
                 auditService,
                 walletTransactionService,
                 categoryRepository,

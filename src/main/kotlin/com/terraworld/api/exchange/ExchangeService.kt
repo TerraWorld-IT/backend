@@ -2,7 +2,7 @@ package com.terraworld.api.exchange
 
 import com.terraworld.api.exchange.dto.SpecialToBasicRequest
 import com.terraworld.api.exchange.dto.TokenExchangeRequest
-import com.terraworld.api.user.CurrencyBuilder
+import com.terraworld.api.user.WalletBuilder
 import com.terraworld.common.audit.AuditService
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
@@ -21,7 +21,7 @@ class ExchangeService(
     private val userRepository: UserRepository,
     private val userTokenRepository: UserTokenRepository,
     private val exchangeRateRepository: TokenExchangeRateRepository,
-    private val currencyBuilder: CurrencyBuilder,
+    private val walletBuilder: WalletBuilder,
     private val auditService: AuditService,
     // N2 (구현 계획서 v4, Codex audit Q6): 환전 시 wallet_transactions 원장 기록
     private val walletTransactionService: com.terraworld.api.wallet.WalletTransactionService,
@@ -108,7 +108,7 @@ class ExchangeService(
                     toAmount = received,
                     rate = TOKEN_TO_BASIC_RATE,
                 ),
-            updatedCurrency = currencyBuilder.build(userId, user),
+            updatedCurrency = walletBuilder.build(userId, user),
         )
     }
 
@@ -170,7 +170,7 @@ class ExchangeService(
                     toAmount = received,
                     rate = SPECIAL_TO_BASIC_RATE,
                 ),
-            updatedCurrency = currencyBuilder.build(userId, user),
+            updatedCurrency = walletBuilder.build(userId, user),
         )
     }
 
@@ -251,7 +251,7 @@ class ExchangeService(
                     toAmount = received,
                     rate = 1.0 / rate.rate,
                 ),
-            updatedCurrency = currencyBuilder.build(userId, user),
+            updatedCurrency = walletBuilder.build(userId, user),
         )
     }
 }

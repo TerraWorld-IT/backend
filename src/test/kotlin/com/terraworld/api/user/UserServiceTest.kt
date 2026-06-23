@@ -54,7 +54,7 @@ class UserServiceTest {
         terrariumRepo = Mockito.mock(TerrariumRepository::class.java)
         entitlementService = Mockito.mock(com.terraworld.api.entitlement.EntitlementService::class.java)
 
-        val currencyBuilder = CurrencyBuilder(tokenRepo)
+        val walletBuilder = WalletBuilder(tokenRepo)
 
         service =
             UserService(
@@ -63,7 +63,7 @@ class UserServiceTest {
                 userItemRepo,
                 terrariumRepo,
                 levelConfigRepo,
-                currencyBuilder,
+                walletBuilder,
                 entitlementService,
             )
 

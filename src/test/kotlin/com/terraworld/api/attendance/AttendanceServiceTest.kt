@@ -1,6 +1,6 @@
 package com.terraworld.api.attendance
 
-import com.terraworld.api.user.CurrencyBuilder
+import com.terraworld.api.user.WalletBuilder
 import com.terraworld.common.audit.AuditService
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
@@ -49,7 +49,7 @@ class AttendanceServiceTest {
         attendanceRepo = FakeAttendanceLogRepository()
         tokenRepo = FakeUserTokenRepository()
 
-        val currencyBuilder = CurrencyBuilder(tokenRepo)
+        val walletBuilder = WalletBuilder(tokenRepo)
         val auditService = org.mockito.Mockito.mock(AuditService::class.java)
         // N2 (구현 계획서 v4): wallet ledger append 경로는 본 test 범위 밖 — mock.
         val walletTransactionService =
@@ -59,7 +59,7 @@ class AttendanceServiceTest {
             AttendanceService(
                 userRepo,
                 attendanceRepo,
-                currencyBuilder,
+                walletBuilder,
                 auditService,
                 walletTransactionService,
             )

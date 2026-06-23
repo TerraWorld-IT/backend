@@ -1,7 +1,7 @@
 package com.terraworld.api.record
 
 import com.terraworld.api.record.dto.CreateRecordRequest
-import com.terraworld.api.user.CurrencyBuilder
+import com.terraworld.api.user.WalletBuilder
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
 import com.terraworld.common.time.KstTime
@@ -45,12 +45,18 @@ class RecordService(
     private val userTokenRepository: UserTokenRepository,
     private val categoryRepository: CategoryRepository,
     private val inviteRepository: InviteRepository,
-    private val currencyBuilder: CurrencyBuilder,
+    private val walletBuilder: WalletBuilder,
     // UltraPlan v3 J-EVO-001 (2026-05-18): EXP 가산 후 level-up 자동 트리거
     private val userLevelService: com.terraworld.api.user.UserLevelService,
     // N2 (구현 계획서 v4): record reward 시 wallet_transactions 원장 기록
     private val walletTransactionService: com.terraworld.api.wallet.WalletTransactionService,
 ) {
+    companion object {
+        // code-review: 기록 1건당 EXP 보상 고정값. 응답 echo(experienceGained)와 실제 가산
+        // (user.totalExp)이 같은 상수를 써야 reload 시 보고값과 실제가 어긋나지 않는다.
+        const val EXP_PER_RECORD = 10
+    }
+
     @Transactional
     fun createRecord(
         userId: String,
@@ -108,6 +114,7 @@ class RecordService(
                     user = user,
                     category = category,
                     memo = request.note,
+                    durationMinutes = request.duration,
                     photoUrl = request.photoUrl,
                     recordedDate = KstTime.today(),
                     partnerUserId = partner?.id,
@@ -131,6 +138,7 @@ class RecordService(
                             user = partner,
                             category = category,
                             memo = request.note,
+                            durationMinutes = request.duration,
                             photoUrl = request.photoUrl,
                             recordedDate = KstTime.today(),
                             partnerUserId = userId,
@@ -151,16 +159,16 @@ class RecordService(
                     createdAt = record.createdAt.atOffset(ZoneOffset.UTC),
                     categoryEmoji = category.emoji,
                     memo = record.memo,
-                    duration = request.duration,
+                    duration = record.durationMinutes,
                     photoUrl = record.photoUrl?.let { URI.create(it) },
                 ),
             reward =
                 RewardInfo(
                     basicCoins = category.baseCoinReward,
                     categoryTokens = category.baseTokenReward,
-                    experienceGained = 10,
+                    experienceGained = EXP_PER_RECORD,
                 ),
-            updatedCurrency = currencyBuilder.build(userId, user),
+            updatedCurrency = walletBuilder.build(userId, user),
         )
     }
 
@@ -175,7 +183,7 @@ class RecordService(
     ) {
         val user = record.user
         user.basicCoin += category.baseCoinReward
-        user.totalExp += 10
+        user.totalExp += EXP_PER_RECORD
         userRepository.save(user)
 
         // wallet ledger — BASIC_COIN row
@@ -289,7 +297,7 @@ class RecordService(
             createdAt = createdAt.atOffset(ZoneOffset.UTC),
             categoryEmoji = category.emoji,
             memo = memo,
-            duration = null,
+            duration = durationMinutes,
             photoUrl = photoUrl?.let { URI.create(it) },
         )
 }

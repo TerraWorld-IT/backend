@@ -145,7 +145,7 @@ class PlayPurchaseVerifier(
         return creds.accessToken.tokenValue
     }
 
-    private fun parsePurchase(
+    internal fun parsePurchase(
         body: String,
         expectedUserId: String,
     ): VerificationResult {

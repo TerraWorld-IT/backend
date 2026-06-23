@@ -21,15 +21,9 @@ class User(
     var basicCoin: Long = 0,
     @Column(name = "special_coin", nullable = false)
     var specialCoin: Long = 0,
-    // N3 (구현 계획서 v4, 2026-05-21): entitlement SoT 가 user_entitlement 테이블로 일원화됨.
-    // 아래 boolean 2개는 deprecated — 읽기는 EntitlementService.hasEntitlement() 로 대체됨.
-    // 컬럼은 backfill (V16) 검증 후 별 migration 으로 drop 예정. 현재는 NOT NULL default false 유지.
-    @Deprecated("entitlement SoT = user_entitlement 테이블. EntitlementService.hasEntitlement() 사용")
-    @Column(name = "entitlement_free_placement", nullable = false)
-    var entitlementFreePlacement: Boolean = false,
-    @Deprecated("entitlement SoT = user_entitlement 테이블. EntitlementService.hasEntitlement() 사용")
-    @Column(name = "entitlement_premium_themes", nullable = false)
-    var entitlementPremiumThemes: Boolean = false,
+    // N3 (구현 계획서 v4, 2026-05-21): entitlement SoT = user_entitlement 테이블 (EntitlementService).
+    // 과거 deprecated boolean 컬럼(entitlement_free_placement/premium_themes)은 V16 backfill 후
+    // V24 (P2-1) 에서 drop. 엔티티 필드도 함께 제거 — 읽기는 EntitlementService.hasEntitlement().
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: LocalDateTime = LocalDateTime.now(),
     @Column(name = "updated_at", nullable = false)

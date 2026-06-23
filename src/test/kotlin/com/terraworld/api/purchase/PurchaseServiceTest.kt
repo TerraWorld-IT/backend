@@ -1,7 +1,7 @@
 package com.terraworld.api.purchase
 
 import com.terraworld.api.purchase.dto.PurchaseRequest
-import com.terraworld.api.user.CurrencyBuilder
+import com.terraworld.api.user.WalletBuilder
 import com.terraworld.common.audit.AuditService
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
@@ -49,7 +49,7 @@ class PurchaseServiceTest {
         itemRepo = FakeItemRepository()
         userItemRepo = FakeUserItemRepository()
 
-        val currencyBuilder = CurrencyBuilder(tokenRepo)
+        val walletBuilder = WalletBuilder(tokenRepo)
         val auditService = org.mockito.Mockito.mock(AuditService::class.java)
         // N2 (구현 계획서 v4): PurchaseService 생성자에 walletTransactionService 추가됨 (구매 ledger).
         // 본 test 는 ledger 경로를 검증하지 않으므로 mock — append() 반환값 미사용.
@@ -61,7 +61,7 @@ class PurchaseServiceTest {
                 tokenRepo,
                 itemRepo,
                 userItemRepo,
-                currencyBuilder,
+                walletBuilder,
                 auditService,
                 walletTransactionService,
             )
