@@ -36,7 +36,38 @@ class WalletTransactionService(
         const val REASON_PURCHASE = "PURCHASE"
         const val REASON_EXCHANGE = "EXCHANGE"
         const val REASON_INVITE_ACCEPT = "INVITE_ACCEPT"
+
+        // 낙서장 리팩토링: 정규화 화폐 원장 reason
+        const val REASON_GRANT = "GRANT"
+        const val REASON_TIER_UNLOCK = "TIER_UNLOCK"
+        const val REASON_GROW_BOOST = "GROW_BOOST"
     }
+
+    /**
+     * 정규화 화폐(user_currency_balances) 변동 1건을 ledger 에 append (typed ref).
+     * 낙서장 리팩토링 P0-4: CurrencyService 가 호출. 호출자 @Transactional 에 참여.
+     */
+    fun appendNormalized(
+        user: User,
+        currencyCode: String,
+        amount: Long,
+        balanceAfter: Long,
+        reason: String,
+        refType: String? = null,
+        refKey: String? = null,
+    ): WalletTransaction =
+        walletTransactionRepository.save(
+            WalletTransaction(
+                user = user,
+                currencyType = currencyCode,
+                amount = amount,
+                balanceAfter = balanceAfter,
+                reason = reason,
+                currencyCode = currencyCode,
+                refType = refType,
+                refKey = refKey,
+            ),
+        )
 
     /**
      * 재화 변동 1건을 ledger 에 append.

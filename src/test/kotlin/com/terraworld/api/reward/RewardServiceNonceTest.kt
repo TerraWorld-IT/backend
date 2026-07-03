@@ -11,8 +11,6 @@ import com.terraworld.domain.reward.AdWatchLogRepository
 import com.terraworld.domain.terrarium.TerrariumRepository
 import com.terraworld.domain.user.User
 import com.terraworld.domain.user.UserRepository
-import com.terraworld.domain.user.UserToken
-import com.terraworld.domain.user.UserTokenRepository
 import com.terraworld.test.FakeJpaRepository
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -25,7 +23,6 @@ import org.mockito.Mockito.`when`
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.data.redis.core.ValueOperations
 import java.time.LocalDateTime
-import java.util.Optional
 import kotlin.test.assertEquals
 
 /**
@@ -41,7 +38,6 @@ import kotlin.test.assertEquals
 class RewardServiceNonceTest {
     private lateinit var userRepo: FakeUserRepository
     private lateinit var logRepo: FakeAdWatchLogRepository
-    private lateinit var tokenRepo: FakeUserTokenRepository
     private lateinit var nonceInbox: FakeAdRewardNonceInboxRepository
     private lateinit var redisTemplate: StringRedisTemplate
     private lateinit var valueOps: ValueOperations<String, String>
@@ -52,7 +48,6 @@ class RewardServiceNonceTest {
     fun setup() {
         userRepo = FakeUserRepository()
         logRepo = FakeAdWatchLogRepository()
-        tokenRepo = FakeUserTokenRepository()
         nonceInbox = FakeAdRewardNonceInboxRepository()
         redisTemplate = mock(StringRedisTemplate::class.java)
 
@@ -64,7 +59,17 @@ class RewardServiceNonceTest {
         `when`(valueOps.increment(anyString())).thenAnswer { ++redisCount }
         lenient().`when`(redisTemplate.expire(anyString(), any())).thenReturn(true)
 
-        walletBuilder = WalletBuilder(tokenRepo)
+        walletBuilder =
+            WalletBuilder(
+                org.mockito.Mockito.mock(com.terraworld.api.currency.CurrencyService::class.java).also {
+                    org.mockito.kotlin
+                        .whenever(it.currencyResponse(org.mockito.kotlin.any()))
+                        .thenReturn(
+                            io.terraworld.api.model
+                                .CurrencyResponse(balances = emptyList()),
+                        )
+                },
+            )
         val auditService = mock(AuditService::class.java)
         val terrariumRepository = mock(TerrariumRepository::class.java)
         val walletTransactionService = mock(com.terraworld.api.wallet.WalletTransactionService::class.java)
@@ -72,6 +77,7 @@ class RewardServiceNonceTest {
             RewardService(
                 logRepo,
                 userRepo,
+                mock(com.terraworld.api.currency.CurrencyService::class.java),
                 terrariumRepository,
                 redisTemplate,
                 walletBuilder,
@@ -98,7 +104,6 @@ class RewardServiceNonceTest {
     fun `같은 nonce 두 번째 — NONCE_ALREADY_CONSUMED throw + 두 번째 지급 안 됨`() {
         val nonce = "550e8400-e29b-41d4-a716-446655440000"
         service.claimAdReward("user-1", nonce)
-        val firstSpecial = userRepo.findById("user-1").get().specialCoin
 
         val ex =
             assertThrows<BusinessException> {
@@ -106,7 +111,6 @@ class RewardServiceNonceTest {
             }
 
         assertEquals(ErrorCode.NONCE_ALREADY_CONSUMED, ex.errorCode)
-        assertEquals(firstSpecial, userRepo.findById("user-1").get().specialCoin)
         assertEquals(1, logRepo.all().size)
         assertEquals(1, nonceInbox.all().size)
     }
@@ -173,6 +177,7 @@ class RewardServiceNonceTest {
             RewardService(
                 logRepo,
                 userRepo,
+                mock(com.terraworld.api.currency.CurrencyService::class.java),
                 mock(TerrariumRepository::class.java),
                 redisTemplate,
                 walletBuilder,
@@ -196,6 +201,7 @@ class RewardServiceNonceTest {
             RewardService(
                 logRepo,
                 userRepo,
+                mock(com.terraworld.api.currency.CurrencyService::class.java),
                 mock(TerrariumRepository::class.java),
                 redisTemplate,
                 walletBuilder,
@@ -241,6 +247,8 @@ class RewardServiceNonceTest {
             return entity
         }
 
+        override fun acquireAdRewardDailyLock(key: String): Int = 1
+
         override fun countByUserIdAndWatchedAtBetween(
             userId: String,
             from: LocalDateTime,
@@ -258,21 +266,5 @@ class RewardServiceNonceTest {
         FakeJpaRepository<User, String>(),
         UserRepository {
         override fun extractId(entity: User): String = entity.id
-    }
-
-    private class FakeUserTokenRepository :
-        FakeJpaRepository<UserToken, Long>(),
-        UserTokenRepository {
-        override fun extractId(entity: UserToken): Long = entity.id
-
-        override fun findByUserIdAndCategoryId(
-            userId: String,
-            categoryId: Long,
-        ): Optional<UserToken> =
-            Optional.ofNullable(
-                store.values.firstOrNull { it.user.id == userId && it.category.id == categoryId },
-            )
-
-        override fun findAllByUserId(userId: String): List<UserToken> = store.values.filter { it.user.id == userId }
     }
 }

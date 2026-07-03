@@ -33,6 +33,7 @@ internal object ItemMapper {
             assetUrl = item.assetUrl,
             layout = mapLayoutOrFailFast(item.id, item.layout.name),
             isAnimated = item.isAnimated,
+            isActive = item.isActive,
         )
 
     private fun mapPriceTypeOrFailFast(

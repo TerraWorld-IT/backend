@@ -43,6 +43,9 @@ class PlacementService(
         placementId: Long,
         posX: Double,
         posY: Double,
+        scale: Float? = null,
+        flipped: Boolean? = null,
+        zIndex: Int? = null,
     ): FreePlacementItem {
         if (!entitlementService.hasEntitlement(userId, UserEntitlementId.FREE_PLACEMENT)) {
             log.warn("placement.free.forbidden user={} placementId={}", userId, placementId)
@@ -61,6 +64,10 @@ class PlacementService(
         placement.freeXPixel = ratioToStore(posX)
         placement.freeYPixel = ratioToStore(posY)
         placement.isFreePlacement = true
+        // 낙서장 자유배치 편집 영속(req3 #2): 크기/반전/깊이는 미지정(null) 시 기존값 유지.
+        if (scale != null) placement.scale = scale.coerceIn(0.3f, 4.0f)
+        if (flipped != null) placement.flipped = flipped
+        if (zIndex != null) placement.zIndex = zIndex
         val saved = placementRepository.save(placement)
         log.info("placement.free.saved user={} placementId={} x={} y={}", userId, placementId, posX, posY)
         return saved.toFreeItem()
@@ -76,6 +83,9 @@ class PlacementService(
             posX = storeToRatio(freeXPixel),
             posY = storeToRatio(freeYPixel),
             isFreePlacement = isFreePlacement,
+            scale = scale,
+            flipped = flipped,
+            zIndex = zIndex,
         )
 
     companion object {

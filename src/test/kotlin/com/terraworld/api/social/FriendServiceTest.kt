@@ -175,6 +175,20 @@ class FriendServiceTest {
 
         override fun existsByCode(code: String): Boolean = store.values.any { it.code == code }
 
+        override fun acquireInvitePairLock(key: String): Int = 1
+
+        override fun claimAccept(
+            id: Long,
+            inviteeUserId: String,
+            now: LocalDateTime,
+        ): Int {
+            val invite = store[id] ?: return 0
+            if (invite.acceptedAt != null) return 0
+            invite.inviteeUserId = inviteeUserId
+            invite.acceptedAt = now
+            return 1
+        }
+
         override fun existsAcceptedBetween(
             userIdA: String,
             userIdB: String,
@@ -186,6 +200,20 @@ class FriendServiceTest {
                             (i.inviterUserId == userIdB && i.inviteeUserId == userIdA)
                     )
             }
+
+        override fun findAcceptedBetween(
+            userIdA: String,
+            userIdB: String,
+        ): Optional<Invite> =
+            Optional.ofNullable(
+                store.values.firstOrNull { i ->
+                    i.acceptedAt != null &&
+                        (
+                            (i.inviterUserId == userIdA && i.inviteeUserId == userIdB) ||
+                                (i.inviterUserId == userIdB && i.inviteeUserId == userIdA)
+                        )
+                },
+            )
 
         override fun findAcceptedInvolvingUser(userId: String): List<Invite> =
             store.values.filter { i ->

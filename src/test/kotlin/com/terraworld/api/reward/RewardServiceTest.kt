@@ -10,8 +10,6 @@ import com.terraworld.domain.reward.AdWatchLogRepository
 import com.terraworld.domain.terrarium.TerrariumRepository
 import com.terraworld.domain.user.User
 import com.terraworld.domain.user.UserRepository
-import com.terraworld.domain.user.UserToken
-import com.terraworld.domain.user.UserTokenRepository
 import com.terraworld.test.FakeJpaRepository
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -26,7 +24,6 @@ import org.mockito.Mockito.`when`
 import org.springframework.data.redis.core.StringRedisTemplate
 import org.springframework.data.redis.core.ValueOperations
 import java.time.LocalDateTime
-import java.util.Optional
 import kotlin.test.assertEquals
 
 /**
@@ -39,7 +36,6 @@ import kotlin.test.assertEquals
 class RewardServiceTest {
     private lateinit var userRepo: FakeUserRepository
     private lateinit var logRepo: FakeAdWatchLogRepository
-    private lateinit var tokenRepo: FakeUserTokenRepository
     private lateinit var nonceInboxRepository: AdRewardNonceInboxRepository
     private lateinit var redisTemplate: StringRedisTemplate
     private lateinit var valueOps: ValueOperations<String, String>
@@ -50,7 +46,6 @@ class RewardServiceTest {
     fun setup() {
         userRepo = FakeUserRepository()
         logRepo = FakeAdWatchLogRepository()
-        tokenRepo = FakeUserTokenRepository()
         redisTemplate = mock(StringRedisTemplate::class.java)
 
         @Suppress("UNCHECKED_CAST")
@@ -63,7 +58,17 @@ class RewardServiceTest {
         // expire 는 호출만 받고 무시
         lenient().`when`(redisTemplate.expire(anyString(), any())).thenReturn(true)
 
-        walletBuilder = WalletBuilder(tokenRepo)
+        walletBuilder =
+            WalletBuilder(
+                org.mockito.Mockito.mock(com.terraworld.api.currency.CurrencyService::class.java).also {
+                    org.mockito.kotlin
+                        .whenever(it.currencyResponse(org.mockito.kotlin.any()))
+                        .thenReturn(
+                            io.terraworld.api.model
+                                .CurrencyResponse(balances = emptyList()),
+                        )
+                },
+            )
         val auditService = mock(AuditService::class.java)
         // N1 fix: RewardService 생성자에 terrariumRepository 추가됨 (광고 시청 시 시들기 reset).
         // 본 test 는 wilt reset 경로를 검증하지 않으므로 mock — findByUserId 는 Optional.empty() 반환 →
@@ -80,6 +85,7 @@ class RewardServiceTest {
             RewardService(
                 logRepo,
                 userRepo,
+                mock(com.terraworld.api.currency.CurrencyService::class.java),
                 terrariumRepository,
                 redisTemplate,
                 walletBuilder,
@@ -94,17 +100,11 @@ class RewardServiceTest {
 
     @Test
     fun `claimAdReward 해피 패스 — 스페셜 코인 +1 과 오늘 카운트 +1 반환`() {
-        val beforeSpecial = userRepo.findById("user-1").get().specialCoin
-
         val response = service.claimAdReward("user-1")
 
         assertEquals(RewardService.REWARD_SPECIAL_COINS, response.reward.specialCoins)
         assertEquals(1, response.dailyWatchCount)
         assertEquals(RewardService.DAILY_AD_LIMIT - 1, response.remainingToday)
-        assertEquals(
-            beforeSpecial + RewardService.REWARD_SPECIAL_COINS,
-            userRepo.findById("user-1").get().specialCoin,
-        )
         assertEquals(1, logRepo.all().size)
 
         // Codex LOW 5: legacy path 는 inbox 에 절대 INSERT 하지 않음을 verify 로 잠금.
@@ -181,6 +181,8 @@ class RewardServiceTest {
             return entity
         }
 
+        override fun acquireAdRewardDailyLock(key: String): Int = 1
+
         override fun countByUserIdAndWatchedAtBetween(
             userId: String,
             from: LocalDateTime,
@@ -198,21 +200,5 @@ class RewardServiceTest {
         FakeJpaRepository<User, String>(),
         UserRepository {
         override fun extractId(entity: User): String = entity.id
-    }
-
-    private class FakeUserTokenRepository :
-        FakeJpaRepository<UserToken, Long>(),
-        UserTokenRepository {
-        override fun extractId(entity: UserToken): Long = entity.id
-
-        override fun findByUserIdAndCategoryId(
-            userId: String,
-            categoryId: Long,
-        ): Optional<UserToken> =
-            Optional.ofNullable(
-                store.values.firstOrNull { it.user.id == userId && it.category.id == categoryId },
-            )
-
-        override fun findAllByUserId(userId: String): List<UserToken> = store.values.filter { it.user.id == userId }
     }
 }

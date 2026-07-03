@@ -4,13 +4,11 @@ import com.terraworld.common.audit.AuditService
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
 import com.terraworld.domain.category.CategoryRepository
-import com.terraworld.domain.exchange.TokenExchangeRateRepository
 import com.terraworld.domain.item.Item
 import com.terraworld.domain.item.ItemLayout
 import com.terraworld.domain.item.ItemRepository
 import com.terraworld.domain.item.PriceType
 import com.terraworld.domain.item.Rarity
-import com.terraworld.domain.level.LevelConfigRepository
 import com.terraworld.domain.user.UserRepository
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
@@ -31,8 +29,6 @@ import java.net.URI
 @Service
 class AdminService(
     private val categoryRepository: CategoryRepository,
-    private val levelConfigRepository: LevelConfigRepository,
-    private val tokenExchangeRateRepository: TokenExchangeRateRepository,
     private val itemRepository: ItemRepository,
     private val userRepository: UserRepository,
     private val auditService: AuditService,
@@ -61,53 +57,6 @@ class AdminService(
         categoryRepository.save(category)
         audit(adminUserId, "ADMIN_UPDATE_CATEGORY_REWARDS", "Category", categoryId.toString())
         log.info("admin.category.rewards user={} category={}", adminUserId, categoryId)
-    }
-
-    /** 레벨 설정 조정 (required_exp / 보상). N4 의 EXP 곡선 runtime 조정 경로. */
-    @Transactional
-    fun updateLevelConfig(
-        adminUserId: String,
-        level: Int,
-        requiredExp: Long,
-        rewardType: String?,
-        rewardValue: Int?,
-        maxItems: Int,
-    ) {
-        require(requiredExp >= 0 && maxItems >= 1) { "requiredExp ≥ 0, maxItems ≥ 1" }
-        // CDX-002: rewardValue 음수 차단
-        require(rewardValue == null || rewardValue >= 0) { "rewardValue 는 음수 불가" }
-        val config =
-            levelConfigRepository
-                .findById(level)
-                .orElseThrow { BusinessException(ErrorCode.INVALID_INPUT, "레벨 설정 없음: $level") }
-        config.requiredExp = requiredExp
-        config.rewardType = rewardType
-        config.rewardValue = rewardValue
-        config.maxItems = maxItems
-        levelConfigRepository.save(config)
-        audit(adminUserId, "ADMIN_UPDATE_LEVEL_CONFIG", "LevelConfig", level.toString())
-        log.info("admin.level.config user={} level={} requiredExp={}", adminUserId, level, requiredExp)
-    }
-
-    /** 토큰 교환 비율 조정. */
-    @Transactional
-    fun updateExchangeRate(
-        adminUserId: String,
-        rateId: Long,
-        rate: Float,
-        isActive: Boolean,
-    ) {
-        // CDX-002: rate 는 0 초과 + 유한값 (Infinity/NaN 차단)
-        require(rate > 0f && rate.isFinite()) { "교환 비율은 0 보다 큰 유한값이어야 함" }
-        val exchangeRate =
-            tokenExchangeRateRepository
-                .findById(rateId)
-                .orElseThrow { BusinessException(ErrorCode.EXCHANGE_RATE_NOT_FOUND) }
-        exchangeRate.rate = rate
-        exchangeRate.isActive = isActive
-        tokenExchangeRateRepository.save(exchangeRate)
-        audit(adminUserId, "ADMIN_UPDATE_EXCHANGE_RATE", "TokenExchangeRate", rateId.toString())
-        log.info("admin.exchange.rate user={} rate={} value={}", adminUserId, rateId, rate)
     }
 
     /**
@@ -149,6 +98,20 @@ class AdminService(
             categoryId?.let {
                 categoryRepository.findById(it).orElseThrow { BusinessException(ErrorCode.CATEGORY_NOT_FOUND) }
             }
+        // 토큰 결제 아이템(TOKEN/MIXED)은 원소 토큰 카테고리(1~4) 필수 — 무료 지급/오청구 config 생성 차단.
+        if (priceType == PriceType.TOKEN || priceType == PriceType.MIXED) {
+            val cat =
+                category
+                    ?: throw BusinessException(ErrorCode.INVALID_INPUT, "$priceType 아이템은 category 가 필수입니다")
+            if (com.terraworld.domain.currency.CurrencyCode
+                    .elementTokenForCategory(cat.id) == null
+            ) {
+                throw BusinessException(ErrorCode.INVALID_INPUT, "$priceType 아이템은 원소 토큰 카테고리(1~4)만 지정 가능합니다")
+            }
+            if (priceType == PriceType.MIXED && tokenPrice == null) {
+                throw BusinessException(ErrorCode.INVALID_INPUT, "MIXED 아이템은 tokenPrice 가 필수입니다")
+            }
+        }
         val saved =
             itemRepository.save(
                 Item(
@@ -190,6 +153,13 @@ class AdminService(
         log.info("admin.item.active user={} item={} active={}", adminUserId, itemId, active)
     }
 
+    /**
+     * 전체 아이템 목록 (비활성 포함) — admin 재활성화용.
+     * 공개 목록(ItemController.listItems)은 isActive=true 만 노출하므로, 비활성 아이템 재활성화를 위해 별도 제공.
+     */
+    @Transactional(readOnly = true)
+    fun listAllItems(): List<Item> = itemRepository.findAll()
+
     /** admin 대시보드 요약 카운트. */
     @Transactional(readOnly = true)
     fun dashboard(): AdminDashboard =
@@ -197,7 +167,6 @@ class AdminService(
             totalUsers = userRepository.count(),
             totalItems = itemRepository.count(),
             totalCategories = categoryRepository.count(),
-            totalLevels = levelConfigRepository.count(),
         )
 
     /**
@@ -252,5 +221,4 @@ data class AdminDashboard(
     val totalUsers: Long,
     val totalItems: Long,
     val totalCategories: Long,
-    val totalLevels: Long,
 )

@@ -66,8 +66,8 @@ class WiltScheduler(
         var wiltEvents = 0
         var nudgeEvents = 0
 
-        terrariumRepository.findAll().forEach { terrarium ->
-            val userId = terrarium.user.id
+        terrariumRepository.findAllWiltScanProjections().forEach { terrarium ->
+            val userId = terrarium.userId
             val lastRecordDate = recordRepository.findMaxRecordedDate(userId)
             val wiltRecoveredDate = terrarium.wiltRecoveredAt?.toLocalDate()
             val effective =

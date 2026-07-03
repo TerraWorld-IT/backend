@@ -2,14 +2,12 @@ package com.terraworld.api.admin
 
 import com.terraworld.common.audit.AuditService
 import com.terraworld.common.exception.BusinessException
+import com.terraworld.common.exception.ErrorCode
 import com.terraworld.domain.category.Category
 import com.terraworld.domain.category.CategoryRepository
-import com.terraworld.domain.exchange.TokenExchangeRateRepository
 import com.terraworld.domain.item.Item
 import com.terraworld.domain.item.ItemRepository
 import com.terraworld.domain.item.PriceType
-import com.terraworld.domain.level.LevelConfig
-import com.terraworld.domain.level.LevelConfigRepository
 import com.terraworld.domain.user.UserRepository
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -26,8 +24,6 @@ import kotlin.test.assertEquals
  */
 class AdminServiceTest {
     private lateinit var categoryRepository: CategoryRepository
-    private lateinit var levelConfigRepository: LevelConfigRepository
-    private lateinit var exchangeRateRepository: TokenExchangeRateRepository
     private lateinit var itemRepository: ItemRepository
     private lateinit var userRepository: UserRepository
     private lateinit var service: AdminService
@@ -37,15 +33,11 @@ class AdminServiceTest {
     @BeforeEach
     fun setup() {
         categoryRepository = mock(CategoryRepository::class.java)
-        levelConfigRepository = mock(LevelConfigRepository::class.java)
-        exchangeRateRepository = mock(TokenExchangeRateRepository::class.java)
         itemRepository = mock(ItemRepository::class.java)
         userRepository = mock(UserRepository::class.java)
         service =
             AdminService(
                 categoryRepository,
-                levelConfigRepository,
-                exchangeRateRepository,
                 itemRepository,
                 userRepository,
                 mock(AuditService::class.java),
@@ -73,53 +65,16 @@ class AdminServiceTest {
     }
 
     @Test
-    fun `updateLevelConfig — 미존재 레벨은 BusinessException`() {
-        `when`(levelConfigRepository.findById(99)).thenReturn(Optional.empty())
-        assertThrows<BusinessException> {
-            service.updateLevelConfig(admin, level = 99, requiredExp = 100, rewardType = null, rewardValue = null, maxItems = 10)
-        }
-    }
-
-    @Test
-    fun `updateLevelConfig 해피 패스 — required_exp 갱신`() {
-        val config = LevelConfig(level = 3, requiredExp = 300)
-        `when`(levelConfigRepository.findById(3)).thenReturn(Optional.of(config))
-
-        service.updateLevelConfig(admin, level = 3, requiredExp = 250, rewardType = "COIN", rewardValue = 50, maxItems = 12)
-
-        assertEquals(250, config.requiredExp)
-        assertEquals("COIN", config.rewardType)
-        assertEquals(12, config.maxItems)
-        verify(levelConfigRepository).save(config)
-    }
-
-    @Test
-    fun `updateExchangeRate — 0 이하 비율은 IllegalArgumentException`() {
-        assertThrows<IllegalArgumentException> {
-            service.updateExchangeRate(admin, rateId = 1L, rate = 0f, isActive = true)
-        }
-    }
-
-    @Test
-    fun `updateExchangeRate — 무한대 비율은 IllegalArgumentException`() {
-        assertThrows<IllegalArgumentException> {
-            service.updateExchangeRate(admin, rateId = 1L, rate = Float.POSITIVE_INFINITY, isActive = true)
-        }
-    }
-
-    @Test
     fun `dashboard — 카운트 집계`() {
         `when`(userRepository.count()).thenReturn(10L)
         `when`(itemRepository.count()).thenReturn(20L)
         `when`(categoryRepository.count()).thenReturn(4L)
-        `when`(levelConfigRepository.count()).thenReturn(10L)
 
         val d = service.dashboard()
 
         assertEquals(10L, d.totalUsers)
         assertEquals(20L, d.totalItems)
         assertEquals(4L, d.totalCategories)
-        assertEquals(10L, d.totalLevels)
     }
 
     @Test
@@ -219,6 +174,84 @@ class AdminServiceTest {
                 height = 512,
             )
         }
+    }
+
+    @Test
+    fun `createItem TOKEN — category 누락은 INVALID_INPUT `() {
+        val ex =
+            assertThrows<BusinessException> {
+                service.createItem(
+                    adminUserId = admin,
+                    name = "토큰 아이템",
+                    slug = null,
+                    description = null,
+                    categoryId = null,
+                    priceType = PriceType.TOKEN,
+                    priceAmount = 10,
+                    tokenPrice = null,
+                    rarity = com.terraworld.domain.item.Rarity.COMMON,
+                    assetUrl = "y",
+                    layout = com.terraworld.domain.item.ItemLayout.FOREGROUND,
+                    isAnimated = false,
+                    width = 512,
+                    height = 512,
+                )
+            }
+        assertEquals(ErrorCode.INVALID_INPUT, ex.errorCode)
+    }
+
+    @Test
+    fun `createItem TOKEN — 커스텀 카테고리(원소 토큰 없음)는 INVALID_INPUT `() {
+        `when`(categoryRepository.findById(5L))
+            .thenReturn(Optional.of(Category(id = 5L, name = "커스텀", tokenName = "커스텀토큰")))
+        val ex =
+            assertThrows<BusinessException> {
+                service.createItem(
+                    adminUserId = admin,
+                    name = "토큰 아이템",
+                    slug = null,
+                    description = null,
+                    categoryId = 5L,
+                    priceType = PriceType.TOKEN,
+                    priceAmount = 10,
+                    tokenPrice = null,
+                    rarity = com.terraworld.domain.item.Rarity.COMMON,
+                    assetUrl = "y",
+                    layout = com.terraworld.domain.item.ItemLayout.FOREGROUND,
+                    isAnimated = false,
+                    width = 512,
+                    height = 512,
+                )
+            }
+        assertEquals(ErrorCode.INVALID_INPUT, ex.errorCode)
+    }
+
+    @Test
+    fun `createItem TOKEN — 시스템 카테고리(1~4)는 성공`() {
+        `when`(categoryRepository.findById(1L))
+            .thenReturn(Optional.of(Category(id = 1L, name = "산책", tokenName = "산책토큰")))
+        `when`(itemRepository.findBySlug(org.mockito.kotlin.any())).thenReturn(Optional.empty())
+        `when`(itemRepository.save(org.mockito.kotlin.any<Item>())).thenAnswer { it.arguments[0] as Item }
+
+        val created =
+            service.createItem(
+                adminUserId = admin,
+                name = "산책 돌",
+                slug = "walk-stone",
+                description = null,
+                categoryId = 1L,
+                priceType = PriceType.TOKEN,
+                priceAmount = 20,
+                tokenPrice = null,
+                rarity = com.terraworld.domain.item.Rarity.COMMON,
+                assetUrl = "🪨",
+                layout = com.terraworld.domain.item.ItemLayout.FOREGROUND,
+                isAnimated = false,
+                width = 512,
+                height = 512,
+            )
+        assertEquals(PriceType.TOKEN, created.priceType)
+        assertEquals(1L, created.category?.id)
     }
 
     @Test

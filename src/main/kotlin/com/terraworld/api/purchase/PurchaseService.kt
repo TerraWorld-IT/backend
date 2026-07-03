@@ -10,7 +10,6 @@ import com.terraworld.domain.item.PriceType
 import com.terraworld.domain.item.UserItem
 import com.terraworld.domain.item.UserItemRepository
 import com.terraworld.domain.user.UserRepository
-import com.terraworld.domain.user.UserTokenRepository
 import io.terraworld.api.model.PurchaseResponse
 import io.terraworld.api.model.PurchasedItemInfo
 import org.springframework.stereotype.Service
@@ -19,14 +18,28 @@ import org.springframework.transaction.annotation.Transactional
 @Service
 class PurchaseService(
     private val userRepository: UserRepository,
-    private val userTokenRepository: UserTokenRepository,
     private val itemRepository: ItemRepository,
     private val userItemRepository: UserItemRepository,
     private val walletBuilder: WalletBuilder,
     private val auditService: AuditService,
     // N2 (구현 계획서 v4): 아이템 구매 시 wallet_transactions 원장 기록 (재화 차감 = 음수)
     private val walletTransactionService: com.terraworld.api.wallet.WalletTransactionService,
+    // 낙서장 P1 read-cutover(리뷰 A#1 CRIT): 구매 debit 을 신 substrate 에도 반영 (지갑 read SoT 정합)
+    private val currencyService: com.terraworld.api.currency.CurrencyService,
 ) {
+    /**
+     * 토큰 결제 화폐 해석 (단일 SoT [CurrencyCode.elementTokenForCategory] 참조).
+     * 원소 토큰이 없는 카테고리(커스텀 5+)는 토큰 결제 불가 → config 오류 fail-fast
+     * (silent COIN default 금지: 토큰가 아이템이 코인으로 잘못 청구되는 것을 차단).
+     */
+    private fun requireTokenCurrency(category: com.terraworld.domain.category.Category): String =
+        com.terraworld.domain.currency.CurrencyCode
+            .elementTokenForCategory(category.id)
+            ?: throw BusinessException(
+                ErrorCode.INTERNAL_ERROR,
+                "토큰 결제 불가 카테고리입니다 (원소 토큰 미지정: categoryId=${category.id})",
+            )
+
     @Transactional
     fun purchase(
         userId: String,
@@ -51,98 +64,35 @@ class PurchaseService(
             throw BusinessException(ErrorCode.ALREADY_OWNED)
         }
 
-        // 재화 차감 + N2 wallet ledger (차감 = 음수 amount)
-        val basicWallet = com.terraworld.api.wallet.WalletTransactionService.CURRENCY_BASIC_COIN
-        val specialWallet = com.terraworld.api.wallet.WalletTransactionService.CURRENCY_SPECIAL_COIN
-        val tokenWallet = com.terraworld.api.wallet.WalletTransactionService.CURRENCY_CATEGORY_TOKEN
+        // 낙서장 P1: 재화 차감은 신 substrate(CurrencyService) 단일 SoT — debit 이 잔액 체크(INSUFFICIENT_FUNDS)
+        // + 원장(appendNormalized) 을 원자적으로 수행. 구 필드/구 원장 dual-write 제거(V32 컬럼 드롭).
         val purchaseReason = com.terraworld.api.wallet.WalletTransactionService.REASON_PURCHASE
+        val coin = com.terraworld.domain.currency.CurrencyCode.COIN
+        val ruby = com.terraworld.domain.currency.CurrencyCode.RUBY
         when (item.priceType) {
-            PriceType.BASIC -> {
-                if (user.basicCoin < item.priceAmount) throw BusinessException(ErrorCode.INSUFFICIENT_FUNDS)
-                user.basicCoin -= item.priceAmount
-                walletTransactionService.append(
-                    user,
-                    basicWallet,
-                    -item.priceAmount.toLong(),
-                    user.basicCoin,
-                    purchaseReason,
-                    referenceId = item.id,
-                )
-            }
-            PriceType.SPECIAL -> {
-                if (user.specialCoin < item.priceAmount) throw BusinessException(ErrorCode.INSUFFICIENT_FUNDS)
-                user.specialCoin -= item.priceAmount
-                walletTransactionService.append(
-                    user,
-                    specialWallet,
-                    -item.priceAmount.toLong(),
-                    user.specialCoin,
-                    purchaseReason,
-                    referenceId = item.id,
-                )
-            }
+            PriceType.BASIC ->
+                currencyService.debit(userId, coin, item.priceAmount.toLong(), purchaseReason, "ITEM", item.id.toString())
+            PriceType.SPECIAL ->
+                currencyService.debit(userId, ruby, item.priceAmount.toLong(), purchaseReason, "ITEM", item.id.toString())
             PriceType.MIXED -> {
-                // Codex audit Q2 (구현 계획서 v4): MIXED 아이템은 tokenPrice + category 필수.
-                // 둘 중 하나라도 누락이면 basicCoin 만 차감하고 토큰 ledger 가 누락되는 결함 →
-                // 진입 시 fail-fast (config 오류).
+                // MIXED 는 tokenPrice + category 필수 (config 오류 fail-fast).
                 val tokenPrice =
                     item.tokenPrice
                         ?: throw BusinessException(ErrorCode.INTERNAL_ERROR, "MIXED 아이템 가격 설정 오류 (tokenPrice 누락)")
                 val category =
                     item.category
                         ?: throw BusinessException(ErrorCode.INTERNAL_ERROR, "MIXED 아이템 가격 설정 오류 (category 누락)")
-
-                if (user.basicCoin < item.priceAmount) throw BusinessException(ErrorCode.INSUFFICIENT_FUNDS)
-                val token =
-                    userTokenRepository
-                        .findByUserIdAndCategoryId(userId, category.id)
-                        .orElseThrow { BusinessException(ErrorCode.INSUFFICIENT_FUNDS) }
-                if (token.amount < tokenPrice) throw BusinessException(ErrorCode.INSUFFICIENT_FUNDS)
-
-                user.basicCoin -= item.priceAmount
-                walletTransactionService.append(
-                    user,
-                    basicWallet,
-                    -item.priceAmount.toLong(),
-                    user.basicCoin,
-                    purchaseReason,
-                    referenceId = item.id,
-                )
-                token.amount -= tokenPrice
-                userTokenRepository.save(token)
-                walletTransactionService.append(
-                    user,
-                    tokenWallet,
-                    -tokenPrice.toLong(),
-                    token.amount.toLong(),
-                    purchaseReason,
-                    category = category,
-                    referenceId = item.id,
-                )
+                currencyService.debit(userId, coin, item.priceAmount.toLong(), purchaseReason, "ITEM", item.id.toString())
+                currencyService.debit(userId, requireTokenCurrency(category), tokenPrice.toLong(), purchaseReason, "ITEM", item.id.toString())
             }
             PriceType.TOKEN -> {
-                val category = item.category
-                if (category != null) {
-                    val token =
-                        userTokenRepository
-                            .findByUserIdAndCategoryId(userId, category.id)
-                            .orElseThrow { BusinessException(ErrorCode.INSUFFICIENT_FUNDS) }
-                    if (token.amount < item.priceAmount) throw BusinessException(ErrorCode.INSUFFICIENT_FUNDS)
-                    token.amount -= item.priceAmount
-                    userTokenRepository.save(token)
-                    walletTransactionService.append(
-                        user,
-                        tokenWallet,
-                        -item.priceAmount.toLong(),
-                        token.amount.toLong(),
-                        purchaseReason,
-                        category = category,
-                        referenceId = item.id,
-                    )
-                }
+                // TOKEN 은 category 필수 (config 오류 fail-fast). category 부재 시 무료 지급 방지.
+                val category =
+                    item.category
+                        ?: throw BusinessException(ErrorCode.INTERNAL_ERROR, "TOKEN 아이템 가격 설정 오류 (category 누락)")
+                currencyService.debit(userId, requireTokenCurrency(category), item.priceAmount.toLong(), purchaseReason, "ITEM", item.id.toString())
             }
         }
-        userRepository.save(user)
         userItemRepository.save(UserItem(user = user, item = item))
 
         val ownedSlugs = userItemRepository.findAllByUserId(userId).mapNotNull { it.item.slug }

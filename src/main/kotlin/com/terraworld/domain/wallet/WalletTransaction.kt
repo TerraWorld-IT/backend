@@ -26,6 +26,13 @@ class WalletTransaction(
     val reason: String,
     @Column(name = "reference_id")
     val referenceId: Long? = null,
+    // 낙서장 리팩토링(V25): 정규화 화폐 축 + typed ref (구 currency_type/reference_id 는 P1 정리)
+    @Column(name = "currency_code", length = 16)
+    val currencyCode: String? = null,
+    @Column(name = "ref_type", length = 32)
+    val refType: String? = null,
+    @Column(name = "ref_key", length = 160)
+    val refKey: String? = null,
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: LocalDateTime = LocalDateTime.now(),
 )

@@ -26,6 +26,8 @@ import java.time.LocalTime
 class RewardService(
     private val adWatchLogRepository: AdWatchLogRepository,
     private val userRepository: UserRepository,
+    // 낙서장 P1 cutover(dual-write): 광고 보상 = 루비(RUBY) 정규화 잔액에도 반영
+    private val currencyService: com.terraworld.api.currency.CurrencyService,
     private val terrariumRepository: TerrariumRepository,
     private val redisTemplate: StringRedisTemplate,
     private val walletBuilder: WalletBuilder,
@@ -61,6 +63,16 @@ class RewardService(
      * Codex audit (Q4/Q5) 반영: SSV signature 검증 (ECDSA P-256 SHA-256) 은 별 endpoint
      * (`/rewards/ad/ssv-callback`) 의 raw query string layer. 본 service 는 nonce dedup
      * 만 — Google AdMob 공식 spec 의 signature 위치와 일치.
+     *
+     * ── 알려진 한계 (code-review R1 H5 — accepted, prototype 한정) ──────────────
+     * nonce dedup 은 "같은 nonce 재사용(replay)"만 차단할 뿐, client 발급 nonce 경로에서는
+     * "실제 광고 시청 여부"를 서버가 증명하지 못한다 → 사용자가 매번 새 nonce 로 호출하면
+     * 광고를 보지 않고도 일일 한도(MAX_AD_REWARDS_PER_DAY)만큼 RUBY 를 받을 수 있다.
+     * 완전 차단은 **SSV-authoritative grant** 필요 — 서버 발급 pending nonce + AdMob SSV callback
+     * (`/rewards/ad/ssv-callback`) 의 서명 검증 완료 상태에서만 지급하고 client-nonce 지급 경로를 폐지.
+     * 이는 실 AdMob 프로덕션 키/콘솔 설정이 있어야 검증 가능하므로 Phase 4(비공개 테스트 종료)로 이연한다.
+     * 현 완화: (1) 일일 한도로 남용 상한(소액 in-game RUBY, 실 경제 아님) (2) `reward.ad.nonce.required`
+     * flag(prod 전환 시 true) (3) SSV callback endpoint 는 이미 존재(현재 audit-only).
      */
     @Transactional
     fun claimAdReward(
@@ -120,6 +132,10 @@ class RewardService(
         }
 
         // 2) DB 검증 — source of truth. Redis 누락분 보정.
+        // R10 AD-REWARD-REDIS-FALLBACK-RACE: Redis 장애 시 이 DB 경로가 유일 cap 가드가 되는데 count-then-insert
+        //   가 무락이면 동시 요청(서로 다른 nonce)이 같은 count 를 보고 일일 cap(5)을 초과 mint 한다. per-(userId|date)
+        //   advisory lock 으로 count+insert 를 직렬화(Redis 정상 시엔 저빈도라 사실상 무비용, tx 종료 시 자동 해제).
+        adWatchLogRepository.acquireAdRewardDailyLock("ad-reward|$userId|$today")
         val dayStart = today.atStartOfDay()
         val dayEnd = today.atTime(LocalTime.MAX)
         val watchedToday = adWatchLogRepository.countByUserIdAndWatchedAtBetween(userId, dayStart, dayEnd)
@@ -128,21 +144,18 @@ class RewardService(
             throw BusinessException(ErrorCode.AD_DAILY_LIMIT_EXCEEDED)
         }
 
-        user.specialCoin += REWARD_SPECIAL_COINS
-        userRepository.save(user)
         val adLog =
             adWatchLogRepository.save(
                 AdWatchLog(userId = userId, rewardSpecialCoins = REWARD_SPECIAL_COINS),
             )
-
-        // N2: wallet ledger — SPECIAL_COIN row
-        walletTransactionService.append(
-            user = user,
-            currencyType = com.terraworld.api.wallet.WalletTransactionService.CURRENCY_SPECIAL_COIN,
-            amount = REWARD_SPECIAL_COINS.toLong(),
-            balanceAfter = user.specialCoin,
-            reason = com.terraworld.api.wallet.WalletTransactionService.REASON_AD_REWARD,
-            referenceId = adLog.id,
+        // 낙서장 P1: 광고 보상 = 신 substrate RUBY credit 단일 SoT (credit 이 잔액+원장 원자 처리)
+        currencyService.credit(
+            userId,
+            com.terraworld.domain.currency.CurrencyCode.RUBY,
+            REWARD_SPECIAL_COINS.toLong(),
+            com.terraworld.api.wallet.WalletTransactionService.REASON_AD_REWARD,
+            "AD_REWARD",
+            adLog.id.toString(),
         )
 
         // P-WILT-001 + J-WILT-001 (UltraPlan v3, 2026-05-18):

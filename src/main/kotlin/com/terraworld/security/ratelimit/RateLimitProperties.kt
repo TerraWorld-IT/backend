@@ -58,18 +58,19 @@ data class RateLimitProperties(
         // Defaults are intentionally generous — they cap clear abuse without
         // affecting normal usage. Tighten via env (TERRAWORLD_RATE_LIMIT_RULES_*).
         //
-        // SEC-002 fail-closed: applied to currency / reward / purchase / exchange
-        // / invite-create. Other read-mostly or non-money flows fail open so a
-        // Redis outage does not degrade UX.
+        // SEC-002 fail-closed 적용 대상: 재화 / 보상 / 구매 / 환전 / 초대생성 / 초대수락.
+        // 그 외 읽기 위주·비재화 흐름은 fail-open — Redis 장애가 UX 를 저하시키지 않도록.
         val DEFAULT_RULES: List<Rule> =
             listOf(
                 Rule(HttpMethod.POST, "/api/v1/uploads/photo", limit = 30),
-                Rule(HttpMethod.POST, "/api/v1/exchange/special-to-basic", limit = 60, failClosed = true),
-                Rule(HttpMethod.POST, "/api/v1/exchange/tokens", limit = 60, failClosed = true),
-                // N15: 토큰→이슬 교환 — 다른 exchange 와 동일 money flow
-                Rule(HttpMethod.POST, "/api/v1/exchange/token-to-basic", limit = 60, failClosed = true),
+                // H1: 통합 교환 엔드포인트 — money flow → failClosed. 삭제된 구 경로
+                // (special-to-basic / tokens / token-to-basic) 를 대체.
+                Rule(HttpMethod.POST, "/api/v1/exchange", limit = 60, failClosed = true),
                 Rule(HttpMethod.POST, "/api/v1/invites", limit = 10, failClosed = true),
-                Rule(HttpMethod.POST, "/api/v1/invites/*/accept", limit = 30),
+                // R5: 초대 수락은 양측 RUBY 지급 reward flow → failClosed (다른 money/reward 룰과 통일).
+                //   Redis 장애 시 accept rate 가 무제한 되는 것 차단. (claimAccept 원자성이 동일 invite
+                //   중복 지급은 막지만, rate-limit 은 volume 어뷰징을 막는 별개 레이어.)
+                Rule(HttpMethod.POST, "/api/v1/invites/*/accept", limit = 30, failClosed = true),
                 Rule(HttpMethod.POST, "/api/v1/categories", limit = 30),
                 Rule(HttpMethod.POST, "/api/v1/records", limit = 60),
                 Rule(HttpMethod.POST, "/api/v1/purchases", limit = 30, failClosed = true),
@@ -81,8 +82,16 @@ data class RateLimitProperties(
                 // (rewards/ad 등 다른 보상 지급 룰과 동일) — Redis 장애 시 fail-open 으로
                 // 무제한 코인 farming 되는 것을 차단. 도메인 일일 cap 부재라 더욱 중요.
                 Rule(HttpMethod.POST, "/api/v1/terrarium/heart", limit = 30, failClosed = true),
-                Rule(HttpMethod.POST, "/api/v1/terrarium/upgrade", limit = 10, failClosed = true),
+                // H1: 테라리움 티어 업그레이드 — money flow → failClosed. 삭제된 구
+                // 경로 (/terrarium/upgrade) 를 대체.
+                Rule(HttpMethod.POST, "/api/v1/terrarium/tier", limit = 10, failClosed = true),
                 Rule(HttpMethod.PUT, "/api/v1/terrarium/placements", limit = 60),
+                // H1: 습관 체크인 — 재화 지급이 도메인 일일 cap 으로 bound 되어 fail-open.
+                Rule(HttpMethod.POST, "/api/v1/habits/*/checkin", limit = 30),
+                // H1: 키우기 부스터 — 재화 소비/지급 money flow → failClosed.
+                Rule(HttpMethod.POST, "/api/v1/growth/*/booster", limit = 30, failClosed = true),
+                // H1: IAP 영수증 검증 — 결제 money flow → failClosed.
+                Rule(HttpMethod.POST, "/api/v1/billing/iap/verify", limit = 30, failClosed = true),
                 // ARCH-005: device registration is a high-value abuse target
                 // (FCM token enumeration, app version harvesting).
                 Rule(HttpMethod.POST, "/api/v1/users/me/devices", limit = 30),
@@ -90,6 +99,13 @@ data class RateLimitProperties(
                 // (X-Internal-Token 컨트롤러 게이트). money flow → failClosed. 미인증 abuse
                 // (constantTimeEquals + auditService.publish 비용 유발) 를 IP 버켓으로 차단.
                 Rule(HttpMethod.POST, "/api/v1/webhooks/play-billing", limit = 120, failClosed = true),
+                // R6 (2026-07-02): RTDN Pub/Sub push ingestion 경로. 형제 /play-billing 과
+                // 대칭 — 미인증 public(/webhooks/** permitAll)이며 호출당 constantTimeEquals +
+                // (토큰 통과 시) Play API resolveObfuscatedAccountId + entitlement grant/revoke +
+                // Discord alert 비용 유발. AntPathMatcher 리터럴 패턴은 prefix 매칭이 아니라
+                // /play-billing 룰이 더 긴 /play-billing/pubsub 을 커버하지 못한다 → 별도 룰 필수.
+                // money flow → failClosed. 정상 Pub/Sub push 는 저빈도라 120/min 로 저해 없음.
+                Rule(HttpMethod.POST, "/api/v1/webhooks/play-billing/pubsub", limit = 120, failClosed = true),
             )
     }
 }

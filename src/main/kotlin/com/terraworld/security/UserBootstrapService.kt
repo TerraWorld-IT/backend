@@ -1,14 +1,12 @@
 package com.terraworld.security
 
-import com.terraworld.domain.category.CategoryRepository
 import com.terraworld.domain.terrarium.Terrarium
 import com.terraworld.domain.terrarium.TerrariumBackgroundRepository
 import com.terraworld.domain.terrarium.TerrariumRepository
 import com.terraworld.domain.user.User
 import com.terraworld.domain.user.UserRepository
 import com.terraworld.domain.user.UserRole
-import com.terraworld.domain.user.UserToken
-import com.terraworld.domain.user.UserTokenRepository
+import java.text.Normalizer
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.data.domain.Sort
 import org.springframework.stereotype.Service
@@ -38,8 +36,8 @@ import org.springframework.transaction.annotation.Transactional
 @Service
 class UserBootstrapService(
     private val userRepository: UserRepository,
-    private val userTokenRepository: UserTokenRepository,
-    private val categoryRepository: CategoryRepository,
+    // 낙서장 P1: 초기 잔액 seed = 신 substrate 단일 SoT
+    private val currencyService: com.terraworld.api.currency.CurrencyService,
     private val terrariumRepository: TerrariumRepository,
     private val terrariumBackgroundRepository: TerrariumBackgroundRepository,
 ) {
@@ -47,25 +45,29 @@ class UserBootstrapService(
     fun ensureExists(
         userId: String,
         email: String,
+        nickname: String? = null,
     ) {
         require(email.isNotBlank()) { "email must be non-blank" }
         if (userRepository.existsById(userId)) return
 
-        val nickname =
-            email
-                .substringBefore('@')
-                .take(50)
-                .ifBlank { "user" }
+        // 닉네임 정규화(Codex auth review): NFC + 제어/포맷(Bidi 포함, \p{Cc}\p{Cf}) 제거 + trim + 50자 절단.
+        // 부재/blank 시 email prefix(PII) 대신 non-PII 기본값(userId 뒷 4자 — 랜덤 id, PII 아님).
+        val cleanNickname =
+            nickname
+                ?.let { Normalizer.normalize(it, Normalizer.Form.NFC) }
+                ?.replace(Regex("[\\p{Cc}\\p{Cf}]"), "")
+                ?.trim()
+                ?.take(50)
+                ?.ifBlank { null }
+        val resolvedNickname = cleanNickname ?: "테라주민${userId.takeLast(4)}"
 
         val user =
             try {
                 userRepository.save(
                     User(
                         id = userId,
-                        nickname = nickname,
+                        nickname = resolvedNickname,
                         role = UserRole.USER, // SEC-003: never trust JWT role on create
-                        basicCoin = 100,
-                        specialCoin = 10, // 기획서 시나리오 ① — 게스트 진입 시 햇살 10 지급
                     ),
                 )
             } catch (e: DataIntegrityViolationException) {
@@ -74,15 +76,9 @@ class UserBootstrapService(
                 return
             }
 
-        // SEC-020: one-shot saveAll instead of per-row save to avoid N+1.
-        val categories = categoryRepository.findAll()
-        if (categories.isNotEmpty()) {
-            userTokenRepository.saveAll(
-                categories.map { category ->
-                    UserToken(user = user, category = category, amount = 0)
-                },
-            )
-        }
+        // 낙서장 P1: 초기 잔액 seed — 신 substrate 단일 SoT (COIN=100, RUBY=10). 구 basicCoin/specialCoin·user_tokens 제거(V32).
+        currencyService.credit(userId, com.terraworld.domain.currency.CurrencyCode.COIN, 100, "BOOTSTRAP")
+        currencyService.credit(userId, com.terraworld.domain.currency.CurrencyCode.RUBY, 10, "BOOTSTRAP")
 
         // SEC-021: deterministic ordering — always pick the lowest-id background
         // so concurrent first-requests for different users get the same default.

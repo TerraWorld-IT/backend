@@ -74,6 +74,11 @@ auth:
     token: ${INTERNAL_API_TOKEN:}
 
 terraworld:
+  # H6 fix: PlayBillingWebhookController 는 @Value("${terraworld.internal-api-token}") 를
+  # 읽는다. auth.internal.token 과 동일한 INTERNAL_API_TOKEN env 로 통일해 운영에서
+  # 한쪽만 주입돼 webhook 토큰이 빈값이 되는 상황(prod boot-fail / non-prod 401-only)을 방지.
+  internal-api-token: ${INTERNAL_API_TOKEN:}
+
   # Burst-protection rate limiter. See RateLimitProperties.DEFAULT_RULES for
   # the per-endpoint defaults. Disable globally with TERRAWORLD_RATE_LIMIT_ENABLED=false
   # (e.g. in some test profiles).
@@ -131,6 +136,11 @@ cors:
   # Missing CORS_ALLOWED_ORIGINS aborts startup in prod. Never include
   # localhost entries — SecurityConfig enforces this at boot.
   allowed-origins: ${CORS_ALLOWED_ORIGINS}
+
+terraworld:
+  # H6: prod 에서 INTERNAL_API_TOKEN 미주입 시 fail-fast (auth.internal.token 과 동일 env).
+  # PlayBillingWebhookController.@PostConstruct 가 빈 문자열 감지 시 부팅 abort.
+  internal-api-token: ${INTERNAL_API_TOKEN}
 
 # N9: prod 광고 보상 nonce 강제 (2026-06-23 기본값 true). 미설정 시 default true.
 # 레거시 nonce-less 경로가 필요하면 REWARD_AD_NONCE_REQUIRED=false 로 명시 override.

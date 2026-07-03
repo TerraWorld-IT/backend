@@ -13,29 +13,16 @@ class User(
     @Column(nullable = false, length = 20)
     @Enumerated(EnumType.STRING)
     var role: UserRole = UserRole.USER,
-    @Column(nullable = false)
-    var level: Int = 1,
-    @Column(name = "total_exp", nullable = false)
-    var totalExp: Long = 0,
-    @Column(name = "basic_coin", nullable = false)
-    var basicCoin: Long = 0,
-    @Column(name = "special_coin", nullable = false)
-    var specialCoin: Long = 0,
-    // N3 (구현 계획서 v4, 2026-05-21): entitlement SoT = user_entitlement 테이블 (EntitlementService).
-    // 과거 deprecated boolean 컬럼(entitlement_free_placement/premium_themes)은 V16 backfill 후
-    // V24 (P2-1) 에서 drop. 엔티티 필드도 함께 제거 — 읽기는 EntitlementService.hasEntitlement().
+    // 낙서장 P1 read-cutover 완료: 화폐 SoT = user_currency_balances(CurrencyService). 구 basic_coin/
+    // special_coin/user_tokens 는 V32 에서 드롭 (엔티티 필드도 제거).
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: LocalDateTime = LocalDateTime.now(),
     @Column(name = "updated_at", nullable = false)
     var updatedAt: LocalDateTime = LocalDateTime.now(),
-    // N10 (구현 계획서 v4, 2026-05-21): 재화/EXP 동시성 — JPA optimistic lock.
-    // 동시 record/attendance/purchase 시 basicCoin/totalExp 의 lost update 방어.
-    // 충돌 시 ObjectOptimisticLockingFailureException → GlobalExceptionHandler 가 409.
+    // N10: 동시성 — JPA optimistic lock. 충돌 시 ObjectOptimisticLockingFailureException → 409.
     @Version
     @Column(nullable = false)
     var version: Long = 0,
-    @OneToMany(mappedBy = "user", cascade = [CascadeType.ALL], orphanRemoval = true)
-    val tokens: MutableList<UserToken> = mutableListOf(),
 )
 
 enum class UserRole { USER, ADMIN }

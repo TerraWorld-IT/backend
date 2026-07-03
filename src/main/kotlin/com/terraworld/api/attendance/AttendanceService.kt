@@ -24,6 +24,8 @@ import java.time.LocalDate
 @Service
 class AttendanceService(
     private val userRepository: UserRepository,
+    // 낙서장 P1 cutover(dual-write): 정규화 잔액에도 반영 (WalletBuilder switch 후 old 제거)
+    private val currencyService: com.terraworld.api.currency.CurrencyService,
     private val attendanceRepository: AttendanceLogRepository,
     private val walletBuilder: WalletBuilder,
     private val auditService: AuditService,
@@ -80,17 +82,14 @@ class AttendanceService(
                 ),
             )
 
-        user.basicCoin += reward
-        userRepository.save(user)
-
-        // N2: wallet ledger — BASIC_COIN row
-        walletTransactionService.append(
-            user = user,
-            currencyType = com.terraworld.api.wallet.WalletTransactionService.CURRENCY_BASIC_COIN,
-            amount = reward.toLong(),
-            balanceAfter = user.basicCoin,
-            reason = com.terraworld.api.wallet.WalletTransactionService.REASON_ATTENDANCE,
-            referenceId = attendanceLog.id,
+        // 낙서장 P1: 출석 보상 = 신 substrate COIN credit 단일 SoT (credit 이 잔액+원장 원자 처리)
+        currencyService.credit(
+            userId,
+            com.terraworld.domain.currency.CurrencyCode.COIN,
+            reward.toLong(),
+            com.terraworld.api.wallet.WalletTransactionService.REASON_ATTENDANCE,
+            "ATTENDANCE",
+            attendanceLog.id.toString(),
         )
 
         auditService.publish(

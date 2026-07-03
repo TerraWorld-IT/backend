@@ -7,6 +7,7 @@ import com.terraworld.domain.item.Rarity
 import com.terraworld.security.SecurityUtil
 import io.swagger.v3.oas.annotations.Hidden
 import io.terraworld.api.model.AdminItemCreateRequest
+import io.terraworld.api.model.ItemListResponse
 import io.terraworld.api.model.ItemResponse
 import jakarta.validation.Valid
 import org.springframework.http.HttpStatus
@@ -36,6 +37,12 @@ class AdminController(
 ) {
     @GetMapping("/dashboard")
     fun dashboard(): ResponseEntity<AdminDashboard> = ResponseEntity.ok(adminService.dashboard())
+
+    // M2 (code-review R1): 공개 목록(GET /items)은 활성만 반환 → 비활성 아이템이 admin 목록에서 사라져 재활성화 불가.
+    // 관리자 전용 전체 목록(비활성 포함) 제공으로 재활성화 경로 확보.
+    @GetMapping("/items")
+    fun listAllItems(): ResponseEntity<ItemListResponse> =
+        ResponseEntity.ok(ItemListResponse(items = adminService.listAllItems().map(ItemMapper::toApi)))
 
     @PostMapping("/items")
     fun createItem(
@@ -76,36 +83,8 @@ class AdminController(
         return ResponseEntity.noContent().build()
     }
 
-    @PutMapping("/levels/{level}")
-    fun updateLevelConfig(
-        @PathVariable level: Int,
-        @RequestBody body: LevelConfigRequest,
-    ): ResponseEntity<Void> {
-        adminService.updateLevelConfig(
-            adminUserId = SecurityUtil.getCurrentUserId(),
-            level = level,
-            requiredExp = body.requiredExp,
-            rewardType = body.rewardType,
-            rewardValue = body.rewardValue,
-            maxItems = body.maxItems,
-        )
-        return ResponseEntity.noContent().build()
-    }
-
-    @PutMapping("/exchange-rates/{rateId}")
-    fun updateExchangeRate(
-        @PathVariable rateId: Long,
-        @RequestBody body: ExchangeRateRequest,
-    ): ResponseEntity<Void> {
-        adminService.updateExchangeRate(
-            adminUserId = SecurityUtil.getCurrentUserId(),
-            rateId = rateId,
-            rate = body.rate,
-            isActive = body.isActive,
-        )
-        return ResponseEntity.noContent().build()
-    }
-
+    // H2 (code-review R1/R2): 구 admin 환전 endpoint(updateExchangeRate) 제거 — 편집 대상(token_exchange_rates)이
+    //   실 환전(exchange_rates, 7화폐)과 무관해 SDK 호출 시 204 이나 실 환율 미변경(오도). FE 화면·spec·SDK 모두 제거됨.
     @PutMapping("/items/{itemId}/active")
     fun setItemActive(
         @PathVariable itemId: Long,
@@ -124,18 +103,6 @@ data class CategoryRewardsRequest(
     val baseCoinReward: Int,
     val baseTokenReward: Int,
     val dailyLimit: Int,
-)
-
-data class LevelConfigRequest(
-    val requiredExp: Long,
-    val rewardType: String? = null,
-    val rewardValue: Int? = null,
-    val maxItems: Int,
-)
-
-data class ExchangeRateRequest(
-    val rate: Float,
-    val isActive: Boolean = true,
 )
 
 data class ItemActiveRequest(

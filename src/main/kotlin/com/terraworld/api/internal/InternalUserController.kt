@@ -69,7 +69,7 @@ class InternalUserController(
         if (!isTokenValid(token)) {
             throw AccessDeniedException("invalid internal token")
         }
-        userBootstrapService.ensureExists(body.userId, body.email)
+        userBootstrapService.ensureExists(body.userId, body.email, body.nickname)
         return ResponseEntity.status(HttpStatus.CREATED).build()
     }
 
@@ -92,4 +92,8 @@ data class BootstrapRequest(
     val userId: String,
     @field:NotBlank @field:Email @field:Size(max = 255)
     val email: String,
+    // 가입 시 입력한 닉네임(better-auth user.name). 부재/blank 시 서비스가 non-PII 기본값 적용.
+    // tolerant 한도(200) — 초과분은 service 가 정규화+50자 절단(400 거부 대신 절단 → email-prefix fallback 경로 회피).
+    @field:Size(max = 200)
+    val nickname: String? = null,
 )

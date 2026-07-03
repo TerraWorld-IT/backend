@@ -25,6 +25,17 @@ class ActivityRecord(
     val photoUrl: String? = null,
     @Column(name = "recorded_date", nullable = false)
     val recordedDate: LocalDate,
+    // 낙서장 P1: 기록 습관/일상 분리. 기본 DAILY (기존 카테고리 기록 = 일상).
+    @Column(name = "kind", nullable = false, length = 16)
+    @Enumerated(EnumType.STRING)
+    val kind: RecordKind = RecordKind.DAILY,
+    @Column(name = "daily_type", length = 16)
+    @Enumerated(EnumType.STRING)
+    val dailyType: DailyType? = null,
+    @Column(name = "habit_tracker_id")
+    val habitTrackerId: Long? = null,
+    @Column(name = "reward_granted", nullable = false)
+    val rewardGranted: Boolean = true,
     @Column(name = "is_deleted", nullable = false)
     var isDeleted: Boolean = false,
     @Column(name = "partner_user_id", length = 255)

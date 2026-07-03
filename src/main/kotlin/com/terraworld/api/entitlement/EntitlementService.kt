@@ -3,8 +3,6 @@ package com.terraworld.api.entitlement
 import com.terraworld.common.audit.AuditService
 import com.terraworld.domain.entitlement.EntitlementEvent
 import com.terraworld.domain.entitlement.EntitlementEventRepository
-import com.terraworld.domain.entitlement.UserEntitlement
-import com.terraworld.domain.entitlement.UserEntitlementId
 import com.terraworld.domain.entitlement.UserEntitlementRepository
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
@@ -53,18 +51,42 @@ class EntitlementService(
         reason: String,
         txRef: String? = null,
     ): Boolean {
-        val exists = userEntitlementRepository.existsByIdUserIdAndIdEntitlementKey(userId, entitlementKey)
-        if (exists) {
-            log.info("entitlement.grant.skip user={} key={} (already granted)", userId, entitlementKey)
+        // M3 fix (2026-07): check-then-save 대신 native ON CONFLICT DO NOTHING (UserGrantRepository 패턴).
+        // 동일 IAP 의 동시 중복 도착 시 exists=false→save 경합이 DataIntegrityViolation 을 던져
+        // tx 를 rollback-only 로 오염 → 커밋 시 500(UnexpectedRollbackException, 멱등 계약 위반).
+        // insertIfAbsent 는 PK(user_id,entitlement_key) 또는 partial unique(tx_ref) 어느 충돌이든
+        // 예외 없이 0 rows 반환한다. inserted==0 은 두 경우가 섞여 있어(bare ON CONFLICT) 구분이 필요:
+        //   (a) PK 충돌 = 동일 (user,key) 이미 부여됨 → 정상 멱등 no-op.
+        //   (b) tx_ref 전역 partial unique 충돌 = 같은 tx_ref 를 다른 row 가 선점 → 이 (user,key) 는
+        //       미부여인데 insert 가 막힘. (a) 로 오인해 조용히 삼키면 정상 grant 가 유실될 수 있다(R2-ENT-TXREF).
+        // 실제 (user,key) 존재 여부로 (a)/(b) 판정 — 존재하면 멱등, 아니면 tx_ref 재사용 이상으로 surface.
+        val inserted = userEntitlementRepository.insertIfAbsent(userId, entitlementKey, txRef)
+        if (inserted == 0) {
+            if (userEntitlementRepository.existsByIdUserIdAndIdEntitlementKey(userId, entitlementKey)) {
+                log.info("entitlement.grant.skip user={} key={} (already granted)", userId, entitlementKey)
+                return false
+            }
+            // (b) tx_ref 재사용 — 정상 시나리오(고유 purchaseToken)에서는 도달 불가.
+            // throw 금지(R3-ENT-01): grant 는 webhook 의 @Transactional(REQUIRED)에 참여 → throw 시 공유 tx 가
+            //   rollback-only 로 오염돼 dedup 마커(webhook_inbox)까지 롤백 → HTTP 500 → Pub/Sub 재전송 →
+            //   dedup 부재로 재처리 → 무한 redelivery storm(SEC-001 회귀). 공유 tx 를 깨지 않고 surface:
+            //   audit + return false (SEC-001 의 try/catch→200 과 동일 철학).
+            log.error(
+                "entitlement.grant.txref-conflict user={} key={} txRef={} — tx_ref 가 다른 entitlement 에 이미 사용됨",
+                userId,
+                entitlementKey,
+                txRef,
+            )
+            auditService.publish(
+                userId = userId,
+                action = "ENTITLEMENT_GRANT_TXREF_CONFLICT",
+                resourceType = "Entitlement",
+                resourceId = entitlementKey,
+                payload = mapOf("reason" to reason, "txRef" to (txRef ?: "null")),
+            )
             return false
         }
 
-        userEntitlementRepository.save(
-            UserEntitlement(
-                id = UserEntitlementId(userId = userId, entitlementKey = entitlementKey),
-                txRef = txRef,
-            ),
-        )
         entitlementEventRepository.save(
             EntitlementEvent(
                 userId = userId,

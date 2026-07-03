@@ -156,6 +156,17 @@ class EntitlementServiceTest {
             match.forEach { store.remove(it.id) }
             return match.size.toLong()
         }
+
+        override fun insertIfAbsent(
+            userId: String,
+            entitlementKey: String,
+            txRef: String?,
+        ): Int {
+            val id = UserEntitlementId(userId, entitlementKey)
+            if (store.containsKey(id)) return 0
+            store[id] = UserEntitlement(id = id, txRef = txRef)
+            return 1
+        }
     }
 
     private class FakeEntitlementEventRepository :

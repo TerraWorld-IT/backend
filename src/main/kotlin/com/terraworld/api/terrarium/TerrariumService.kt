@@ -3,12 +3,9 @@ package com.terraworld.api.terrarium
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
 import com.terraworld.common.time.KstTime
-import com.terraworld.domain.item.ItemLayout
 import com.terraworld.domain.item.ItemRepository
 import com.terraworld.domain.item.UserItemRepository
-import com.terraworld.domain.level.LevelConfigRepository
 import com.terraworld.domain.record.RecordRepository
-import com.terraworld.domain.terrarium.EvolutionStage
 import com.terraworld.domain.terrarium.TerrariumPlacement
 import com.terraworld.domain.terrarium.TerrariumPlacementHistory
 import com.terraworld.domain.terrarium.TerrariumPlacementHistoryRepository
@@ -20,30 +17,31 @@ import io.terraworld.api.model.HeartResponse
 import io.terraworld.api.model.PlacedItemDetail
 import io.terraworld.api.model.PlacementRequest
 import io.terraworld.api.model.TerrariumResponse
-import io.terraworld.api.model.UpgradeTerrariumRequest
-import io.terraworld.api.model.UpgradeTerrariumResponse
 import io.terraworld.api.model.WiltingState
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.temporal.ChronoUnit
-import io.terraworld.api.model.EvolutionStage as ApiEvolutionStage
 
 /**
  * ARCH-008-phase-12: 시그니처 + 반환 모두 generated DTO 사용.
  *
  * service 가 enum 변환 책임 흡수:
- *  - domain `EvolutionStage` → generated `ApiEvolutionStage` (ADR-019 warn log + null)
  *  - domain `ItemLayout` → generated `PlacedItemDetail.ItemLayout` (forValue, hardcoded 안전)
+ *
+ * 낙서장 P1/P2: 레벨/EXP 제거 + evolution → tier(화폐-게이트). maxSlots 는 tier_configs.slots 기준.
  */
 @Service
 class TerrariumService(
     private val terrariumRepository: TerrariumRepository,
+    // 낙서장 P1 cutover(dual-write): 하트 보상 = 코인(COIN) 정규화 잔액에도 반영
+    private val currencyService: com.terraworld.api.currency.CurrencyService,
     private val terrariumPlacementRepository: TerrariumPlacementRepository,
     private val userRepository: UserRepository,
     private val userItemRepository: UserItemRepository,
     private val itemRepository: ItemRepository,
-    private val levelConfigRepository: LevelConfigRepository,
+    // 낙서장 P2: maxSlots = 현재 티어 슬롯 (구 level_configs 대체)
+    private val tierConfigRepository: com.terraworld.domain.terrarium.TierConfigRepository,
     private val recordRepository: RecordRepository,
     private val placementHistoryRepository: TerrariumPlacementHistoryRepository,
     private val entitlementService: com.terraworld.api.entitlement.EntitlementService,
@@ -63,9 +61,8 @@ class TerrariumService(
             terrariumRepository
                 .findByUserId(userId)
                 .orElseThrow { BusinessException(ErrorCode.TERRARIUM_NOT_FOUND) }
-        val user = userRepository.findById(userId).orElseThrow()
-        val maxItems = levelConfigRepository.findByLevel(user.level).map { it.maxItems }.orElse(10)
-        val unlocked = EvolutionStage.unlockedFor(user.level)
+        // 낙서장 P2: 배치 슬롯 = 현재 티어 슬롯 (구 level_configs 대체)
+        val maxSlots = tierConfigRepository.findById(terrarium.tier).map { it.slots }.orElse(6)
 
         return TerrariumResponse(
             terrariumId = terrarium.id,
@@ -88,53 +85,10 @@ class TerrariumService(
                         slotId = p.slotId,
                     )
                 },
-            maxSlots = minOf(5, maxItems),
-            evolutionStage = terrarium.evolutionStage.name.toApiEvolutionStageOrNull(),
-            unlockedStages = unlocked.mapNotNull { it.name.toApiEvolutionStageOrNull() },
+            maxSlots = maxSlots,
+            tier = terrarium.tier,
             wilting = computeWiltingState(userId),
         )
-    }
-
-    @Transactional
-    fun upgrade(
-        userId: String,
-        request: UpgradeTerrariumRequest,
-    ): UpgradeTerrariumResponse {
-        val target =
-            runCatching { EvolutionStage.valueOf(request.targetStage.value) }
-                .getOrElse { throw BusinessException(ErrorCode.INVALID_INPUT, "알 수 없는 진화 단계: ${request.targetStage}") }
-
-        val user = userRepository.findById(userId).orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) }
-        val unlocked = EvolutionStage.unlockedFor(user.level)
-        if (target !in unlocked) {
-            throw BusinessException(ErrorCode.FORBIDDEN_EVOLUTION, "레벨이 부족합니다 (필요: ${target.unlockLevel})")
-        }
-        // N3 (구현 계획서 v4): entitlement SoT = user_entitlement 테이블 (deprecated boolean 컬럼은
-        // V24/P2-1 에서 제거). EntitlementService 가 grant/revoke 단일 SoT 이므로 IAP webhook 이
-        // 갱신하는 테이블을 직접 조회.
-        if (target == EvolutionStage.CUSTOM &&
-            !entitlementService.hasEntitlement(userId, com.terraworld.domain.entitlement.UserEntitlementId.FREE_PLACEMENT)
-        ) {
-            throw BusinessException(ErrorCode.FORBIDDEN_EVOLUTION, "자유배치 권리(freePlacement)가 필요합니다")
-        }
-
-        val terrarium =
-            terrariumRepository
-                .findByUserId(userId)
-                .orElseThrow { BusinessException(ErrorCode.TERRARIUM_NOT_FOUND) }
-        val previous = terrarium.evolutionStage
-        terrarium.evolutionStage = target
-        terrariumRepository.save(terrarium)
-
-        val message =
-            if (previous == target) {
-                "이미 해당 단계입니다"
-            } else if (target.unlockLevel > previous.unlockLevel) {
-                "${target.name} 으로 진화했습니다"
-            } else {
-                "${target.name} 으로 변경했습니다"
-            }
-        return UpgradeTerrariumResponse(terrarium = getTerrarium(userId), message = message)
     }
 
     /**
@@ -179,6 +133,9 @@ class TerrariumService(
                 .findByUserId(userId)
                 .orElseThrow { BusinessException(ErrorCode.TERRARIUM_NOT_FOUND) }
 
+        // 낙서장 P2 (FP-05): 배치 슬롯 수 = 현재 tier 슬롯(GLASS_JAR 6 / LARGE_JAR 10 / GRAND_TANK 16 / HOUSE_TANK 24).
+        val maxSlots = tierConfigRepository.findById(terrarium.tier).map { it.slots }.orElse(6)
+
         for (placement in request.placedItems) {
             val item =
                 itemRepository
@@ -189,14 +146,10 @@ class TerrariumService(
                 throw BusinessException(ErrorCode.ITEM_NOT_FOUND, "보유하지 않은 아이템입니다")
             }
 
-            val expectedLayout =
-                when (placement.slotId) {
-                    0, 1 -> ItemLayout.BACKGROUND
-                    3 -> ItemLayout.FIGURE
-                    2, 4 -> ItemLayout.FOREGROUND
-                    else -> throw BusinessException(ErrorCode.INVALID_SLOT)
-                }
-            if (item.layout != expectedLayout) {
+            // 낙서장 자유배치: slotId 는 배치 인덱스(0..maxSlots-1). 시각 위치는 free placement(posX/posY)가
+            // 결정하므로 구 5-slot grid 모델의 slotId→layout 제약(0,1=BG/2,4=FG/3=FIG)은 폐기.
+            // tier 가 부여한 슬롯 수만큼 배치를 허용한다. (구 제약은 tier≥LARGE_JAR 의 6~번 슬롯 배치를 막았음.)
+            if (placement.slotId < 0 || placement.slotId >= maxSlots) {
                 throw BusinessException(ErrorCode.INVALID_SLOT)
             }
         }
@@ -251,10 +204,9 @@ class TerrariumService(
 
     @Transactional
     fun heartClick(userId: String): HeartResponse {
-        val user =
-            userRepository
-                .findById(userId)
-                .orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) }
+        userRepository
+            .findById(userId)
+            .orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) } // 존재 검증
         // /analyze 2026-05-18 발견 (Codex C-1): 기존 코드 `basicCoin += 1` ↔ `reward = 0.1`
         // 10× mismatch — response 가 실제 DB 누적과 불일치. spec example 도 +0.1 였으나
         // DB 컬럼 BIGINT 와 fractional 모델 충돌. autonomous default (Phase 4 pre-launch):
@@ -263,25 +215,19 @@ class TerrariumService(
         //   - spec example 도 1.0 으로 정정 (별 PR)
         // 어뷰징 cooldown 정책은 별 cycle (현재 client side throttle 만 존재).
         val rewardCoins = 1L
-        user.basicCoin += rewardCoins
-        userRepository.save(user)
+        // 낙서장 P1: 하트 보상 = 신 substrate COIN credit 단일 SoT. credit 반환값(신 잔액)을 응답에 사용.
+        val newCoinBalance =
+            currencyService.credit(
+                userId,
+                com.terraworld.domain.currency.CurrencyCode.COIN,
+                rewardCoins,
+                com.terraworld.api.wallet.WalletTransactionService.REASON_RECORD_REWARD,
+                "HEART",
+                userId,
+            )
         return HeartResponse(
             reward = rewardCoins.toDouble(),
-            updatedBasicCoins = user.basicCoin.toDouble(),
+            updatedBasicCoins = newCoinBalance.toDouble(),
         )
     }
-
-    /**
-     * domain enum 의 .name 을 generated [ApiEvolutionStage] 로 변환.
-     * spec 에 없는 값이면 null + WARN (ADR-019 SF-002 패턴).
-     */
-    private fun String.toApiEvolutionStageOrNull(): ApiEvolutionStage? =
-        runCatching { ApiEvolutionStage.forValue(this) }
-            .onFailure {
-                log.warn(
-                    "spec drift: evolution_stage='{}' is not in OpenAPI spec — returning null (expected one of: {})",
-                    this,
-                    ApiEvolutionStage.entries.joinToString { it.value },
-                )
-            }.getOrNull()
 }

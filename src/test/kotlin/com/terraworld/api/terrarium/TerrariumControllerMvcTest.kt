@@ -8,14 +8,11 @@ import com.terraworld.security.JwtAuthenticationFilter
 import com.terraworld.security.ratelimit.RateLimitFilter
 import com.terraworld.test.AbstractMvcTest
 import io.terraworld.api.model.BackgroundInfo
-import io.terraworld.api.model.EvolutionStage
 import io.terraworld.api.model.HeartResponse
 import io.terraworld.api.model.PlacedItemDetail
 import io.terraworld.api.model.PlacementItem
 import io.terraworld.api.model.PlacementRequest
 import io.terraworld.api.model.TerrariumResponse
-import io.terraworld.api.model.UpgradeTerrariumRequest
-import io.terraworld.api.model.UpgradeTerrariumResponse
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.eq
@@ -43,6 +40,8 @@ class TerrariumControllerMvcTest : AbstractMvcTest() {
 
     @MockBean private lateinit var terrariumService: TerrariumService
 
+    @MockBean private lateinit var tierService: TierService
+
     @MockBean private lateinit var jwtAuthenticationFilter: JwtAuthenticationFilter
 
     @MockBean private lateinit var rateLimitFilter: RateLimitFilter
@@ -55,8 +54,8 @@ class TerrariumControllerMvcTest : AbstractMvcTest() {
             .perform(get("/api/v1/terrarium"))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.terrariumId").value(1))
-            .andExpect(jsonPath("$.maxSlots").value(20))
-            .andExpect(jsonPath("$.evolutionStage").value("BOTTLE"))
+            .andExpect(jsonPath("$.maxSlots").value(6))
+            .andExpect(jsonPath("$.tier").value("GLASS_JAR"))
     }
 
     @Test
@@ -84,25 +83,6 @@ class TerrariumControllerMvcTest : AbstractMvcTest() {
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.reward").value(0.1))
             .andExpect(jsonPath("$.updatedBasicCoins").value(100.1))
-    }
-
-    @Test
-    fun `POST _api_v1_terrarium_upgrade 200`() {
-        whenever(terrariumService.upgrade(eq(TEST_USER_ID), any())).thenReturn(
-            UpgradeTerrariumResponse(terrarium = stubTerrarium(), message = "PALUDARIUM 으로 진화"),
-        )
-
-        mockMvc
-            .perform(
-                post("/api/v1/terrarium/upgrade")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .content(
-                        objectMapper.writeValueAsString(
-                            UpgradeTerrariumRequest(targetStage = EvolutionStage.PALUDARIUM),
-                        ),
-                    ),
-            ).andExpect(status().isOk)
-            .andExpect(jsonPath("$.message").value("PALUDARIUM 으로 진화"))
     }
 
     // ── Negative cases ────────────────────────────────────────────────────────────
@@ -134,25 +114,6 @@ class TerrariumControllerMvcTest : AbstractMvcTest() {
             .andExpect(jsonPath("$.code").value("INVALID_SLOT"))
     }
 
-    @Test
-    fun `POST _api_v1_terrarium_upgrade 403 when forbidden evolution`() {
-        // 사용자 레벨 < 진화 요구 레벨 또는 entitlement 부재 시 controller 가 FORBIDDEN_EVOLUTION 으로 차단
-        whenever(terrariumService.upgrade(eq(TEST_USER_ID), any()))
-            .thenThrow(BusinessException(ErrorCode.FORBIDDEN_EVOLUTION))
-
-        mockMvc
-            .perform(
-                post("/api/v1/terrarium/upgrade")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .content(
-                        objectMapper.writeValueAsString(
-                            UpgradeTerrariumRequest(targetStage = EvolutionStage.WORLD),
-                        ),
-                    ),
-            ).andExpect(status().isForbidden)
-            .andExpect(jsonPath("$.code").value("FORBIDDEN_EVOLUTION"))
-    }
-
     private fun stubTerrarium() =
         TerrariumResponse(
             terrariumId = 1L,
@@ -170,8 +131,7 @@ class TerrariumControllerMvcTest : AbstractMvcTest() {
                         slotId = 0,
                     ),
                 ),
-            maxSlots = 20,
-            evolutionStage = EvolutionStage.BOTTLE,
-            unlockedStages = listOf(EvolutionStage.POT, EvolutionStage.BOTTLE),
+            maxSlots = 6,
+            tier = "GLASS_JAR",
         )
 }

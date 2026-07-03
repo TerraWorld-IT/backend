@@ -7,11 +7,11 @@ import com.terraworld.common.exception.ErrorCode
 import com.terraworld.common.time.KstTime
 import com.terraworld.domain.category.CategoryRepository
 import com.terraworld.domain.record.ActivityRecord
+import com.terraworld.domain.record.DailyType
 import com.terraworld.domain.record.RecordRepository
 import com.terraworld.domain.social.InviteRepository
 import com.terraworld.domain.user.User
 import com.terraworld.domain.user.UserRepository
-import com.terraworld.domain.user.UserTokenRepository
 import io.terraworld.api.model.CategoryCount
 import io.terraworld.api.model.CreateRecordResponse
 import io.terraworld.api.model.RecordResponse
@@ -32,29 +32,28 @@ import java.util.UUID
  * RecordResponse / StatisticsResponse / CategoryCount / RewardInfo) 삭제.
  *
  * 주의:
- *  - generated `RecordResponse.createdAt` 은 `OffsetDateTime` — entity 의 `LocalDateTime` 을
- *    `.atOffset(ZoneOffset.UTC)` 로 변환.
- *  - generated `RecordResponse.photoUrl` 은 `URI?` — DB 에 저장된 String 을 `URI.create()` 로 변환.
- *    잘못된 String 이 들어오면 `IllegalArgumentException` → global handler 가 500 처리 (silent loss
- *    대신 fail-fast).
+ * - generated `RecordResponse.createdAt` 은 `OffsetDateTime` — entity 의 `LocalDateTime` 을
+ * `.atOffset(ZoneOffset.UTC)` 로 변환.
+ * - generated `RecordResponse.photoUrl` 은 `URI?` — DB 에 저장된 String 을 `URI.create` 로 변환.
+ * 잘못된 String 이 들어오면 `IllegalArgumentException` → global handler 가 500 처리 (silent loss
+ * 대신 fail-fast).
  */
 @Service
 class RecordService(
     private val recordRepository: RecordRepository,
     private val userRepository: UserRepository,
-    private val userTokenRepository: UserTokenRepository,
+    // 낙서장 P1 cutover(dual-write): 기록 보상 = 코인 + 카테고리 토큰(시스템=원소, 커스텀=코인) 정규화 잔액에도 반영
+    private val currencyService: com.terraworld.api.currency.CurrencyService,
     private val categoryRepository: CategoryRepository,
     private val inviteRepository: InviteRepository,
     private val walletBuilder: WalletBuilder,
-    // UltraPlan v3 J-EVO-001 (2026-05-18): EXP 가산 후 level-up 자동 트리거
-    private val userLevelService: com.terraworld.api.user.UserLevelService,
     // N2 (구현 계획서 v4): record reward 시 wallet_transactions 원장 기록
     private val walletTransactionService: com.terraworld.api.wallet.WalletTransactionService,
+    // 낙서장 P3: 일상 기록 시 육성 연속 진행 (하루 1회, 전 종)
+    private val growthService: com.terraworld.api.growth.GrowthService,
 ) {
     companion object {
-        // code-review: 기록 1건당 EXP 보상 고정값. 응답 echo(experienceGained)와 실제 가산
-        // (user.totalExp)이 같은 상수를 써야 reload 시 보고값과 실제가 어긋나지 않는다.
-        const val EXP_PER_RECORD = 10
+        const val RECORD_REASON = "RECORD_REWARD"
     }
 
     @Transactional
@@ -76,21 +75,28 @@ class RecordService(
             throw BusinessException(ErrorCode.CATEGORY_NOT_FOUND, "본인 카테고리가 아닙니다")
         }
 
-        // 일일 제한 체크
-        val todayCount =
-            recordRepository.countByUserIdAndRecordedDateAndCategoryIdAndIsDeletedFalse(
-                userId,
-                KstTime.today(),
-                category.id,
-            )
-        if (todayCount >= category.dailyLimit) {
-            throw BusinessException(
-                ErrorCode.DAILY_LIMIT_EXCEEDED,
-                "오늘 ${category.name} 기록 횟수(${category.dailyLimit}회)를 초과했습니다",
-            )
+        // R7-DAILYTYPE: 일상 기록 보상은 dailyType 고정(DailyType.currencyCode/coinReward, category 무관)이라,
+        //   dailyType 을 canonical 시스템 카테고리로 강제하지 않으면 (userId,date,category) 일일 한도가 dailyType 별
+        //   cap 을 못 걸어 여러 category(특히 사용자 생성 custom)로 같은 dailyType 토큰을 반복 민팅할 수 있다.
+        //   → dailyType 지정 시 그 canonical 비-custom 시스템 카테고리만 허용(FE 는 이미 이 매핑으로 전송).
+        //   각 dailyType ↔ 단일 시스템 카테고리이므로 per-category dailyLimit 이 dailyType cap 을 올바르게 강제.
+        request.dailyType?.let { dt ->
+            val canonicalName =
+                when (dt) {
+                    DailyType.PHOTO -> "산책"
+                    DailyType.DIARY -> "독서"
+                    DailyType.FOCUS -> "러닝"
+                    DailyType.DISTANCE -> "낙서"
+                }
+            if (category.isCustom || category.name != canonicalName) {
+                throw BusinessException(ErrorCode.INVALID_INPUT, "일상 기록은 '$canonicalName' 카테고리에만 기록할 수 있어요")
+            }
         }
 
-        // Joint record 검증 (지정 시)
+        val today = KstTime.today()
+
+        // Joint record 검증 (지정 시) — advisory lock 획득 전에 partner 를 먼저 확정해야
+        // self+partner 두 lock 을 요청 방향 무관 동일(정렬) 순서로 잡아 ABBA 데드락을 막을 수 있음.
         val partner: User? =
             request.partnerUserId
                 ?.takeIf { it.isNotBlank() }
@@ -105,6 +111,39 @@ class RecordService(
                     }
                     target
                 }
+
+        // H4 + R2-REC-DEADLOCK + R2-GROWTH-VERSION: per-(user|day) advisory lock (같은 tx, 종료 시 자동 해제).
+        //  - 키를 category 별이 아니라 user-day 로 잡는 이유(R2-GROWTH-VERSION): createRecord 는 category 별
+        //    daily-limit(count-then-insert) 뿐 아니라 user 전역 side-effect advanceAllStreaks(growth_instances,
+        //    @Version RMW)도 수행한다. category-lock 이면 서로 다른 카테고리 동시 기록이 직렬화되지 않아 growth
+        //    @Version 충돌(409+롤백)이 난다. user-day lock 은 한 사용자의 모든 카테고리 기록을 직렬화 → daily-limit
+        //    TOCTOU + growth 진행(멱등 no-op)을 함께 보장.
+        //  - joint 는 self+partner 2개 lock 이 필요 — 정렬된 canonical 순서로 획득해 A→B/B→A 동시 요청의
+        //    ABBA 데드락(SQLSTATE 40P01)을 차단. 모든 count/insert/growth 이전에 확보.
+        val lockKeys =
+            buildList {
+                add("record|$userId|$today")
+                partner?.let { add("record|${it.id}|$today") }
+            }.sorted()
+        lockKeys.forEach { recordRepository.acquireRecordDailyLock(it) }
+
+        // 일일 제한 체크 (self) — REC-DELETE-REFARM: soft-delete 포함 전건 카운트.
+        //  deleteRecord 는 이미 지급된 보상을 회수하지 않으므로, IsDeletedFalse 카운트로 cap 을 걸면
+        //  create→delete→create 로 슬롯을 되돌려 무한 재민팅이 가능하다. cap 은 "이 (user,category,date) 로
+        //  지금까지 민팅한 횟수" 이므로 삭제된 기록도 세어 재민팅을 차단.
+        val todayCount =
+            recordRepository.countByUserIdAndRecordedDateAndCategoryId(
+                userId,
+                today,
+                category.id,
+            )
+        if (todayCount >= category.dailyLimit) {
+            throw BusinessException(
+                ErrorCode.DAILY_LIMIT_EXCEEDED,
+                "오늘 ${category.name} 기록 횟수(${category.dailyLimit}회)를 초과했습니다",
+            )
+        }
+
         val jointSessionId: UUID? = if (partner != null) UUID.randomUUID() else null
 
         // 본인 기록
@@ -116,19 +155,24 @@ class RecordService(
                     memo = request.note,
                     durationMinutes = request.duration,
                     photoUrl = request.photoUrl,
-                    recordedDate = KstTime.today(),
+                    recordedDate = today,
+                    dailyType = request.dailyType,
                     partnerUserId = partner?.id,
                     jointSessionId = jointSessionId,
                 ),
             )
-        applyReward(record, category)
+        val reward = applyReward(record, category)
+        // 낙서장 P3: 기록 → 육성 연속 진행 (하루 1회, 전 종). 육성 실패/부스터는 GrowthService 내부.
+        growthService.advanceAllStreaks(userId)
 
         // Partner 기록 (있을 때) — partner 의 daily limit 체크 후, 미달이면 보상 가산
+        // (partner advisory lock 은 위 lockKeys 정렬 획득에 이미 포함 — 여기서 재획득하지 않음)
         if (partner != null) {
+            // REC-DELETE-REFARM: partner cap 도 soft-delete 포함 전건 카운트 (재민팅 차단, self 와 동일).
             val partnerTodayCount =
-                recordRepository.countByUserIdAndRecordedDateAndCategoryIdAndIsDeletedFalse(
+                recordRepository.countByUserIdAndRecordedDateAndCategoryId(
                     partner.id,
-                    KstTime.today(),
+                    today,
                     category.id,
                 )
             if (partnerTodayCount < category.dailyLimit) {
@@ -140,12 +184,15 @@ class RecordService(
                             memo = request.note,
                             durationMinutes = request.duration,
                             photoUrl = request.photoUrl,
-                            recordedDate = KstTime.today(),
+                            recordedDate = today,
+                            dailyType = request.dailyType,
                             partnerUserId = userId,
                             jointSessionId = jointSessionId,
                         ),
                     )
                 applyReward(partnerRecord, category)
+                // 리뷰 Q#5: joint record 시 partner 육성도 진행 (본인만 진행하던 결함)
+                growthService.advanceAllStreaks(partner.id)
             }
         }
 
@@ -164,68 +211,63 @@ class RecordService(
                 ),
             reward =
                 RewardInfo(
-                    basicCoins = category.baseCoinReward,
-                    categoryTokens = category.baseTokenReward,
-                    experienceGained = EXP_PER_RECORD,
+                    basicCoins = reward.first,
+                    categoryTokens = reward.second,
                 ),
+            // 낙서장 P1 read-cutover: WalletBuilder 가 신 substrate 를 읽으므로 단일 축(리뷰 A#4 해소)
             updatedCurrency = walletBuilder.build(userId, user),
         )
     }
 
     /**
-     * N2 (구현 계획서 v4): record reward 적용 + wallet_transactions 원장 INSERT x2
-     * (BASIC_COIN + CATEGORY_TOKEN). spec records.yaml:73 명시. EXP 는 wallet currency 가
-     * 아니므로 ledger 미기록.
+     * 보상 적용 (N2: wallet_transactions 원장 기록 포함). dailyType 지정 시 낙서장 일상 보상
+     * (코인 + 매칭 토큰 신 substrate), 미지정 시 기존 카테고리 보상(구 저장 dual-write). 실 지급 (coin, token) 반환.
      */
     private fun applyReward(
         record: ActivityRecord,
         category: com.terraworld.domain.category.Category,
-    ) {
-        val user = record.user
-        user.basicCoin += category.baseCoinReward
-        user.totalExp += EXP_PER_RECORD
-        userRepository.save(user)
+    ): Pair<Int, Int> {
+        val dailyType = record.dailyType
+        return if (dailyType != null) {
+            applyDailyReward(record, dailyType)
+        } else {
+            applyCategoryReward(record, category)
+        }
+    }
 
-        // wallet ledger — BASIC_COIN row
-        walletTransactionService.append(
-            user = user,
-            currencyType = com.terraworld.api.wallet.WalletTransactionService.CURRENCY_BASIC_COIN,
-            amount = category.baseCoinReward.toLong(),
-            balanceAfter = user.basicCoin,
-            reason = com.terraworld.api.wallet.WalletTransactionService.REASON_RECORD_REWARD,
-            referenceId = record.id,
-        )
+    /** 낙서장 일상 보상: 코인 + dailyType 매칭 토큰(DEW/SUN/BOLT/WIND) — 신 substrate 단일 SoT. */
+    private fun applyDailyReward(
+        record: ActivityRecord,
+        dailyType: com.terraworld.domain.record.DailyType,
+    ): Pair<Int, Int> {
+        val userId = record.user.id
+        val coin = dailyType.coinReward
+        val token = dailyType.tokenReward
+        currencyService.credit(userId, com.terraworld.domain.currency.CurrencyCode.COIN, coin, RECORD_REASON, "RECORD", record.id.toString())
+        currencyService.credit(userId, dailyType.currencyCode, token, RECORD_REASON, "RECORD", record.id.toString())
+        return coin.toInt() to token.toInt()
+    }
 
-        // UltraPlan v3 J-EVO-001 (Codex pre-audit HIGH):
-        // EXP 가산 직후 level-up 자동 체크. level_config 임계값 (V12 seed, 선형 N×100, 상한 10)
-        // 도달 시 user.level 자동 갱신 + AuditService LEVEL_UP 기록.
-        // Decay 없음 (광고 복구·환불·시들기 모두 EXP 변동 X — 사용자 박탈감 회피).
-        userLevelService.checkAndApplyLevelUp(user)
-
-        val token =
-            userTokenRepository.findByUserIdAndCategoryId(user.id, category.id).orElseGet {
-                // Custom category 의 첫 적립 시점에 row 생성
-                userTokenRepository.save(
-                    com.terraworld.domain.user.UserToken(
-                        user = user,
-                        category = category,
-                        amount = 0,
-                    ),
-                )
-            }
-        token.amount += category.baseTokenReward
-        userTokenRepository.save(token)
-
-        // wallet ledger — CATEGORY_TOKEN row
-        walletTransactionService.append(
-            user = user,
-            currencyType = com.terraworld.api.wallet.WalletTransactionService.CURRENCY_CATEGORY_TOKEN,
-            amount = category.baseTokenReward.toLong(),
-            balanceAfter = token.amount.toLong(),
-            reason = com.terraworld.api.wallet.WalletTransactionService.REASON_RECORD_REWARD,
-            category = category,
-            referenceId = record.id,
-        )
+    /** 카테고리 보상(coin + category 토큰) — 신 substrate 단일 SoT (구 저장 dual-write 제거, V32). */
+    private fun applyCategoryReward(
+        record: ActivityRecord,
+        category: com.terraworld.domain.category.Category,
+    ): Pair<Int, Int> {
+        val userId = record.user.id
+        currencyService.credit(userId, com.terraworld.domain.currency.CurrencyCode.COIN, category.baseCoinReward.toLong(), RECORD_REASON, "RECORD", record.id.toString())
+        // 시스템 카테고리(1~4) → 원소 토큰(단일 SoT), 커스텀 → 전용 토큰 없음(정책 #1)
+        val elementToken =
+            com.terraworld.domain.currency.CurrencyCode
+                .elementTokenForCategory(category.id)
+        return if (elementToken != null) {
+            currencyService.credit(userId, elementToken, category.baseTokenReward.toLong(), RECORD_REASON, "RECORD", record.id.toString())
+            category.baseCoinReward to category.baseTokenReward
+        } else {
+            // 커스텀 카테고리: 원소 토큰 없음 → 토큰 보상분을 COIN 으로 지급, 응답 categoryTokens=0 (정직 표기).
+            // silent COIN default 로 "토큰 획득" 이라 응답하는데 지갑엔 토큰이 없는 divergence 를 차단.
+            currencyService.credit(userId, com.terraworld.domain.currency.CurrencyCode.COIN, category.baseTokenReward.toLong(), RECORD_REASON, "RECORD", record.id.toString())
+            (category.baseCoinReward + category.baseTokenReward) to 0
+        }
     }
 
     @Transactional(readOnly = true)
@@ -239,13 +281,26 @@ class RecordService(
         if (year != null && month != null) {
             val from = LocalDate.of(year, month, 1)
             val to = from.withDayOfMonth(from.lengthOfMonth())
-            val records = recordRepository.findAllByUserIdAndRecordedDateBetweenAndIsDeletedFalse(userId, from, to)
+            // L3: categoryId 지정 시 카테고리 필터 적용 (RecordApi categoryId query 계약 정합).
+            val records =
+                if (categoryId != null) {
+                    recordRepository.findAllByUserIdAndCategoryIdAndRecordedDateBetweenAndIsDeletedFalse(userId, categoryId, from, to)
+                } else {
+                    recordRepository.findAllByUserIdAndRecordedDateBetweenAndIsDeletedFalse(userId, from, to)
+                }
             val responses = records.map { it.toResponse() }
             return PageImpl(responses, pageable, responses.size.toLong())
         }
-        return recordRepository
-            .findAllByUserIdAndIsDeletedFalseOrderByCreatedAtDesc(userId, pageable)
-            .map { it.toResponse() }
+        // L3: categoryId 지정 시 카테고리 필터 적용.
+        return if (categoryId != null) {
+            recordRepository
+                .findAllByUserIdAndCategoryIdAndIsDeletedFalseOrderByCreatedAtDesc(userId, categoryId, pageable)
+                .map { it.toResponse() }
+        } else {
+            recordRepository
+                .findAllByUserIdAndIsDeletedFalseOrderByCreatedAtDesc(userId, pageable)
+                .map { it.toResponse() }
+        }
     }
 
     @Transactional(readOnly = true)

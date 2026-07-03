@@ -20,9 +20,14 @@ enum class ErrorCode(
     NOTE_NOT_FOUND(HttpStatus.NOT_FOUND, "메모를 찾을 수 없습니다"),
     TERRARIUM_NOT_FOUND(HttpStatus.NOT_FOUND, "테라리움을 찾을 수 없습니다"),
     PLACEMENT_NOT_FOUND(HttpStatus.NOT_FOUND, "배치 정보를 찾을 수 없습니다"),
+    HABIT_NOT_FOUND(HttpStatus.NOT_FOUND, "습관 트래커를 찾을 수 없습니다"),
 
     // Business
     INSUFFICIENT_FUNDS(HttpStatus.BAD_REQUEST, "재화가 부족합니다"),
+    INVALID_CURRENCY(HttpStatus.BAD_REQUEST, "유효하지 않은 화폐 코드입니다"),
+    AMOUNT_OVERFLOW(HttpStatus.BAD_REQUEST, "금액이 허용 범위를 초과했습니다"),
+    PAIR_NOT_ALLOWED(HttpStatus.BAD_REQUEST, "허용되지 않는 교환 조합입니다"),
+    AMOUNT_TOO_SMALL(HttpStatus.BAD_REQUEST, "교환 결과가 1 미만입니다"),
     ALREADY_OWNED(HttpStatus.CONFLICT, "이미 보유한 아이템입니다"),
     ITEM_SLUG_DUPLICATE(HttpStatus.CONFLICT, "이미 존재하는 슬러그입니다"),
     INVALID_SLOT(HttpStatus.BAD_REQUEST, "해당 슬롯에 배치할 수 없는 아이템입니다"),

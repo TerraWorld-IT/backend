@@ -9,10 +9,10 @@ import com.terraworld.common.exception.GlobalExceptionHandler
 import com.terraworld.security.JwtAuthenticationFilter
 import com.terraworld.security.ratelimit.RateLimitFilter
 import com.terraworld.test.AbstractMvcTest
+import io.terraworld.api.model.CurrencyBalance
 import io.terraworld.api.model.CurrencyResponse
 import io.terraworld.api.model.EntitlementsResponse
 import io.terraworld.api.model.PlacedItemResponse
-import io.terraworld.api.model.ProgressResponse
 import io.terraworld.api.model.UserMeResponse
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
@@ -71,14 +71,12 @@ class UserControllerMvcTest : AbstractMvcTest() {
                     role = UserMeResponse.Role.USER,
                     currency =
                         CurrencyResponse(
-                            basicCoins = 100.0,
-                            specialCoins = 5.0,
-                            walkTokens = 0.0,
-                            readTokens = 0.0,
-                            runTokens = 0.0,
-                            drawTokens = 0.0,
+                            balances =
+                                listOf(
+                                    CurrencyBalance(code = "COIN", amount = 100),
+                                    CurrencyBalance(code = "RUBY", amount = 5),
+                                ),
                         ),
-                    progress = ProgressResponse(level = 1, experience = 0, experienceToNext = 100),
                     ownedItems = emptyList(),
                     placedItems = emptyList<PlacedItemResponse>(),
                     entitlements = EntitlementsResponse(freePlacement = false, premiumThemes = false),
@@ -91,7 +89,8 @@ class UserControllerMvcTest : AbstractMvcTest() {
             .andExpect(jsonPath("$.userId").value(TEST_USER_ID))
             .andExpect(jsonPath("$.email").value(TEST_USER_EMAIL))
             .andExpect(jsonPath("$.role").value("USER"))
-            .andExpect(jsonPath("$.currency.basicCoins").value(100.0))
+            .andExpect(jsonPath("$.currency.balances[0].code").value("COIN"))
+            .andExpect(jsonPath("$.currency.balances[0].amount").value(100))
     }
 
     @Test

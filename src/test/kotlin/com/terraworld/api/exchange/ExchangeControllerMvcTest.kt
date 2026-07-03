@@ -7,9 +7,10 @@ import com.terraworld.common.exception.GlobalExceptionHandler
 import com.terraworld.security.JwtAuthenticationFilter
 import com.terraworld.security.ratelimit.RateLimitFilter
 import com.terraworld.test.AbstractMvcTest
+import io.terraworld.api.model.CurrencyBalance
 import io.terraworld.api.model.CurrencyResponse
-import io.terraworld.api.model.ExchangeInfo
-import io.terraworld.api.model.ExchangeResponse
+import io.terraworld.api.model.ExchangeRequest
+import io.terraworld.api.model.ExchangeResult
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.eq
@@ -24,9 +25,10 @@ import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
-import io.terraworld.api.model.SpecialToBasicRequest as ApiSpecialToBasicRequest
-import io.terraworld.api.model.TokenExchangeRequest as ApiTokenExchangeRequest
 
+/**
+ * ExchangeController (POST /exchange) MVC 검증 — 낙서장 P1 7화폐 directed exchange.
+ */
 @WebMvcTest(ExchangeController::class)
 @AutoConfigureMockMvc(addFilters = false)
 @Import(GlobalExceptionHandler::class)
@@ -42,105 +44,77 @@ class ExchangeControllerMvcTest : AbstractMvcTest() {
     @MockBean private lateinit var rateLimitFilter: RateLimitFilter
 
     @Test
-    fun `POST _api_v1_exchange_special-to-basic 200`() {
-        whenever(exchangeService.specialToBasic(eq(TEST_USER_ID), any())).thenReturn(
-            ExchangeResponse(
-                exchanged = ExchangeInfo("SPECIAL_COIN", 5, "BASIC_COIN", 10, 2.0),
+    fun `POST _api_v1_exchange 200`() {
+        whenever(exchangeService.exchange(eq(TEST_USER_ID), eq("DEW"), eq("COIN"), eq(100L))).thenReturn(
+            ExchangeResult(
+                from = "DEW",
+                to = "COIN",
+                fromAmount = 100,
+                grossToAmount = 10,
+                feeAmount = 1,
+                toAmount = 9,
+                rate = "10:1",
                 updatedCurrency = stubCurrency(),
             ),
         )
 
         mockMvc
             .perform(
-                post("/api/v1/exchange/special-to-basic")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .content(objectMapper.writeValueAsString(ApiSpecialToBasicRequest(amount = 5))),
-            ).andExpect(status().isOk)
-            .andExpect(jsonPath("$.exchanged.fromAmount").value(5))
-            .andExpect(jsonPath("$.exchanged.toAmount").value(10))
-    }
-
-    @Test
-    fun `POST _api_v1_exchange_tokens 200`() {
-        whenever(exchangeService.exchangeTokens(eq(TEST_USER_ID), any())).thenReturn(
-            ExchangeResponse(
-                exchanged = ExchangeInfo("산책", 10, "독서", 5, 0.5),
-                updatedCurrency = stubCurrency(),
-            ),
-        )
-
-        mockMvc
-            .perform(
-                post("/api/v1/exchange/tokens")
+                post("/api/v1/exchange")
                     .contentType(MediaType.APPLICATION_JSON)
                     .content(
                         objectMapper.writeValueAsString(
-                            ApiTokenExchangeRequest(fromCategoryId = 1L, toCategoryId = 2L, amount = 10),
+                            ExchangeRequest(from = "DEW", to = "COIN", amount = 100),
                         ),
                     ),
             ).andExpect(status().isOk)
-            .andExpect(jsonPath("$.exchanged.fromType").value("산책"))
+            .andExpect(jsonPath("$.from").value("DEW"))
+            .andExpect(jsonPath("$.toAmount").value(9))
+            .andExpect(jsonPath("$.feeAmount").value(1))
     }
 
-    // ── Negative cases ────────────────────────────────────────────────────────────
+    @Test
+    fun `POST _api_v1_exchange 400 when pair not allowed`() {
+        whenever(exchangeService.exchange(any(), any(), any(), any()))
+            .thenThrow(BusinessException(ErrorCode.PAIR_NOT_ALLOWED))
+
+        mockMvc
+            .perform(
+                post("/api/v1/exchange")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(
+                        objectMapper.writeValueAsString(
+                            ExchangeRequest(from = "COIN", to = "RUBY", amount = 100),
+                        ),
+                    ),
+            ).andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value("PAIR_NOT_ALLOWED"))
+    }
 
     @Test
-    fun `POST _api_v1_exchange_special-to-basic 400 when insufficient funds`() {
-        whenever(exchangeService.specialToBasic(eq(TEST_USER_ID), any()))
+    fun `POST _api_v1_exchange 400 when insufficient funds`() {
+        whenever(exchangeService.exchange(any(), any(), any(), any()))
             .thenThrow(BusinessException(ErrorCode.INSUFFICIENT_FUNDS))
 
         mockMvc
             .perform(
-                post("/api/v1/exchange/special-to-basic")
+                post("/api/v1/exchange")
                     .contentType(MediaType.APPLICATION_JSON)
-                    .content(objectMapper.writeValueAsString(ApiSpecialToBasicRequest(amount = 99999))),
+                    .content(
+                        objectMapper.writeValueAsString(
+                            ExchangeRequest(from = "DEW", to = "COIN", amount = 9999),
+                        ),
+                    ),
             ).andExpect(status().isBadRequest)
             .andExpect(jsonPath("$.code").value("INSUFFICIENT_FUNDS"))
     }
 
-    @Test
-    fun `POST _api_v1_exchange_tokens 400 when same category`() {
-        whenever(exchangeService.exchangeTokens(eq(TEST_USER_ID), any()))
-            .thenThrow(BusinessException(ErrorCode.SAME_CATEGORY_EXCHANGE))
-
-        mockMvc
-            .perform(
-                post("/api/v1/exchange/tokens")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .content(
-                        objectMapper.writeValueAsString(
-                            ApiTokenExchangeRequest(fromCategoryId = 1L, toCategoryId = 1L, amount = 10),
-                        ),
-                    ),
-            ).andExpect(status().isBadRequest)
-            .andExpect(jsonPath("$.code").value("SAME_CATEGORY_EXCHANGE"))
-    }
-
-    @Test
-    fun `POST _api_v1_exchange_tokens 400 when exchange rate not found`() {
-        whenever(exchangeService.exchangeTokens(eq(TEST_USER_ID), any()))
-            .thenThrow(BusinessException(ErrorCode.EXCHANGE_RATE_NOT_FOUND))
-
-        mockMvc
-            .perform(
-                post("/api/v1/exchange/tokens")
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .content(
-                        objectMapper.writeValueAsString(
-                            ApiTokenExchangeRequest(fromCategoryId = 1L, toCategoryId = 99L, amount = 10),
-                        ),
-                    ),
-            ).andExpect(status().isBadRequest)
-            .andExpect(jsonPath("$.code").value("EXCHANGE_RATE_NOT_FOUND"))
-    }
-
     private fun stubCurrency() =
         CurrencyResponse(
-            basicCoins = 100.0,
-            specialCoins = 0.0,
-            walkTokens = 0.0,
-            readTokens = 5.0,
-            runTokens = 0.0,
-            drawTokens = 0.0,
+            balances =
+                listOf(
+                    CurrencyBalance(code = "COIN", amount = 109),
+                    CurrencyBalance(code = "DEW", amount = 0),
+                ),
         )
 }

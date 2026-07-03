@@ -1,7 +1,7 @@
 package com.terraworld.api.record
 
+import com.terraworld.api.currency.CurrencyService
 import com.terraworld.api.record.dto.CreateRecordRequest
-import com.terraworld.api.user.UserLevelService
 import com.terraworld.api.user.WalletBuilder
 import com.terraworld.api.wallet.WalletTransactionService
 import com.terraworld.common.exception.BusinessException
@@ -13,229 +13,167 @@ import com.terraworld.domain.record.RecordRepository
 import com.terraworld.domain.social.InviteRepository
 import com.terraworld.domain.user.User
 import com.terraworld.domain.user.UserRepository
-import com.terraworld.domain.user.UserToken
-import com.terraworld.domain.user.UserTokenRepository
 import com.terraworld.test.FakeJpaRepository
+import io.terraworld.api.model.CurrencyBalance
+import io.terraworld.api.model.CurrencyResponse
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import org.mockito.Mockito.mock
-import org.mockito.Mockito.verify
+import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.eq
+import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.PageImpl
 import org.springframework.data.domain.Pageable
 import java.time.LocalDate
-import java.util.Optional
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * RecordService.createRecord 의 핵심 분기 커버.
- *
- * - 통제가 필요한 repo (record / user / userToken / category) 는 FakeXxxRepository in-memory 구현.
- * - InviteRepository 는 비-partner 경로에서 미사용 → Mockito mock.
- * - UserLevelService / WalletTransactionService 는 concrete @Service — side-effect 협력자라 Mockito mock
- *   후 호출 여부만 verify (level_config seed / ledger DB 의존성 회피).
- * - WalletBuilder 는 ExchangeServiceTest 와 동일하게 실제 객체 (tokenRepo 주입) 사용.
- *
- * 커버:
- *  - 해피 패스: EXP +10 누적 + basicCoin/token 보상 가산 + record 저장 + level-up hook 호출 + ledger append x2
- *  - dailyLimit 도달 시 DAILY_LIMIT_EXCEEDED (todayCount >= dailyLimit)
- *  - dailyLimit 직전 (todayCount = limit-1) 은 정상 통과
- *  - 사용자 미존재 USER_NOT_FOUND / 카테고리 미존재 CATEGORY_NOT_FOUND
- *
- * partner/joint-record 분기 (RecordService.kt:87-142):
- *  - 본인을 partner 로 지정 시 INVALID_PARTNER
- *  - 존재하지 않는 partner 지정 시 INVALID_PARTNER
- *  - 친구 아님(existsAcceptedBetween=false) 시 INVALID_PARTNER
- *  - 해피 co-record: 양쪽 record 저장 (동일 jointSessionId, 상호 partnerUserId) + partner 도 보상 가산
+ * RecordService.createRecord 분기 커버 (낙서장 P1 read-cutover 후: 보상=CurrencyService.credit 단일 SoT).
+ * - 해피: response.reward + record 저장 + credit(COIN/토큰) verify + updatedCurrency(신 substrate stub)
+ * - dailyType=PHOTO: 코인 10 + 이슬 2 credit
+ * - dailyLimit / USER_NOT_FOUND / CATEGORY_NOT_FOUND / partner INVALID / co-record / duration
  */
 class RecordServiceTest {
     private lateinit var recordRepo: FakeRecordRepository
     private lateinit var userRepo: FakeUserRepository
-    private lateinit var tokenRepo: FakeUserTokenRepository
     private lateinit var categoryRepo: FakeCategoryRepository
     private lateinit var inviteRepo: InviteRepository
-    private lateinit var userLevelService: UserLevelService
-    private lateinit var walletTransactionService: WalletTransactionService
+    private lateinit var currencyService: CurrencyService
+    private lateinit var growthService: com.terraworld.api.growth.GrowthService
     private lateinit var service: RecordService
 
-    private lateinit var user: User
     private lateinit var walkCategory: Category
 
     @BeforeEach
     fun setup() {
         recordRepo = FakeRecordRepository()
         userRepo = FakeUserRepository()
-        tokenRepo = FakeUserTokenRepository()
         categoryRepo = FakeCategoryRepository()
         inviteRepo = mock(InviteRepository::class.java)
-        userLevelService = mock(UserLevelService::class.java)
-        walletTransactionService = mock(WalletTransactionService::class.java)
-        val walletBuilder = WalletBuilder(tokenRepo)
+        currencyService = mock(CurrencyService::class.java)
+        growthService = mock(com.terraworld.api.growth.GrowthService::class.java)
+        whenever(currencyService.currencyResponse(any())).thenReturn(
+            CurrencyResponse(
+                balances =
+                    listOf(
+                        CurrencyBalance(code = "COIN", amount = 20),
+                        CurrencyBalance(code = "DEW", amount = 10),
+                    ),
+            ),
+        )
+        val walletBuilder = WalletBuilder(currencyService)
 
         service =
             RecordService(
                 recordRepo,
                 userRepo,
-                tokenRepo,
+                currencyService,
                 categoryRepo,
                 inviteRepo,
                 walletBuilder,
-                userLevelService,
-                walletTransactionService,
+                mock(WalletTransactionService::class.java),
+                growthService,
             )
 
-        user = User(id = "user-1", nickname = "테스터", basicCoin = 0, totalExp = 0, level = 1)
-        userRepo.save(user)
-
-        // baseCoinReward=20, baseTokenReward=10, dailyLimit=5 (default)
-        walkCategory =
-            Category(
-                id = 1L,
-                name = "산책",
-                tokenName = "산책토큰",
-                baseCoinReward = 20,
-                baseTokenReward = 10,
-                dailyLimit = 5,
-            )
+        userRepo.save(User(id = "user-1", nickname = "테스터"))
+        walkCategory = Category(id = 1L, name = "산책", tokenName = "산책토큰", baseCoinReward = 20, baseTokenReward = 10, dailyLimit = 5)
         categoryRepo.save(walkCategory)
     }
 
     @Test
-    fun `createRecord 해피 패스 — EXP 10 누적 + coin 20 + token 10 + record 저장 + ledger 기록 + level-up hook 호출`() {
+    fun `createRecord 해피 패스 — reward 20+10 + record 저장 + credit(COIN 20, DEW 10) + 육성 진행`() {
         val response = service.createRecord("user-1", CreateRecordRequest(categoryId = 1L))
 
-        // 응답 reward 필드
         assertEquals(20, response.reward.basicCoins)
         assertEquals(10, response.reward.categoryTokens)
-        assertEquals(10, response.reward.experienceGained)
-
-        // 응답 record 필드
         assertEquals(1L, response.record.categoryId)
         assertEquals("산책", response.record.categoryName)
-
-        // user 잔액/EXP 가산
-        val u = userRepo.findById("user-1").get()
-        assertEquals(20, u.basicCoin)
-        assertEquals(10, u.totalExp)
-
-        // record 1건 저장 (partner 없음)
         assertEquals(1, recordRepo.all().size)
-
-        // token row 생성 + 가산
-        val token = tokenRepo.findByUserIdAndCategoryId("user-1", 1L).get()
-        assertEquals(10, token.amount)
-
-        // updatedCurrency 가 token 반영
-        assertEquals(20.0, response.updatedCurrency.basicCoins)
-        assertEquals(10.0, response.updatedCurrency.walkTokens)
-
-        // level-up hook 호출 검증
-        verify(userLevelService).checkAndApplyLevelUp(eq(u))
-
-        // wallet ledger append x2 (BASIC_COIN + CATEGORY_TOKEN)
-        verify(walletTransactionService).append(
-            user = eq(u),
-            currencyType = eq(WalletTransactionService.CURRENCY_BASIC_COIN),
-            amount = eq(20L),
-            balanceAfter = eq(20L),
-            reason = eq(WalletTransactionService.REASON_RECORD_REWARD),
-            category = anyOrNull(),
-            referenceId = anyOrNull(),
+        // 신 substrate credit (COIN 20 + DEW 10 — category1→DEW)
+        verify(currencyService).credit(eq("user-1"), eq("COIN"), eq(20L), any(), anyOrNull(), anyOrNull())
+        verify(currencyService).credit(eq("user-1"), eq("DEW"), eq(10L), any(), anyOrNull(), anyOrNull())
+        // updatedCurrency 는 신 substrate(currencyResponse stub)
+        assertEquals(
+            20L,
+            response.updatedCurrency.balances
+                .first { it.code == "COIN" }
+                .amount,
         )
-        verify(walletTransactionService).append(
-            user = eq(u),
-            currencyType = eq(WalletTransactionService.CURRENCY_CATEGORY_TOKEN),
-            amount = eq(10L),
-            balanceAfter = eq(10L),
-            reason = eq(WalletTransactionService.REASON_RECORD_REWARD),
-            category = anyOrNull(),
-            referenceId = anyOrNull(),
-        )
+        // 낙서장 P3: 기록 → 육성 진행
+        verify(growthService).advanceAllStreaks(eq("user-1"))
     }
 
     @Test
-    fun `createRecord — 두 번째 기록 시 EXP와 coin이 누적된다`() {
-        service.createRecord("user-1", CreateRecordRequest(categoryId = 1L))
-        service.createRecord("user-1", CreateRecordRequest(categoryId = 1L))
+    fun `createRecord 커스텀 카테고리 — 토큰분을 COIN 으로 지급 + categoryTokens=0 정직 표기 `() {
+        // 커스텀 카테고리(id=5, 원소 토큰 없음): baseCoin 15 + baseToken 8 → 전부 COIN, 응답 token=0
+        val custom =
+            Category(id = 5L, name = "커스텀", tokenName = "커스텀토큰", baseCoinReward = 15, baseTokenReward = 8, dailyLimit = 5, isCustom = true, ownerUserId = "user-1")
+        categoryRepo.save(custom)
+        whenever(currencyService.currencyResponse(any())).thenReturn(CurrencyResponse(balances = emptyList()))
 
-        val u = userRepo.findById("user-1").get()
-        assertEquals(40, u.basicCoin)
-        assertEquals(20, u.totalExp)
+        val response = service.createRecord("user-1", CreateRecordRequest(categoryId = 5L))
 
-        val token = tokenRepo.findByUserIdAndCategoryId("user-1", 1L).get()
-        assertEquals(20, token.amount)
-        assertEquals(2, recordRepo.all().size)
+        assertEquals(23, response.reward.basicCoins) // 15 + 8 (토큰분 fold)
+        assertEquals(0, response.reward.categoryTokens) // 원소 토큰 없음 → 0 (divergence 차단)
+        // COIN 2회 credit (baseCoin 15 + token-fold 8) — 원소 토큰 credit 없음
+        verify(currencyService).credit(eq("user-1"), eq("COIN"), eq(15L), any(), anyOrNull(), anyOrNull())
+        verify(currencyService).credit(eq("user-1"), eq("COIN"), eq(8L), any(), anyOrNull(), anyOrNull())
+        verify(currencyService, org.mockito.kotlin.never()).credit(eq("user-1"), eq("DEW"), any(), any(), anyOrNull(), anyOrNull())
     }
 
     @Test
-    fun `createRecord — dailyLimit 도달 시 DAILY_LIMIT_EXCEEDED`() {
-        // 이미 오늘 dailyLimit(5) 만큼 기록됨 → todayCount(5) >= dailyLimit(5)
+    fun `createRecord dailyType=PHOTO — 코인 10 + 이슬(DEW) 2 credit`() {
+        whenever(currencyService.currencyResponse(any())).thenReturn(CurrencyResponse(balances = emptyList()))
+
+        val response =
+            service.createRecord("user-1", CreateRecordRequest(categoryId = 1L, dailyType = com.terraworld.domain.record.DailyType.PHOTO))
+
+        assertEquals(10, response.reward.basicCoins)
+        assertEquals(2, response.reward.categoryTokens)
+        verify(currencyService).credit(eq("user-1"), eq("COIN"), eq(10L), any(), anyOrNull(), anyOrNull())
+        verify(currencyService).credit(eq("user-1"), eq("DEW"), eq(2L), any(), anyOrNull(), anyOrNull())
+    }
+
+    @Test
+    fun `createRecord — dailyLimit 도달 시 DAILY_LIMIT_EXCEEDED (보상·기록 없음)`() {
         recordRepo.todayCountOverride = 5
-
-        val ex =
-            assertThrows<BusinessException> {
-                service.createRecord("user-1", CreateRecordRequest(categoryId = 1L))
-            }
+        val ex = assertThrows<BusinessException> { service.createRecord("user-1", CreateRecordRequest(categoryId = 1L)) }
         assertEquals(ErrorCode.DAILY_LIMIT_EXCEEDED, ex.errorCode)
-
-        // 보상/기록은 발생하면 안 됨
-        val u = userRepo.findById("user-1").get()
-        assertEquals(0, u.basicCoin)
-        assertEquals(0, u.totalExp)
         assertTrue(recordRepo.all().isEmpty())
     }
 
     @Test
     fun `createRecord — dailyLimit 직전(limit-1)은 정상 통과`() {
-        // todayCount=4 < dailyLimit=5 → 통과
         recordRepo.todayCountOverride = 4
-
         val response = service.createRecord("user-1", CreateRecordRequest(categoryId = 1L))
-
         assertEquals(20, response.reward.basicCoins)
         assertEquals(1, recordRepo.all().size)
     }
 
     @Test
     fun `createRecord — 존재하지 않는 사용자는 USER_NOT_FOUND`() {
-        val ex =
-            assertThrows<BusinessException> {
-                service.createRecord("ghost", CreateRecordRequest(categoryId = 1L))
-            }
+        val ex = assertThrows<BusinessException> { service.createRecord("ghost", CreateRecordRequest(categoryId = 1L)) }
         assertEquals(ErrorCode.USER_NOT_FOUND, ex.errorCode)
     }
 
     @Test
     fun `createRecord — 존재하지 않는 카테고리는 CATEGORY_NOT_FOUND`() {
-        val ex =
-            assertThrows<BusinessException> {
-                service.createRecord("user-1", CreateRecordRequest(categoryId = 999L))
-            }
+        val ex = assertThrows<BusinessException> { service.createRecord("user-1", CreateRecordRequest(categoryId = 999L)) }
         assertEquals(ErrorCode.CATEGORY_NOT_FOUND, ex.errorCode)
     }
 
-    // ─── partner / joint-record 분기 (RecordService.kt:87-142) ──
-
     @Test
-    fun `createRecord — 본인을 partner 로 지정하면 INVALID_PARTNER`() {
+    fun `createRecord — 본인을 partner 로 지정하면 INVALID_PARTNER (기록 없음)`() {
         val ex =
             assertThrows<BusinessException> {
-                service.createRecord(
-                    "user-1",
-                    CreateRecordRequest(categoryId = 1L, partnerUserId = "user-1"),
-                )
+                service.createRecord("user-1", CreateRecordRequest(categoryId = 1L, partnerUserId = "user-1"))
             }
         assertEquals(ErrorCode.INVALID_PARTNER, ex.errorCode)
-
-        // 검증 실패 시 본인 record/보상도 발생하지 않는다
-        val u = userRepo.findById("user-1").get()
-        assertEquals(0, u.basicCoin)
-        assertEquals(0, u.totalExp)
         assertTrue(recordRepo.all().isEmpty())
     }
 
@@ -243,98 +181,53 @@ class RecordServiceTest {
     fun `createRecord — 존재하지 않는 partner 는 INVALID_PARTNER`() {
         val ex =
             assertThrows<BusinessException> {
-                service.createRecord(
-                    "user-1",
-                    CreateRecordRequest(categoryId = 1L, partnerUserId = "ghost"),
-                )
+                service.createRecord("user-1", CreateRecordRequest(categoryId = 1L, partnerUserId = "ghost"))
             }
         assertEquals(ErrorCode.INVALID_PARTNER, ex.errorCode)
-
-        val u = userRepo.findById("user-1").get()
-        assertEquals(0, u.basicCoin)
-        assertEquals(0, u.totalExp)
         assertTrue(recordRepo.all().isEmpty())
     }
 
     @Test
-    fun `createRecord — 친구가 아닌 partner(existsAcceptedBetween=false)는 INVALID_PARTNER`() {
-        userRepo.save(User(id = "partner-1", nickname = "짝꿍", basicCoin = 0, totalExp = 0, level = 1))
-        // 친구 아님 — existsAcceptedBetween 가 false (mock 기본값이지만 명시 stub)
+    fun `createRecord — 친구 아닌 partner 는 INVALID_PARTNER`() {
+        userRepo.save(User(id = "partner-1", nickname = "짝꿍"))
         whenever(inviteRepo.existsAcceptedBetween("user-1", "partner-1")).thenReturn(false)
-
         val ex =
             assertThrows<BusinessException> {
-                service.createRecord(
-                    "user-1",
-                    CreateRecordRequest(categoryId = 1L, partnerUserId = "partner-1"),
-                )
+                service.createRecord("user-1", CreateRecordRequest(categoryId = 1L, partnerUserId = "partner-1"))
             }
         assertEquals(ErrorCode.INVALID_PARTNER, ex.errorCode)
-
-        // partner 가 존재해도 친구 관계 아니면 본인 record/보상 미발생
-        val u = userRepo.findById("user-1").get()
-        assertEquals(0, u.basicCoin)
-        assertEquals(0, u.totalExp)
         assertTrue(recordRepo.all().isEmpty())
     }
 
     @Test
-    fun `createRecord — 친구 partner 와의 co-record 는 양쪽 record 저장 + partner 도 보상 가산`() {
-        userRepo.save(User(id = "partner-1", nickname = "짝꿍", basicCoin = 0, totalExp = 0, level = 1))
-        // 친구 관계 성립 — joint record 통과
+    fun `createRecord — 친구 co-record 는 양쪽 record 저장 + partner 보상·육성 진행`() {
+        userRepo.save(User(id = "partner-1", nickname = "짝꿍"))
         whenever(inviteRepo.existsAcceptedBetween("user-1", "partner-1")).thenReturn(true)
 
-        val response =
-            service.createRecord(
-                "user-1",
-                CreateRecordRequest(categoryId = 1L, partnerUserId = "partner-1"),
-            )
+        val response = service.createRecord("user-1", CreateRecordRequest(categoryId = 1L, partnerUserId = "partner-1"))
 
-        // 양쪽 record 저장 (본인 + partner)
         val all = recordRepo.all()
         assertEquals(2, all.size)
-
-        // 본인 record: partnerUserId = partner.id + jointSessionId 비-null
         val ownRecord = all.first { it.user.id == "user-1" }
         assertEquals("partner-1", ownRecord.partnerUserId)
         assertTrue(ownRecord.jointSessionId != null)
-
-        // partner record: partnerUserId = 본인 id, 동일한 jointSessionId 공유
         val partnerRecord = all.first { it.user.id == "partner-1" }
         assertEquals("user-1", partnerRecord.partnerUserId)
         assertEquals(ownRecord.jointSessionId, partnerRecord.jointSessionId)
-
-        // 본인 보상 가산
-        val u = userRepo.findById("user-1").get()
-        assertEquals(20, u.basicCoin)
-        assertEquals(10, u.totalExp)
-
-        // partner 도 보상 가산 (basicCoin/EXP + category token row 생성)
-        val p = userRepo.findById("partner-1").get()
-        assertEquals(20, p.basicCoin)
-        assertEquals(10, p.totalExp)
-        val partnerToken = tokenRepo.findByUserIdAndCategoryId("partner-1", 1L).get()
-        assertEquals(10, partnerToken.amount)
-
-        // 응답 reward 는 본인 기준
+        // 양측 보상 credit + 양측 육성 진행 (리뷰 Q#5)
+        verify(currencyService).credit(eq("partner-1"), eq("COIN"), eq(20L), any(), anyOrNull(), anyOrNull())
+        verify(growthService).advanceAllStreaks(eq("user-1"))
+        verify(growthService).advanceAllStreaks(eq("partner-1"))
         assertEquals(20, response.reward.basicCoins)
-        assertEquals(10, response.reward.categoryTokens)
-        assertEquals(10, response.reward.experienceGained)
     }
 
     @Test
-    fun `createRecord — duration(분)이 영속화되고 목록 reload(toResponse)에서 유지된다 (P0-1 silent-drop fix)`() {
-        // create 응답뿐 아니라 read 경로(getRecords→toResponse)에서도 duration 이 살아있어야 한다.
-        // 이전엔 toResponse() 가 duration=null 하드코딩이라 reload 시 소실됐다 (silent drop).
+    fun `createRecord — duration 영속화 + reload(toResponse) 유지 (P0-1 silent-drop fix)`() {
         val created = service.createRecord("user-1", CreateRecordRequest(categoryId = 1L, duration = 30))
         assertEquals(30, created.record.duration)
-
-        // 목록 reload (default 경로 — findAllByUserIdAndIsDeletedFalseOrderByCreatedAtDesc → toResponse)
         val reloaded = service.getRecords("user-1", null, null, null, Pageable.unpaged())
         assertEquals(1, reloaded.content.size)
         assertEquals(30, reloaded.content.first().duration)
-
-        // 월별 조회 경로(findAllByUserIdAndRecordedDateBetween → toResponse)에서도 유지
         val today =
             com.terraworld.common.time.KstTime
                 .today()
@@ -351,12 +244,6 @@ class RecordServiceTest {
 
     // ─── Fakes ─────────────────────────────────────────────────
 
-    /**
-     * RecordRepository fake.
-     *  - save 시 reflection 으로 auto-gen Long id 부여 (ActivityRecord.id 는 val 0).
-     *  - countByUserIdAndRecordedDateAndCategoryIdAndIsDeletedFalse 는 dailyLimit 분기 통제용 —
-     *    todayCountOverride 가 설정되면 그 값을, 아니면 store 기반 count 반환.
-     */
     private class FakeRecordRepository :
         FakeJpaRepository<ActivityRecord, Long>(),
         RecordRepository {
@@ -380,20 +267,21 @@ class RecordServiceTest {
             categoryId: Long,
         ): Long =
             todayCountOverride
-                ?: store.values
-                    .count {
-                        it.user.id == userId && it.category.id == categoryId && !it.isDeleted
-                    }.toLong()
+                ?: store.values.count { it.user.id == userId && it.category.id == categoryId && !it.isDeleted }.toLong()
+
+        // REC-DELETE-REFARM: 민팅 cap 은 soft-delete 포함 전건 카운트 (재민팅 차단).
+        override fun countByUserIdAndRecordedDateAndCategoryId(
+            userId: String,
+            recordedDate: LocalDate,
+            categoryId: Long,
+        ): Long =
+            todayCountOverride
+                ?: store.values.count { it.user.id == userId && it.category.id == categoryId }.toLong()
 
         override fun findAllByUserIdAndIsDeletedFalseOrderByCreatedAtDesc(
             userId: String,
             pageable: Pageable,
-        ): Page<ActivityRecord> =
-            PageImpl(
-                store.values
-                    .filter { it.user.id == userId && !it.isDeleted }
-                    .sortedByDescending { it.createdAt },
-            )
+        ): Page<ActivityRecord> = PageImpl(store.values.filter { it.user.id == userId && !it.isDeleted }.sortedByDescending { it.createdAt })
 
         override fun findAllByUserIdAndRecordedDateBetweenAndIsDeletedFalse(
             userId: String,
@@ -401,11 +289,31 @@ class RecordServiceTest {
             to: LocalDate,
         ): List<ActivityRecord> =
             store.values.filter {
-                it.user.id == userId &&
-                    !it.isDeleted &&
-                    !it.recordedDate.isBefore(from) &&
-                    !it.recordedDate.isAfter(to)
+                it.user.id == userId && !it.isDeleted && !it.recordedDate.isBefore(from) && !it.recordedDate.isAfter(to)
             }
+
+        override fun findAllByUserIdAndCategoryIdAndIsDeletedFalseOrderByCreatedAtDesc(
+            userId: String,
+            categoryId: Long,
+            pageable: Pageable,
+        ): Page<ActivityRecord> =
+            PageImpl(
+                store.values.filter { it.user.id == userId && it.category.id == categoryId && !it.isDeleted }
+                    .sortedByDescending { it.createdAt },
+            )
+
+        override fun findAllByUserIdAndCategoryIdAndRecordedDateBetweenAndIsDeletedFalse(
+            userId: String,
+            categoryId: Long,
+            from: LocalDate,
+            to: LocalDate,
+        ): List<ActivityRecord> =
+            store.values.filter {
+                it.user.id == userId && it.category.id == categoryId && !it.isDeleted &&
+                    !it.recordedDate.isBefore(from) && !it.recordedDate.isAfter(to)
+            }
+
+        override fun acquireRecordDailyLock(key: String): Int = 1
 
         override fun countByUserIdAndIsDeletedFalse(userId: String): Long = 0
 
@@ -440,33 +348,6 @@ class RecordServiceTest {
         FakeJpaRepository<User, String>(),
         UserRepository {
         override fun extractId(entity: User): String = entity.id
-    }
-
-    private class FakeUserTokenRepository :
-        FakeJpaRepository<UserToken, Long>(),
-        UserTokenRepository {
-        private var seq = 0L
-
-        override fun extractId(entity: UserToken): Long = entity.id
-
-        override fun assignId(entity: UserToken): UserToken {
-            if (entity.id == 0L) {
-                val field = UserToken::class.java.getDeclaredField("id")
-                field.isAccessible = true
-                field.set(entity, ++seq)
-            }
-            return entity
-        }
-
-        override fun findByUserIdAndCategoryId(
-            userId: String,
-            categoryId: Long,
-        ): Optional<UserToken> =
-            Optional.ofNullable(
-                store.values.firstOrNull { it.user.id == userId && it.category.id == categoryId },
-            )
-
-        override fun findAllByUserId(userId: String): List<UserToken> = store.values.filter { it.user.id == userId }
     }
 
     private class FakeCategoryRepository :

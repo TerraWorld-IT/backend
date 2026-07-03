@@ -12,6 +12,7 @@ import io.terraworld.api.model.AdRewardResponseReward
 import io.terraworld.api.model.AttendanceCheckInResponse
 import io.terraworld.api.model.AttendanceCheckInResponseReward
 import io.terraworld.api.model.AttendanceResponse
+import io.terraworld.api.model.CurrencyBalance
 import io.terraworld.api.model.CurrencyResponse
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
@@ -163,11 +164,14 @@ class RewardControllerMvcTest : AbstractMvcTest() {
 
     private fun currency() =
         CurrencyResponse(
-            basicCoins = 100.0,
-            specialCoins = 5.0,
-            walkTokens = 0.0,
-            readTokens = 0.0,
-            runTokens = 0.0,
-            drawTokens = 0.0,
+            balances =
+                listOf(
+                    CurrencyBalance(code = "COIN", amount = 100),
+                    CurrencyBalance(code = "RUBY", amount = 5),
+                    CurrencyBalance(code = "DEW", amount = 0),
+                    CurrencyBalance(code = "SUN", amount = 0),
+                    CurrencyBalance(code = "BOLT", amount = 0),
+                    CurrencyBalance(code = "WIND", amount = 0),
+                ),
         )
 }

@@ -53,14 +53,20 @@ class PlacementController(
                 placementId = placementId,
                 posX = body.posX,
                 posY = body.posY,
+                scale = body.scale,
+                flipped = body.flipped,
+                zIndex = body.zIndex,
             ),
         )
 }
 
-/** 자유 위치 (0~1 비율, 캔버스 좌상단 기준). */
+/** 자유 위치 (0~1 비율, 캔버스 좌상단 기준) + 편집 상태(크기/반전/깊이, 미지정 시 기존값 유지). */
 data class FreePositionRequest(
     val posX: Double,
     val posY: Double,
+    val scale: Float? = null,
+    val flipped: Boolean? = null,
+    val zIndex: Int? = null,
 )
 
 data class FreePlacementListResponse(
@@ -76,4 +82,8 @@ data class FreePlacementItem(
     val posX: Double,
     val posY: Double,
     val isFreePlacement: Boolean,
+    // 낙서장 자유배치 편집 영속(req3 #2): 크기/반전/깊이.
+    val scale: Float,
+    val flipped: Boolean,
+    val zIndex: Int,
 )

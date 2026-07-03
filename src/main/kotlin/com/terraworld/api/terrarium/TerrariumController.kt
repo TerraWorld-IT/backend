@@ -9,8 +9,9 @@ import io.terraworld.api.model.PlacementRequest
 import io.terraworld.api.model.PlacementResponse
 import io.terraworld.api.model.PlacementResponseItem
 import io.terraworld.api.model.TerrariumResponse
-import io.terraworld.api.model.UpgradeTerrariumRequest
-import io.terraworld.api.model.UpgradeTerrariumResponse
+import io.terraworld.api.model.TierCatalogResponse
+import io.terraworld.api.model.TierUnlockRequest
+import io.terraworld.api.model.TierUnlockResponse
 import jakarta.validation.Valid
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.RequestMapping
@@ -28,6 +29,7 @@ import org.springframework.web.bind.annotation.RestController
 @RequestMapping("/api/v1")
 class TerrariumController(
     private val terrariumService: TerrariumService,
+    private val tierService: TierService,
 ) : TerrariumApi {
     @Operation(summary = "테라리움 상태 조회")
     override fun getTerrarium(): ResponseEntity<TerrariumResponse> {
@@ -65,12 +67,11 @@ class TerrariumController(
         return ResponseEntity.ok(response)
     }
 
-    @Operation(summary = "진화 단계 전환", description = "잠금 해제된 단계 사이에서만 전환 가능")
-    override fun upgradeTerrarium(
-        @Valid upgradeTerrariumRequest: UpgradeTerrariumRequest,
-    ): ResponseEntity<UpgradeTerrariumResponse> {
-        val response =
-            terrariumService.upgrade(SecurityUtil.getCurrentUserId(), upgradeTerrariumRequest)
-        return ResponseEntity.ok(response)
-    }
+    @Operation(summary = "티어 카탈로그 조회", description = "낙서장 P2: 4단계 티어 해금 비용/슬롯/정령 + 현재 티어")
+    override fun getTierCatalog(): ResponseEntity<TierCatalogResponse> = ResponseEntity.ok(tierService.getCatalog(SecurityUtil.getCurrentUserId()))
+
+    @Operation(summary = "티어 해금", description = "낙서장 P2: 반짝이/루비 순차 해금 + 티어 정령 지급")
+    override fun unlockTier(
+        @Valid tierUnlockRequest: TierUnlockRequest,
+    ): ResponseEntity<TierUnlockResponse> = ResponseEntity.ok(tierService.unlockTier(SecurityUtil.getCurrentUserId(), tierUnlockRequest.targetTier))
 }

@@ -3,13 +3,10 @@ package com.terraworld.api.user
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
 import com.terraworld.domain.item.UserItemRepository
-import com.terraworld.domain.level.LevelConfigRepository
 import com.terraworld.domain.terrarium.TerrariumRepository
 import com.terraworld.domain.user.UserRepository
-import com.terraworld.domain.user.UserTokenRepository
 import io.terraworld.api.model.EntitlementsResponse
 import io.terraworld.api.model.PlacedItemResponse
-import io.terraworld.api.model.ProgressResponse
 import io.terraworld.api.model.UserMeResponse
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
@@ -26,10 +23,8 @@ import org.springframework.transaction.annotation.Transactional
 @Transactional(readOnly = true)
 class UserService(
     private val userRepository: UserRepository,
-    private val userTokenRepository: UserTokenRepository,
     private val userItemRepository: UserItemRepository,
     private val terrariumRepository: TerrariumRepository,
-    private val levelConfigRepository: LevelConfigRepository,
     private val walletBuilder: WalletBuilder,
     private val entitlementService: com.terraworld.api.entitlement.EntitlementService,
 ) {
@@ -43,15 +38,6 @@ class UserService(
             userRepository
                 .findById(userId)
                 .orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) }
-
-        val nextLevelConfig = levelConfigRepository.findByLevel(user.level + 1)
-        // V14 (linear curve) migration 이후 totalExp > requiredExp 가능 (auto level-up 대기 상태).
-        // frontend WalletBar 는 자체 clamp 하지만 iOS 네이티브 / 외부 SDK 소비자 위해 backend 도 clamp.
-        // UserLevelService.checkAndApplyLevelUp 호출 직후라 0 이 되는 것이 정상.
-        val expToNext =
-            nextLevelConfig
-                .map { (it.requiredExp - user.totalExp).coerceAtLeast(0L) }
-                .orElse(0L)
 
         val ownedItems =
             userItemRepository
@@ -77,12 +63,6 @@ class UserService(
             nickname = user.nickname,
             role = mapRoleOrFallback(user.role.name),
             currency = walletBuilder.build(userId, user),
-            progress =
-                ProgressResponse(
-                    level = user.level,
-                    experience = user.totalExp,
-                    experienceToNext = expToNext,
-                ),
             ownedItems = ownedItems,
             placedItems = placedItems,
             // N3 (구현 계획서 v4): entitlement SoT = user_entitlement 테이블.

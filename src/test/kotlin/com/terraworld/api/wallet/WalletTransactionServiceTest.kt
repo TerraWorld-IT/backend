@@ -29,7 +29,7 @@ class WalletTransactionServiceTest {
         txRepo = FakeWalletTransactionRepository()
         service = WalletTransactionService(txRepo)
 
-        user = User(id = "user-1", nickname = "테스터", basicCoin = 0, specialCoin = 0)
+        user = User(id = "user-1", nickname = "테스터")
         walkCategory = Category(id = 1L, name = "산책", tokenName = "산책토큰")
     }
 

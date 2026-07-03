@@ -6,16 +6,16 @@ import com.terraworld.common.exception.ErrorCode
 import com.terraworld.common.time.KstTime
 import com.terraworld.domain.item.ItemRepository
 import com.terraworld.domain.item.UserItemRepository
-import com.terraworld.domain.level.LevelConfig
-import com.terraworld.domain.level.LevelConfigRepository
 import com.terraworld.domain.record.ActivityRecord
 import com.terraworld.domain.record.RecordRepository
-import com.terraworld.domain.terrarium.EvolutionStage
 import com.terraworld.domain.terrarium.Terrarium
 import com.terraworld.domain.terrarium.TerrariumBackground
 import com.terraworld.domain.terrarium.TerrariumPlacementHistoryRepository
 import com.terraworld.domain.terrarium.TerrariumPlacementRepository
 import com.terraworld.domain.terrarium.TerrariumRepository
+import com.terraworld.domain.terrarium.TierConfig
+import com.terraworld.domain.terrarium.TierConfigRepository
+import com.terraworld.domain.terrarium.WiltScanProjection
 import com.terraworld.domain.user.User
 import com.terraworld.domain.user.UserRepository
 import com.terraworld.test.FakeJpaRepository
@@ -23,10 +23,10 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import java.time.LocalDate
+import java.time.LocalDateTime
 import java.util.Optional
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
-import io.terraworld.api.model.EvolutionStage as ApiEvolutionStage
 
 /**
  * TerrariumService 의 핵심 분기 커버 (Spring context 없이 in-memory fake + mock).
@@ -39,7 +39,7 @@ import io.terraworld.api.model.EvolutionStage as ApiEvolutionStage
 class TerrariumServiceTest {
     private lateinit var terrariumRepo: FakeTerrariumRepository
     private lateinit var userRepo: FakeUserRepository
-    private lateinit var levelConfigRepo: FakeLevelConfigRepository
+    private lateinit var tierConfigRepo: FakeTierConfigRepository
     private lateinit var recordRepo: FakeRecordRepository
     private lateinit var service: TerrariumService
 
@@ -50,7 +50,7 @@ class TerrariumServiceTest {
     fun setup() {
         terrariumRepo = FakeTerrariumRepository()
         userRepo = FakeUserRepository()
-        levelConfigRepo = FakeLevelConfigRepository()
+        tierConfigRepo = FakeTierConfigRepository()
         recordRepo = FakeRecordRepository()
 
         // getTerrarium 경로에서만 쓰이지만 데이터 제어가 필요 없는 의존성은 mock.
@@ -59,35 +59,41 @@ class TerrariumServiceTest {
         val itemRepository = org.mockito.Mockito.mock(ItemRepository::class.java)
         val placementHistoryRepository = org.mockito.Mockito.mock(TerrariumPlacementHistoryRepository::class.java)
         val entitlementService = org.mockito.Mockito.mock(EntitlementService::class.java)
+        val currencyService = org.mockito.Mockito.mock(com.terraworld.api.currency.CurrencyService::class.java)
+        // 낙서장 P1: 하트 보상은 CurrencyService.credit(신 substrate). credit 반환값(신 COIN 잔액)을 응답에 사용.
+        org.mockito.kotlin
+            .whenever(currencyService.credit(org.mockito.kotlin.any(), org.mockito.kotlin.any(), org.mockito.kotlin.any(), org.mockito.kotlin.any(), org.mockito.kotlin.anyOrNull(), org.mockito.kotlin.anyOrNull()))
+            .thenReturn(101L)
 
         service =
             TerrariumService(
                 terrariumRepo,
+                currencyService,
                 terrariumPlacementRepository,
                 userRepo,
                 userItemRepository,
                 itemRepository,
-                levelConfigRepo,
+                tierConfigRepo,
                 recordRepo,
                 placementHistoryRepository,
                 entitlementService,
             )
 
-        // PALUDARIUM(unlockLevel=5) 까지 해금되도록 level 5 사용자.
-        user = User(id = "user-1", nickname = "테스터", level = 5, basicCoin = 100)
+        user = User(id = "user-1", nickname = "테스터")
         userRepo.save(user)
 
         background = TerrariumBackground(id = 1L, name = "기본 배경", assetUrl = "https://cdn/bg.png")
-        levelConfigRepo.save(LevelConfig(level = 5, requiredExp = 1000, maxItems = 8))
+        // 낙서장 P2: maxSlots = 티어 슬롯 (GLASS_JAR = 6)
+        tierConfigRepo.save(TierConfig("GLASS_JAR", 1, "유리병", 0, 0, 6, null))
     }
 
-    private fun saveTerrarium(stage: EvolutionStage = EvolutionStage.PALUDARIUM): Terrarium {
+    private fun saveTerrarium(tier: String = "GLASS_JAR"): Terrarium {
         val terrarium =
             Terrarium(
                 id = 10L,
                 user = user,
                 background = background,
-                evolutionStage = stage,
+                tier = tier,
             )
         terrariumRepo.save(terrarium)
         return terrarium
@@ -96,14 +102,12 @@ class TerrariumServiceTest {
     // ─── heartClick ────────────────────────────────────────────
 
     @Test
-    fun `heartClick 해피 패스 — basicCoin += 1 + reward 와 updatedBasicCoins 가 DB 와 정확히 일치`() {
+    fun `heartClick 해피 패스 — reward 1 + updatedBasicCoins 는 credit 반환 신 잔액`() {
         val response = service.heartClick("user-1")
 
         assertEquals(1.0, response.reward)
+        // updatedBasicCoins = CurrencyService.credit 반환값(신 COIN 잔액, stub 101)
         assertEquals(101.0, response.updatedBasicCoins)
-
-        val u = userRepo.findById("user-1").get()
-        assertEquals(101L, u.basicCoin)
     }
 
     @Test
@@ -118,23 +122,17 @@ class TerrariumServiceTest {
     // ─── getTerrarium ──────────────────────────────────────────
 
     @Test
-    fun `getTerrarium 해피 패스 — evolutionStage 매핑 + 기록 없으면 wilting stage 0`() {
-        saveTerrarium(EvolutionStage.PALUDARIUM)
+    fun `getTerrarium 해피 패스 — tier 매핑 + maxSlots + 기록 없으면 wilting stage 0`() {
+        saveTerrarium("GLASS_JAR")
 
         val response = service.getTerrarium("user-1")
 
         assertEquals(10L, response.terrariumId)
         assertEquals(1L, response.background.id)
         assertEquals("기본 배경", response.background.name)
-        // toApiEvolutionStageOrNull: domain PALUDARIUM → generated PALUDARIUM
-        assertEquals(ApiEvolutionStage.PALUDARIUM, response.evolutionStage)
-        // level 5 → POT(1)/BOTTLE(2)/PALUDARIUM(5) 해금, WORLD(8)/CUSTOM(10) 미해금
-        assertEquals(
-            listOf(ApiEvolutionStage.POT, ApiEvolutionStage.BOTTLE, ApiEvolutionStage.PALUDARIUM),
-            response.unlockedStages,
-        )
-        // maxSlots = minOf(5, maxItems=8) = 5
-        assertEquals(5, response.maxSlots)
+        // 낙서장 P2: tier + maxSlots = tier_configs.slots (GLASS_JAR = 6)
+        assertEquals("GLASS_JAR", response.tier)
+        assertEquals(6, response.maxSlots)
         // 기록 없음 → stage 0, daysSinceRecord null
         assertEquals(0, response.wilting?.stage)
         assertNull(response.wilting?.daysSinceRecord)
@@ -240,6 +238,27 @@ class TerrariumServiceTest {
         override fun extractId(entity: Terrarium): Long = entity.id
 
         override fun findByUserId(userId: String): Optional<Terrarium> = Optional.ofNullable(store.values.firstOrNull { it.user.id == userId })
+
+        override fun findAllWiltScanProjections(): List<WiltScanProjection> =
+            store.values.map {
+                object : WiltScanProjection {
+                    override val userId = it.user.id
+                    override val wiltRecoveredAt = it.wiltRecoveredAt
+                }
+            }
+
+        override fun casTier(
+            id: Long,
+            current: String,
+            target: String,
+            updatedAt: LocalDateTime,
+        ): Int {
+            val t = store[id] ?: return 0
+            if (t.tier != current) return 0
+            t.tier = target
+            t.updatedAt = updatedAt
+            return 1
+        }
     }
 
     private class FakeUserRepository :
@@ -248,12 +267,12 @@ class TerrariumServiceTest {
         override fun extractId(entity: User): String = entity.id
     }
 
-    private class FakeLevelConfigRepository :
-        FakeJpaRepository<LevelConfig, Int>(),
-        LevelConfigRepository {
-        override fun extractId(entity: LevelConfig): Int = entity.level
+    private class FakeTierConfigRepository :
+        FakeJpaRepository<TierConfig, String>(),
+        TierConfigRepository {
+        override fun extractId(entity: TierConfig): String = entity.tier
 
-        override fun findByLevel(level: Int): Optional<LevelConfig> = Optional.ofNullable(store[level])
+        override fun findAllByOrderByTierOrderAsc(): List<TierConfig> = store.values.sortedBy { it.tierOrder }
     }
 
     private class FakeRecordRepository :
@@ -278,7 +297,30 @@ class TerrariumServiceTest {
             to: LocalDate,
         ): List<ActivityRecord> = emptyList()
 
+        override fun findAllByUserIdAndCategoryIdAndIsDeletedFalseOrderByCreatedAtDesc(
+            userId: String,
+            categoryId: Long,
+            pageable: org.springframework.data.domain.Pageable,
+        ): org.springframework.data.domain.Page<ActivityRecord> =
+            org.springframework.data.domain.Page
+                .empty()
+
+        override fun findAllByUserIdAndCategoryIdAndRecordedDateBetweenAndIsDeletedFalse(
+            userId: String,
+            categoryId: Long,
+            from: LocalDate,
+            to: LocalDate,
+        ): List<ActivityRecord> = emptyList()
+
+        override fun acquireRecordDailyLock(key: String): Int = 1
+
         override fun countByUserIdAndRecordedDateAndCategoryIdAndIsDeletedFalse(
+            userId: String,
+            recordedDate: LocalDate,
+            categoryId: Long,
+        ): Long = 0
+
+        override fun countByUserIdAndRecordedDateAndCategoryId(
             userId: String,
             recordedDate: LocalDate,
             categoryId: Long,

@@ -7,6 +7,7 @@ import com.terraworld.common.exception.GlobalExceptionHandler
 import com.terraworld.security.JwtAuthenticationFilter
 import com.terraworld.security.ratelimit.RateLimitFilter
 import com.terraworld.test.AbstractMvcTest
+import io.terraworld.api.model.CurrencyBalance
 import io.terraworld.api.model.CurrencyResponse
 import io.terraworld.api.model.PurchaseResponse
 import io.terraworld.api.model.PurchasedItemInfo
@@ -106,11 +107,14 @@ class PurchaseControllerMvcTest : AbstractMvcTest() {
 
     private fun stubCurrency() =
         CurrencyResponse(
-            basicCoins = 50.0,
-            specialCoins = 0.0,
-            walkTokens = 0.0,
-            readTokens = 0.0,
-            runTokens = 0.0,
-            drawTokens = 0.0,
+            balances =
+                listOf(
+                    CurrencyBalance(code = "COIN", amount = 50),
+                    CurrencyBalance(code = "RUBY", amount = 0),
+                    CurrencyBalance(code = "DEW", amount = 0),
+                    CurrencyBalance(code = "SUN", amount = 0),
+                    CurrencyBalance(code = "BOLT", amount = 0),
+                    CurrencyBalance(code = "WIND", amount = 0),
+                ),
         )
 }

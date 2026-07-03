@@ -47,6 +47,11 @@ class RecordController(
                 request =
                     LocalCreateRecordRequest(
                         categoryId = createRecordRequest.categoryId,
+                        dailyType =
+                            createRecordRequest.dailyType?.let {
+                                com.terraworld.domain.record.DailyType
+                                    .valueOf(it.value)
+                            },
                         duration = createRecordRequest.duration,
                         note = createRecordRequest.note,
                         photoUrl = photoUrlString,

@@ -21,6 +21,8 @@ import java.time.ZoneOffset
 class InviteService(
     private val inviteRepository: InviteRepository,
     private val userRepository: UserRepository,
+    // 낙서장 P1 cutover(dual-write): 친구 수락 보상 = 루비(RUBY) 정규화 잔액에도 반영
+    private val currencyService: com.terraworld.api.currency.CurrencyService,
     // N2 (구현 계획서 v4): invite 수락 보상 시 wallet_transactions 원장 기록
     private val walletTransactionService: com.terraworld.api.wallet.WalletTransactionService,
     // N8 (구현 계획서 v4): invite 수락 시 초대자에게 FCM 알림
@@ -81,49 +83,40 @@ class InviteService(
         if (invite.isExpired()) throw BusinessException(ErrorCode.INVITE_EXPIRED)
         if (invite.inviterUserId == inviteeUserId) throw BusinessException(ErrorCode.INVITE_SELF_ACCEPT)
 
+        // invitee/inviter 존재 검증 (보상은 신 substrate credit 로; invitee 는 FCM 알림 nickname 용)
         val invitee =
-            userRepository
-                .findById(inviteeUserId)
-                .orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) }
-        val inviter =
-            userRepository
-                .findById(invite.inviterUserId)
-                .orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) }
+            userRepository.findById(inviteeUserId).orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) }
+        userRepository.findById(invite.inviterUserId).orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) }
 
-        invitee.specialCoin += ACCEPT_REWARD_SPECIAL_COINS
-        inviter.specialCoin += ACCEPT_REWARD_SPECIAL_COINS
-        userRepository.save(invitee)
-        userRepository.save(inviter)
+        // H3: read-check-save 사이 동시 수락 race → 이중 보상 방지. 조건부 원자 UPDATE 로 claim.
+        // rows==0 이면 다른 동시 요청이 이미 수락 → credit 없이 종료. rows==1 인 경우에만 양측 credit.
+        val inviteId = invite.id
+        val inviterUserId = invite.inviterUserId
 
-        invite.inviteeUserId = inviteeUserId
-        invite.acceptedAt = LocalDateTime.now()
-        val savedInvite = inviteRepository.save(invite)
+        // R10 INVITE-RUBY-SYBIL-FARM: RUBY(유료 화폐) 는 두 사용자 pair 당 1회만 지급 — Sybil 2계정이 서로
+        //   무제한 distinct 코드를 발급·수락해 RUBY 를 farming(→ tier/SPECIAL 로 IAP 우회)하는 것 차단.
+        //   pair 정렬 키 advisory lock 으로 동시 distinct-코드 수락의 TOCTOU 직렬화 후, 이미 보상받은 pair(방향무관
+        //   accepted invite 존재) 면 credit 없이 거부. (per-invite claimAccept 는 같은 코드 이중지급만 막음.)
+        val pairKey = listOf(inviterUserId, inviteeUserId).sorted().joinToString("|", prefix = "invite-pair|")
+        inviteRepository.acquireInvitePairLock(pairKey)
+        if (inviteRepository.existsAcceptedBetween(inviterUserId, inviteeUserId)) {
+            throw BusinessException(ErrorCode.INVITE_ALREADY_ACCEPTED)
+        }
 
-        // N2: wallet ledger — 양쪽 SPECIAL_COIN 보상
-        val specialWallet = com.terraworld.api.wallet.WalletTransactionService.CURRENCY_SPECIAL_COIN
-        val inviteReason = com.terraworld.api.wallet.WalletTransactionService.REASON_INVITE_ACCEPT
-        walletTransactionService.append(
-            invitee,
-            specialWallet,
-            ACCEPT_REWARD_SPECIAL_COINS.toLong(),
-            invitee.specialCoin,
-            inviteReason,
-            referenceId = savedInvite.id,
-        )
-        walletTransactionService.append(
-            inviter,
-            specialWallet,
-            ACCEPT_REWARD_SPECIAL_COINS.toLong(),
-            inviter.specialCoin,
-            inviteReason,
-            referenceId = savedInvite.id,
-        )
+        // H3: read-check-save 사이 동시 수락 race → 이중 보상 방지. 조건부 원자 UPDATE 로 claim.
+        val claimed = inviteRepository.claimAccept(inviteId, inviteeUserId, LocalDateTime.now())
+        if (claimed == 0) throw BusinessException(ErrorCode.INVITE_ALREADY_ACCEPTED)
+
+        // 낙서장 P1: 초대 수락 보상 = 양측 RUBY credit 단일 SoT (credit 이 잔액+원장 원자 처리)
+        val inviteRubyReason = com.terraworld.api.wallet.WalletTransactionService.REASON_INVITE_ACCEPT
+        currencyService.credit(inviteeUserId, com.terraworld.domain.currency.CurrencyCode.RUBY, ACCEPT_REWARD_SPECIAL_COINS.toLong(), inviteRubyReason, "INVITE", inviteId.toString())
+        currencyService.credit(inviterUserId, com.terraworld.domain.currency.CurrencyCode.RUBY, ACCEPT_REWARD_SPECIAL_COINS.toLong(), inviteRubyReason, "INVITE", inviteId.toString())
 
         // N8: 초대자에게 FCM 알림 — invitee 가 초대를 수락했음
         eventPublisher.publishEvent(
             com.terraworld.api.notification.FriendActivityEvent(
                 fromUserId = inviteeUserId,
-                toUserId = invite.inviterUserId,
+                toUserId = inviterUserId,
                 message = "${invitee.nickname} 님이 초대를 수락했어요",
             ),
         )
@@ -154,9 +147,8 @@ class InviteService(
         val terrarium = terrariumService.getTerrarium(invite.inviterUserId)
 
         // N16 (Codex audit MEDIUM): 공개 share 응답에서 발신자 활동 패턴 노출 제거.
-        // wilting.daysSinceRecord (최근 기록 주기) / unlockedStages (레벨 진행도) 는
-        // share 코드만 있으면 누구나 볼 수 있으므로 미공개 — frontend 도 미사용.
-        val publicTerrarium = terrarium.copy(wilting = null, unlockedStages = null)
+        // wilting.daysSinceRecord (최근 기록 주기) 는 share 코드만 있으면 누구나 볼 수 있으므로 미공개.
+        val publicTerrarium = terrarium.copy(wilting = null)
 
         return ShareResponse(nickname = inviter.nickname, terrarium = publicTerrarium)
     }

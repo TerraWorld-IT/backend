@@ -10,6 +10,7 @@ import com.terraworld.security.ratelimit.RateLimitFilter
 import com.terraworld.test.AbstractMvcTest
 import io.terraworld.api.model.CategoryCount
 import io.terraworld.api.model.CreateRecordResponse
+import io.terraworld.api.model.CurrencyBalance
 import io.terraworld.api.model.CurrencyResponse
 import io.terraworld.api.model.RecordResponse
 import io.terraworld.api.model.RewardInfo
@@ -60,7 +61,7 @@ class RecordControllerMvcTest : AbstractMvcTest() {
         whenever(recordService.createRecord(eq(TEST_USER_ID), any())).thenReturn(
             CreateRecordResponse(
                 record = stubRecord(),
-                reward = RewardInfo(basicCoins = 20, categoryTokens = 10, experienceGained = 5),
+                reward = RewardInfo(basicCoins = 20, categoryTokens = 10),
                 updatedCurrency = stubCurrency(),
             ),
         )
@@ -194,11 +195,14 @@ class RecordControllerMvcTest : AbstractMvcTest() {
 
     private fun stubCurrency() =
         CurrencyResponse(
-            basicCoins = 120.0,
-            specialCoins = 0.0,
-            walkTokens = 10.0,
-            readTokens = 0.0,
-            runTokens = 0.0,
-            drawTokens = 0.0,
+            balances =
+                listOf(
+                    CurrencyBalance(code = "COIN", amount = 120),
+                    CurrencyBalance(code = "RUBY", amount = 0),
+                    CurrencyBalance(code = "DEW", amount = 10),
+                    CurrencyBalance(code = "SUN", amount = 0),
+                    CurrencyBalance(code = "BOLT", amount = 0),
+                    CurrencyBalance(code = "WIND", amount = 0),
+                ),
         )
 }

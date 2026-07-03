@@ -4,9 +4,6 @@ import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
 import com.terraworld.domain.category.Category
 import com.terraworld.domain.category.CategoryRepository
-import com.terraworld.domain.user.UserRepository
-import com.terraworld.domain.user.UserToken
-import com.terraworld.domain.user.UserTokenRepository
 import com.terraworld.security.AuthenticatedUser
 import com.terraworld.security.SecurityUtil
 import io.swagger.v3.oas.annotations.Operation
@@ -37,8 +34,6 @@ import org.springframework.web.bind.annotation.RestController
 @RequestMapping("/api/v1")
 class CategoryController(
     private val categoryRepository: CategoryRepository,
-    private val userTokenRepository: UserTokenRepository,
-    private val userRepository: UserRepository,
 ) : CategoryApi {
     companion object {
         const val CUSTOM_CATEGORY_LIMIT = 10
@@ -95,15 +90,8 @@ class CategoryController(
                 ),
             )
 
-        // UserToken 행을 amount=0 으로 pre-create — WalletBar / CurrencyResponse.categoryTokens
-        // 에 즉시 노출하기 위함. 첫 기록까지 row 가 없으면 사용자가 "내 카테고리는 있는데
-        // 토큰은 안 보임" 으로 혼란을 겪는다.
-        val user =
-            userRepository
-                .findById(userId)
-                .orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) }
-        userTokenRepository.save(UserToken(user = user, category = saved, amount = 0))
-
+        // 낙서장 P1: 커스텀 카테고리 토큰 pre-create 제거 — 화폐는 신 substrate(user_currency_balances)
+        // 이며 커스텀 카테고리는 코인만(정책 #1). 별도 토큰 currency 미노출.
         return ResponseEntity
             .status(HttpStatus.CREATED)
             .body(saved.toApi())

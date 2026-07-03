@@ -3,8 +3,6 @@ package com.terraworld.api.category
 import com.terraworld.common.exception.GlobalExceptionHandler
 import com.terraworld.domain.category.Category
 import com.terraworld.domain.category.CategoryRepository
-import com.terraworld.domain.user.UserRepository
-import com.terraworld.domain.user.UserTokenRepository
 import com.terraworld.security.JwtAuthenticationFilter
 import com.terraworld.security.ratelimit.RateLimitFilter
 import com.terraworld.test.AbstractMvcTest
@@ -30,10 +28,6 @@ class CategoryControllerMvcTest : AbstractMvcTest() {
     @Autowired private lateinit var mockMvc: MockMvc
 
     @MockBean private lateinit var categoryRepository: CategoryRepository
-
-    @MockBean private lateinit var userTokenRepository: UserTokenRepository
-
-    @MockBean private lateinit var userRepository: UserRepository
 
     @MockBean private lateinit var jwtAuthenticationFilter: JwtAuthenticationFilter
 

@@ -26,6 +26,7 @@ import kotlin.test.assertTrue
 class InviteServiceTest {
     private lateinit var inviteRepo: FakeInviteRepository
     private lateinit var userRepo: FakeUserRepository
+    private lateinit var currencyService: com.terraworld.api.currency.CurrencyService
     private lateinit var service: InviteService
 
     @BeforeEach
@@ -41,10 +42,12 @@ class InviteServiceTest {
             org.mockito.Mockito.mock(org.springframework.context.ApplicationEventPublisher::class.java)
         val terrariumService =
             org.mockito.Mockito.mock(com.terraworld.api.terrarium.TerrariumService::class.java)
+        currencyService = org.mockito.Mockito.mock(com.terraworld.api.currency.CurrencyService::class.java)
         service =
             InviteService(
                 inviteRepo,
                 userRepo,
+                currencyService,
                 walletTransactionService,
                 eventPublisher,
                 terrariumService,
@@ -123,21 +126,28 @@ class InviteServiceTest {
     }
 
     @Test
-    fun `acceptInvite 해피 패스는 양쪽 사용자에게 스페셜 코인 5개를 지급`() {
+    fun `acceptInvite 해피 패스는 양쪽 사용자에게 RUBY 5개 credit`() {
         val created = service.createInvite("inviter-1")
-        val beforeInviter = userRepo.findById("inviter-1").get().specialCoin
-        val beforeInvitee = userRepo.findById("invitee-1").get().specialCoin
 
         val response = service.acceptInvite("invitee-1", created.inviteCode)
 
         assertEquals(InviteService.ACCEPT_REWARD_SPECIAL_COINS, response.reward.specialCoins)
-        assertEquals(
-            beforeInviter + InviteService.ACCEPT_REWARD_SPECIAL_COINS,
-            userRepo.findById("inviter-1").get().specialCoin,
+        // 낙서장 P1: 보상 = 양측 RUBY credit (신 substrate)
+        org.mockito.kotlin.verify(currencyService).credit(
+            org.mockito.kotlin.eq("invitee-1"),
+            org.mockito.kotlin.eq("RUBY"),
+            org.mockito.kotlin.eq(InviteService.ACCEPT_REWARD_SPECIAL_COINS.toLong()),
+            org.mockito.kotlin.any(),
+            org.mockito.kotlin.anyOrNull(),
+            org.mockito.kotlin.anyOrNull(),
         )
-        assertEquals(
-            beforeInvitee + InviteService.ACCEPT_REWARD_SPECIAL_COINS,
-            userRepo.findById("invitee-1").get().specialCoin,
+        org.mockito.kotlin.verify(currencyService).credit(
+            org.mockito.kotlin.eq("inviter-1"),
+            org.mockito.kotlin.eq("RUBY"),
+            org.mockito.kotlin.eq(InviteService.ACCEPT_REWARD_SPECIAL_COINS.toLong()),
+            org.mockito.kotlin.any(),
+            org.mockito.kotlin.anyOrNull(),
+            org.mockito.kotlin.anyOrNull(),
         )
         assertNotNull(inviteRepo.findByCode(created.inviteCode).get().acceptedAt)
     }
@@ -178,6 +188,20 @@ class InviteServiceTest {
 
         override fun existsByCode(code: String): Boolean = store.values.any { it.code == code }
 
+        override fun acquireInvitePairLock(key: String): Int = 1
+
+        override fun claimAccept(
+            id: Long,
+            inviteeUserId: String,
+            now: LocalDateTime,
+        ): Int {
+            val invite = store[id] ?: return 0
+            if (invite.acceptedAt != null) return 0
+            invite.inviteeUserId = inviteeUserId
+            invite.acceptedAt = now
+            return 1
+        }
+
         override fun existsAcceptedBetween(
             userIdA: String,
             userIdB: String,
@@ -189,6 +213,20 @@ class InviteServiceTest {
                             (i.inviterUserId == userIdB && i.inviteeUserId == userIdA)
                     )
             }
+
+        override fun findAcceptedBetween(
+            userIdA: String,
+            userIdB: String,
+        ): Optional<Invite> =
+            Optional.ofNullable(
+                store.values.firstOrNull { i ->
+                    i.acceptedAt != null &&
+                        (
+                            (i.inviterUserId == userIdA && i.inviteeUserId == userIdB) ||
+                                (i.inviterUserId == userIdB && i.inviteeUserId == userIdA)
+                        )
+                },
+            )
 
         // P-FRIEND-001 (구현 계획서 v4): 친구 목록 쿼리 fake 구현.
         override fun findAcceptedInvolvingUser(userId: String): List<Invite> =
