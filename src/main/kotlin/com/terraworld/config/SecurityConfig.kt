@@ -113,7 +113,12 @@ class SecurityConfig(
     }
 
     /** 필터 레벨 인증/인가 실패 시 일관된 JSON 오류 바디 (Content-Type 명시). */
-    private fun writeJsonError(response: HttpServletResponse, status: Int, code: String, message: String) {
+    private fun writeJsonError(
+        response: HttpServletResponse,
+        status: Int,
+        code: String,
+        message: String,
+    ) {
         response.status = status
         response.contentType = "application/json"
         response.characterEncoding = "UTF-8"
