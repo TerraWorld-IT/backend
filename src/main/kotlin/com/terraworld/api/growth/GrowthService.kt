@@ -96,15 +96,16 @@ class GrowthService(
         if (toSave.isNotEmpty()) growthInstanceRepository.saveAll(toSave)
     }
 
+    // 알려진 한계 (code-review R9, accepted — prototype hardening backlog):
+    //   요청-레벨 idempotency key 없음(전 money POST 공통). double-submit 은 SPARKLE 2배 소비+2배 진행 —
+    //   사용자 자기-손해이지 farming/attacker-gain 아님. FE guard(buying ref) + debit 원자성으로 현실 위험 bound.
+    //   서버측 dedup 은 cross-cutting 결정이라 백로그(exchange 와 동일 판단).
+
     /**
      * 반짝이 부스터: SPARKLE [SPARKLE_PER_BOOSTER] 소비 → 해당 종 +[BOOSTER_PROGRESS]회.
      * 잔액 부족 시 CurrencyService.debit 이 INSUFFICIENT_FUNDS. 개체 미생성 종은 생성.
      */
     @Transactional
-    // 알려진 한계 (code-review R9, accepted — prototype hardening backlog):
-    //   요청-레벨 idempotency key 없음(전 money POST 공통). double-submit 은 SPARKLE 2배 소비+2배 진행 —
-    //   사용자 자기-손해이지 farming/attacker-gain 아님. FE guard(buying ref) + debit 원자성으로 현실 위험 bound.
-    //   서버측 dedup 은 cross-cutting 결정이라 백로그(exchange 와 동일 판단).
     fun buyBooster(
         userId: String,
         speciesCode: String,

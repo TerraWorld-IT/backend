@@ -6,11 +6,11 @@ import com.terraworld.domain.terrarium.TerrariumRepository
 import com.terraworld.domain.user.User
 import com.terraworld.domain.user.UserRepository
 import com.terraworld.domain.user.UserRole
-import java.text.Normalizer
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.data.domain.Sort
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import java.text.Normalizer
 
 /**
  * Idempotently provisions a domain profile for an authenticated user.
