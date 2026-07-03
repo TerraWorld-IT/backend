@@ -106,6 +106,11 @@ data class RateLimitProperties(
                 // /play-billing 룰이 더 긴 /play-billing/pubsub 을 커버하지 못한다 → 별도 룰 필수.
                 // money flow → failClosed. 정상 Pub/Sub push 는 저빈도라 120/min 로 저해 없음.
                 Rule(HttpMethod.POST, "/api/v1/webhooks/play-billing/pubsub", limit = 120, failClosed = true),
+                // 미인증 SSV 콜백(GET, Google 서버가 무인증 호출). 무효 서명이어도 ECDSA verify +
+                // audit_log INSERT 비용 발생 → 단일 IP 플러드로 audit 테이블/CPU DoS 가능(review MEDIUM).
+                // 기존 룰이 전부 POST 라 이 GET 경로는 무버켓이었음. webhook 룰과 대칭으로 IP 버켓 캡.
+                // audit 는 best-effort 라 fail-open (Redis 장애가 정상 SSV 를 막지 않도록).
+                Rule(HttpMethod.GET, "/api/v1/rewards/ad/ssv-callback", limit = 120),
             )
     }
 }

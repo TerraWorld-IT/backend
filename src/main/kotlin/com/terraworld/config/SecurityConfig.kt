@@ -2,10 +2,12 @@ package com.terraworld.config
 
 import com.terraworld.security.JwtAuthenticationFilter
 import com.terraworld.security.ratelimit.RateLimitFilter
+import jakarta.servlet.http.HttpServletResponse
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
 import org.springframework.core.env.Environment
+import org.springframework.http.HttpMethod
 import org.springframework.security.config.annotation.web.builders.HttpSecurity
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity
 import org.springframework.security.config.http.SessionCreationPolicy
@@ -67,7 +69,10 @@ class SecurityConfig(
                     // for protected domain endpoints.
                     .requestMatchers("/api/v1/share/**")
                     .permitAll()
-                    .requestMatchers("/api/v1/categories")
+                    // GET 목록만 공개(미인증 시 시스템 4종). POST create / 그 외 메서드는
+                    // anyRequest().authenticated() 로 fall-through — 컨트롤러 util-throw(500) 대신
+                    // 인증 레이어에서 401 (review MEDIUM: method-scope 누락 경계 결함).
+                    .requestMatchers(HttpMethod.GET, "/api/v1/categories")
                     .permitAll()
                     .requestMatchers("/api/v1/items/**")
                     .permitAll()
@@ -86,12 +91,33 @@ class SecurityConfig(
                     .hasRole("ADMIN")
                     .anyRequest()
                     .authenticated()
+            }
+            // 필터 레벨 인증/인가 실패 응답 표준화 (fuzz F-2/F-3):
+            //  - 미인증(Bearer 없음/무효) → 401 (403 아님) + JSON body + WWW-Authenticate.
+            //  - 인증됐으나 권한 부족(예: 비-ADMIN 이 /admin) → 403 + JSON body.
+            // (컨트롤러 내부에서 throw 되는 AccessDeniedException 은 GlobalExceptionHandler 담당.)
+            .exceptionHandling { ex ->
+                ex.authenticationEntryPoint { _, response, _ ->
+                    response.setHeader("WWW-Authenticate", "Bearer")
+                    writeJsonError(response, HttpServletResponse.SC_UNAUTHORIZED, "UNAUTHORIZED", "인증이 필요합니다")
+                }
+                ex.accessDeniedHandler { _, response, _ ->
+                    writeJsonError(response, HttpServletResponse.SC_FORBIDDEN, "FORBIDDEN", "접근 권한이 없습니다")
+                }
             }.addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter::class.java)
             // RateLimitFilter sits AFTER JWT extraction so authenticated subjects
             // are bucketed by userId rather than IP. On Redis outage it fails open.
             .addFilterAfter(rateLimitFilter, JwtAuthenticationFilter::class.java)
 
         return http.build()
+    }
+
+    /** 필터 레벨 인증/인가 실패 시 일관된 JSON 오류 바디 (Content-Type 명시). */
+    private fun writeJsonError(response: HttpServletResponse, status: Int, code: String, message: String) {
+        response.status = status
+        response.contentType = "application/json"
+        response.characterEncoding = "UTF-8"
+        response.writer.write("""{"code":"$code","message":"$message"}""")
     }
 
     @Bean

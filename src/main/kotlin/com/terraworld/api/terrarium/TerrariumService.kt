@@ -23,6 +23,16 @@ import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.temporal.ChronoUnit
 
+/** 슬롯 재저장(delete-recreate) 시 보존할 자유배치 편집 상태 6필드. */
+private data class FreeEditState(
+    val freeXPixel: Int?,
+    val freeYPixel: Int?,
+    val isFreePlacement: Boolean,
+    val scale: Float,
+    val zIndex: Int,
+    val flipped: Boolean,
+)
+
 /**
  * ARCH-008-phase-12: 시그니처 + 반환 모두 generated DTO 사용.
  *
@@ -161,10 +171,15 @@ class TerrariumService(
         // 보존 후 복원. (Codex audit LOW: itemId 단독 키는 같은 아이템이 두 슬롯에 있을 때
         // last-write-wins 로 충돌 — slotId 까지 포함해 placement 단위로 매칭. 슬롯이 바뀌면
         // free 좌표는 의도적으로 리셋.)
+        // 슬롯 재저장 시 자유배치 편집 상태(위치 + scale/zIndex/flipped)를 전부 보존한다.
+        // 일부만 보존하면 slot 재저장 후 크기/깊이/반전이 기본값으로 silently 리셋됨 (review MEDIUM).
         val freeBySlot =
             terrarium.placedItems
                 .filter { it.isFreePlacement || it.freeXPixel != null }
-                .associate { (it.item.id to it.slotId) to Triple(it.freeXPixel, it.freeYPixel, it.isFreePlacement) }
+                .associate {
+                    (it.item.id to it.slotId) to
+                        FreeEditState(it.freeXPixel, it.freeYPixel, it.isFreePlacement, it.scale, it.zIndex, it.flipped)
+                }
 
         terrariumPlacementRepository.deleteAllByTerrariumId(terrarium.id)
         terrarium.placedItems.clear()
@@ -182,9 +197,12 @@ class TerrariumService(
                     terrarium = terrarium,
                     item = item,
                     slotId = p.slotId,
-                    freeXPixel = free?.first,
-                    freeYPixel = free?.second,
-                    isFreePlacement = free?.third ?: false,
+                    freeXPixel = free?.freeXPixel,
+                    freeYPixel = free?.freeYPixel,
+                    isFreePlacement = free?.isFreePlacement ?: false,
+                    scale = free?.scale ?: 1f,
+                    zIndex = free?.zIndex ?: 0,
+                    flipped = free?.flipped ?: false,
                 ),
             )
             if (item.id !in existingItemIds) {

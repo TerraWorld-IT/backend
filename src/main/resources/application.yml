@@ -124,6 +124,13 @@ spring:
   flyway:
     baseline-on-migrate: false
 
+  datasource:
+    # review LOW: 기본 프로파일의 dev fallback(password 'terraworld')이 prod 로 새지 않도록
+    # fallback 제거 — 미주입 시 placeholder 미해결로 부팅 abort (auth/cors 하드닝과 동일 패턴).
+    url: ${SPRING_DATASOURCE_URL}
+    username: ${SPRING_DATASOURCE_USERNAME}
+    password: ${SPRING_DATASOURCE_PASSWORD}
+
 auth:
   jwks:
     # No fallback — missing AUTH_JWKS_URL aborts startup in prod.

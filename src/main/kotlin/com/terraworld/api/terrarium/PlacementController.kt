@@ -1,5 +1,6 @@
 package com.terraworld.api.terrarium
 
+import com.fasterxml.jackson.annotation.JsonProperty
 import com.terraworld.security.SecurityUtil
 import io.swagger.v3.oas.annotations.Hidden
 import org.springframework.http.ResponseEntity
@@ -66,7 +67,9 @@ data class FreePositionRequest(
     val posY: Double,
     val scale: Float? = null,
     val flipped: Boolean? = null,
-    val zIndex: Int? = null,
+    // Jackson single-lowercase-prefix quirk 회피(`zIndex`->`zindex`). 요청(역직렬화)이라
+    // constructor param 에 명시(@param) — 계약 camelCase 고정.
+    @param:JsonProperty("zIndex") val zIndex: Int? = null,
 )
 
 data class FreePlacementListResponse(
@@ -85,5 +88,7 @@ data class FreePlacementItem(
     // 낙서장 자유배치 편집 영속(req3 #2): 크기/반전/깊이.
     val scale: Float,
     val flipped: Boolean,
-    val zIndex: Int,
+    // Jackson single-lowercase-prefix quirk 회피(`zIndex`->`zindex`). 응답(직렬화)이라
+    // getter 에 명시(생성 stub 컨벤션과 동일 @get:JsonProperty) — 계약 camelCase 고정.
+    @get:JsonProperty("zIndex") val zIndex: Int,
 )
