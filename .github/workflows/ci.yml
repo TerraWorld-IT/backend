@@ -56,6 +56,9 @@ jobs:
         # 별도로 기동하므로 여기서 datasource env 를 줄 필요가 없다.
         run: ./gradlew test
 
+      - name: TEMP diagnostic - FlywayMigrationSmokeTest verbose run
+        run: ./gradlew test --tests "*FlywayMigrationSmokeTest*" --info --rerun
+
       - name: Upload JaCoCo coverage report
         if: always()
         uses: actions/upload-artifact@v4
