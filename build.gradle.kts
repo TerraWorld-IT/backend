@@ -120,6 +120,16 @@ tasks.test {
     finalizedBy(tasks.jacocoTestReport)
 }
 
+// Spring Boot Gradle 플러그인은 기본적으로 bootJar(실행용 fat jar) 와 함께
+// jar(의존성 없는 plain jar, *-plain.jar) 도 생성한다.
+// Dockerfile 의 `COPY build/libs/*.jar app.jar` 는 목적지가 단일 파일이라
+// build/libs 에 jar 가 둘 이상 있으면 어느 것이 복사될지 알파벳 정렬 순서에
+// 우연히 의존하게 된다 — plain jar 생성 자체를 꺼서 build/libs 에 fat jar
+// 하나만 남도록 한다.
+tasks.named<Jar>("jar") {
+    enabled = false
+}
+
 // ktlint Kotlin 린트. openapi-backend submodule(자동 생성 stub)은 검사 제외.
 // 첫 도입 시 위반이 있으면 ./gradlew ktlintFormat 으로 자동 수정 또는
 // ./gradlew ktlintCheck --baseline 으로 baseline 생성 가능.
