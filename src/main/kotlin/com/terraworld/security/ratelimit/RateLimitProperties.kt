@@ -106,6 +106,15 @@ data class RateLimitProperties(
                 // /play-billing 룰이 더 긴 /play-billing/pubsub 을 커버하지 못한다 → 별도 룰 필수.
                 // money flow → failClosed. 정상 Pub/Sub push 는 저빈도라 120/min 로 저해 없음.
                 Rule(HttpMethod.POST, "/api/v1/webhooks/play-billing/pubsub", limit = 120, failClosed = true),
+                // NOTE(회귀정정): /rewards/ad/ssv-callback(GET, Google 무인증 호출)에는 앱-레이어
+                // IP 버켓 룰을 의도적으로 두지 않는다. 정상 SSV 는 Google 의 소수 공유 egress IP 에서
+                // 오고, 신뢰 프록시(trustForwardedFor=false, 기본값)면 모든 콜백이 프록시의 단일
+                // remoteAddr 로 collapse 되어 어떤 유한 per-IP 한도든 정상 콜백을 429 로 떨군다(전역
+                // 캡화 → 무음 SSV 유실). 엔드포인트의 실제 게이트는 AdSsvCallbackController 의 ECDSA
+                // 서명검증(위조 즉시 403)과 transaction_id dedup 이며, SSV 는 보상을 지급하지 않는다
+                // (실지급은 인증 client POST /rewards/ad 단일 경로). 위조 플러드 버스트 방어가 필요하면
+                // Google IP 대역을 아는 infra 레이어(nginx/ingress)에서 경로 한정으로 처리한다 —
+                // per-user-IP 앱 필터는 shared-IP webhook 소스에 부적합.
             )
     }
 }

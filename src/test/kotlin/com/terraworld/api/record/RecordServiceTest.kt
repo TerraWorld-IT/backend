@@ -298,7 +298,8 @@ class RecordServiceTest {
             pageable: Pageable,
         ): Page<ActivityRecord> =
             PageImpl(
-                store.values.filter { it.user.id == userId && it.category.id == categoryId && !it.isDeleted }
+                store.values
+                    .filter { it.user.id == userId && it.category.id == categoryId && !it.isDeleted }
                     .sortedByDescending { it.createdAt },
             )
 
@@ -309,8 +310,11 @@ class RecordServiceTest {
             to: LocalDate,
         ): List<ActivityRecord> =
             store.values.filter {
-                it.user.id == userId && it.category.id == categoryId && !it.isDeleted &&
-                    !it.recordedDate.isBefore(from) && !it.recordedDate.isAfter(to)
+                it.user.id == userId &&
+                    it.category.id == categoryId &&
+                    !it.isDeleted &&
+                    !it.recordedDate.isBefore(from) &&
+                    !it.recordedDate.isAfter(to)
             }
 
         override fun acquireRecordDailyLock(key: String): Int = 1

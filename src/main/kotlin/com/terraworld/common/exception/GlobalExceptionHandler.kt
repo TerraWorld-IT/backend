@@ -76,9 +76,18 @@ class GlobalExceptionHandler {
     @ExceptionHandler(IllegalArgumentException::class)
     fun handleIllegalArgument(e: IllegalArgumentException): ResponseEntity<ErrorResponse> {
         log.warn("IllegalArgument — {}", e.message)
+        // review LOW: enum `valueOf` 실패 시 JVM 이 던지는 "No enum constant <FQCN>" 메시지는
+        // 내부 클래스명을 미인증 호출자에게 누출한다(예: GET /items?rarity=XYZ). 이 패턴만
+        // 일반 메시지로 마스킹하고, require(...) 등 의도된 user-facing 메시지는 그대로 전달.
+        val safeMessage =
+            if (e.message?.startsWith("No enum constant") == true) {
+                "잘못된 요청입니다"
+            } else {
+                e.message ?: "잘못된 요청입니다"
+            }
         return ResponseEntity
             .status(HttpStatus.BAD_REQUEST)
-            .body(ErrorResponse(code = "BAD_REQUEST", message = e.message ?: "잘못된 요청입니다"))
+            .body(ErrorResponse(code = "BAD_REQUEST", message = safeMessage))
     }
 
     @ExceptionHandler(MethodArgumentNotValidException::class)

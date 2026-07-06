@@ -36,13 +36,13 @@ class ExchangeExecutor(
         val ACTIVITY_CODES = listOf(CurrencyCode.DEW, CurrencyCode.SUN, CurrencyCode.BOLT, CurrencyCode.WIND)
     }
 
-    @Transactional
     // 알려진 한계 (code-review R9, accepted — prototype hardening backlog):
     //   요청-레벨 idempotency key 는 없다(전 money POST — exchange/booster/purchase 공통 설계). 동일 POST 재전송 시
     //   각 요청이 새 거래로 처리된다. 단, 이는 **사용자 자기-손해(이중 차감)**이지 farming/attacker-gain 이 아니며
     //   (double-submit 은 재화를 2배 지불하고 2배 받는 것), FE in-page guard(exchanging ref) + 잔액 원자성
     //   (debit/credit atomic) + per-user-day advisory lock + daily cap 으로 현실적 위험이 bound 된다.
     //   완전 방어(서버측 dedup inbox)는 전 money POST 를 아우르는 cross-cutting 결정이라 human/product 백로그로 이연.
+    @Transactional
     fun execute(
         userId: String,
         from: String,

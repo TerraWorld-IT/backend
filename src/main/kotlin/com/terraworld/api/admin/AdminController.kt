@@ -41,8 +41,7 @@ class AdminController(
     // M2 (code-review R1): 공개 목록(GET /items)은 활성만 반환 → 비활성 아이템이 admin 목록에서 사라져 재활성화 불가.
     // 관리자 전용 전체 목록(비활성 포함) 제공으로 재활성화 경로 확보.
     @GetMapping("/items")
-    fun listAllItems(): ResponseEntity<ItemListResponse> =
-        ResponseEntity.ok(ItemListResponse(items = adminService.listAllItems().map(ItemMapper::toApi)))
+    fun listAllItems(): ResponseEntity<ItemListResponse> = ResponseEntity.ok(ItemListResponse(items = adminService.listAllItems().map(ItemMapper::toApi)))
 
     @PostMapping("/items")
     fun createItem(
