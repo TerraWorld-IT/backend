@@ -10,31 +10,6 @@ jobs:
   test-and-build:
     runs-on: ubuntu-latest
 
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_DB: terraworld_test
-          POSTGRES_USER: terraworld
-          POSTGRES_PASSWORD: terraworld
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
     steps:
       - uses: actions/checkout@v4
         with:
@@ -76,11 +51,10 @@ jobs:
 
       - name: Test
         # `./gradlew test` 가 finalizedBy 로 jacocoTestReport 도 자동 실행한다.
+        # 전 테스트가 mock 기반 유닛 테스트 (@SpringBootTest/@DataJpaTest 0건) — 실 DB/Redis 불필요.
+        # FlywayMigrationSmokeTest 만 실 Postgres 를 쓰지만 자체 Testcontainers PostgreSQLContainer 를
+        # 별도로 기동하므로 여기서 datasource env 를 줄 필요가 없다.
         run: ./gradlew test
-        env:
-          SPRING_DATASOURCE_URL: jdbc:postgresql://localhost:5432/terraworld_test
-          SPRING_DATASOURCE_USERNAME: terraworld
-          SPRING_DATASOURCE_PASSWORD: terraworld
 
       - name: Upload JaCoCo coverage report
         if: always()
