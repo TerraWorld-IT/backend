@@ -205,6 +205,7 @@ class RecordService(
                     recordedDate = record.recordedDate,
                     createdAt = record.createdAt.atOffset(ZoneOffset.UTC),
                     categoryEmoji = category.emoji,
+                    dailyType = record.dailyType?.toResponseEnum(),
                     memo = record.memo,
                     duration = record.durationMinutes,
                     photoUrl = record.photoUrl?.let { URI.create(it) },
@@ -351,8 +352,15 @@ class RecordService(
             recordedDate = recordedDate,
             createdAt = createdAt.atOffset(ZoneOffset.UTC),
             categoryEmoji = category.emoji,
+            dailyType = dailyType?.toResponseEnum(),
             memo = memo,
             duration = durationMinutes,
             photoUrl = photoUrl?.let { URI.create(it) },
         )
+
+    // categoryId/categoryName 은 보상 라우팅/일일 한도용 canonical 값으로 그대로 두고,
+    // 화면 표시는 dailyType 을 우선하도록 별도 필드로 노출 (RecordResponse.yaml 참조).
+    // 도메인 DailyType 과 생성된 RecordResponse.DailyType 은 이름이 동일해 name 기준 매핑.
+    private fun DailyType.toResponseEnum(): RecordResponse.DailyType =
+        RecordResponse.DailyType.valueOf(name)
 }
