@@ -18,6 +18,11 @@ jobs:
     runs-on: [self-hosted, terraworld]
     steps:
       - name: Rebuild jar + image, redeploy backend
+        env:
+          # openapi-backend 서브모듈은 별도 private repo(TerraWorld-IT/openapi-backend)라
+          # GITHUB_TOKEN 으로는 fetch 불가 — CI(ci.yml)와 동일하게 PAT 을 주입한다.
+          # (frontend deploy-selfhosted.yml 의 OPENAPI_FRONTEND_TOKEN 과 동일 방식)
+          OPENAPI_SUBMODULE_TOKEN: ${{ secrets.OPENAPI_SUBMODULE_TOKEN }}
         run: |
           set -euo pipefail
           export PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin"
@@ -28,6 +33,15 @@ jobs:
           cd "$BE"
           git fetch origin
           git reset --hard origin/main
+          # 서브모듈 fetch 만 토큰 필요(위 origin fetch/reset 은 Mac 로컬 자격증명으로 동작).
+          # 토큰은 argv 노출을 피해 GIT_CONFIG_* env 로 전달하고, insteadOf 는 이 git 호출(및
+          # 서브모듈 자식 프로세스)에만 스코프되어 Mac 전역 gitconfig 에 남지 않는다.
+          if [ -z "${OPENAPI_SUBMODULE_TOKEN:-}" ]; then
+            echo "❌ OPENAPI_SUBMODULE_TOKEN 시크릿 미설정 — 서브모듈 fetch 불가"; exit 1
+          fi
+          GIT_CONFIG_COUNT=1 \
+          GIT_CONFIG_KEY_0="url.https://x-access-token:${OPENAPI_SUBMODULE_TOKEN}@github.com/.insteadOf" \
+          GIT_CONFIG_VALUE_0="https://github.com/" \
           git submodule update --init --recursive
           ./gradlew bootJar -x test --no-daemon
 
