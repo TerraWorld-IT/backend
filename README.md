@@ -187,13 +187,20 @@ cd openapi-backend && git fetch && git rev-parse origin/main  # latest available
 ./gradlew ktlintFormat
 ```
 
-### CI
+### CI / 배포 (2026-07-15 재구조)
 
-`.github/workflows/ci.yml` 에서:
+`.github/workflows/ci.yml` 이 검증과 배포를 한 파이프라인으로 소유한다:
 
-- `./gradlew build` (compile + test)
-- `./gradlew ktlintCheck`
-- (예정 M7) lefthook 검증
+- `test-and-build`: ktlintCheck → test(+jacoco) → bootJar → jar 아티팩트 업로드
+- `build-push-image` (main 만, `needs`): 테스트 통과 jar 를 ubuntu 러너에서 이미지로 빌드해 ghcr push (`:latest` + `:sha` 롤백 태그)
+- `deploy` (main 만, `needs`): 맥 self-hosted 러너가 pull 후 컨테이너 교체 — 맥에서 gradle/docker 빌드 안 함
+- 구 `deploy-selfhosted.yml`(맥 로컬 재빌드 + `-x test`) 삭제, `deploy.yml`(SSH legacy) 은 dispatch 전용 강등
+- health 대기 300s — 맥은 amd64 이미지를 Rosetta 에뮬레이션 실행이라 부팅 ~100s (실측)
+
+### 성능 레이어 (2026-07-15)
+
+- **Caffeine 캐시**: currencies/tier/growth/카탈로그/카테고리 (TTL 10분) + 인증 필터 bootstrap 확인 캐시. 배치 **쓰기 검증은 캐시 우회 fresh read**
+- **결제 tx_ref 처리 원장** (`entitlement_tx_ledger`, V36): REVOKE = terminal — 환불된 권리가 webhook 재전송으로 복원되지 않음. 상세는 `EntitlementService` 주석 참조. ⚠️ 구독(갱신 간 동일 토큰) 실판매 전 토큰 세대 설계 필요
 
 ---
 
