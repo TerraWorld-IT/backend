@@ -66,6 +66,10 @@ class FlywayMigrationSmokeTest {
                 md.getTables(null, null, "user_currency_balances", arrayOf("TABLE")).use { rs ->
                     assertTrue(rs.next(), "user_currency_balances 테이블 부재 (신 지갑 substrate 미생성)")
                 }
+                // V36: tx_ref 처리 원장 (revoke 후 grant 재전송 멱등) 존재 실증
+                md.getTables(null, null, "entitlement_tx_ledger", arrayOf("TABLE")).use { rs ->
+                    assertTrue(rs.next(), "entitlement_tx_ledger 테이블 부재 (V36 미적용)")
+                }
             }
         }
     }

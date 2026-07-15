@@ -1,5 +1,6 @@
 package com.terraworld.common.exception
 
+import com.terraworld.api.entitlement.EntitlementTxRefConflictException
 import com.terraworld.common.dto.ErrorResponse
 import org.slf4j.LoggerFactory
 import org.springframework.dao.DataIntegrityViolationException
@@ -88,6 +89,23 @@ class GlobalExceptionHandler {
         return ResponseEntity
             .status(HttpStatus.BAD_REQUEST)
             .body(ErrorResponse(code = "BAD_REQUEST", message = safeMessage))
+    }
+
+    /**
+     * V36 (2026-07-15): entitlement tx_ref 충돌 — 실제 실패이므로 500 으로 명시 매핑.
+     *
+     * 미매핑 상태에서는 예외가 컨테이너 /error 로 흘러 Security 게이트에서 **401 로 관측**됐다
+     * (bootRun 스모크 실측). 401 은 운영에서 인증 실패로 오독되고 IAP 클라이언트의 재인증
+     * 루프를 유발할 수 있다. Pub/Sub/클라이언트는 non-2xx 를 모두 재전송 대상으로 취급하므로
+     * 재전송 계약은 동일 — 상태코드 의미만 정정. 메시지는 일반 문구 (token/txRef 비노출).
+     */
+    @ExceptionHandler(EntitlementTxRefConflictException::class)
+    fun handleEntitlementTxRefConflict(e: EntitlementTxRefConflictException): ResponseEntity<ErrorResponse> {
+        log.error("EntitlementTxRefConflict — userId={} key={}", e.userId, e.entitlementKey)
+        val code = ErrorCode.INTERNAL_ERROR
+        return ResponseEntity
+            .status(code.status)
+            .body(ErrorResponse(code = code.name, message = code.message))
     }
 
     @ExceptionHandler(MethodArgumentNotValidException::class)

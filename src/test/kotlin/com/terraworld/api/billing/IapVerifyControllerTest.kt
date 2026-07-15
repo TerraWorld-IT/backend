@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
+import org.mockito.kotlin.eq
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
 import org.mockito.kotlin.verify
@@ -147,12 +148,32 @@ class IapVerifyControllerTest {
     }
 
     @Test
-    fun `R4-ENT-01 — grant TxRefConflict 는 예외 전파(5xx) — 200 granted=false 로 삼키기 금지`() {
-        // tx_ref 충돌은 "이미 보유" 멱등이 아니라 실제 실패 — 200 으로 삼키면 스토어 결제 완료 +
-        // entitlement 미부여가 영구 은폐된다. 예외 전파 → 500 → 클라(usePayment) 재시도 + 운영 surface.
+    fun `V36 — grant TxRefConflict throw 는 예외 전파(5xx) + tx 밖 conflict audit publish`() {
+        // V36 재설계: tx_ref 충돌은 서비스가 자신의 tx 안에서 throw (entitlement/원장 함께 롤백).
+        // 200 으로 삼키면 스토어 결제 완료 + entitlement 미부여가 영구 은폐된다 — 예외 전파 →
+        // 500 → 클라(usePayment) 재시도 + 운영 surface. conflict audit 은 서비스 tx 롤백과 함께
+        // 유실되므로 컨트롤러가 tx 밖에서 publish 해야 한다 (fallbackExecution=true 수신 경로).
         whenever(verifier.verifyToken(any(), any(), any())).thenReturn(VerificationResult.Ok)
-        whenever(entitlementService.grant(any(), any(), any(), anyOrNull())).thenReturn(GrantResult.TX_REF_CONFLICT)
+        whenever(entitlementService.grant(any(), any(), any(), anyOrNull()))
+            .thenThrow(EntitlementTxRefConflictException("user-1", "free_placement", "ptoken-1", "PURCHASE"))
         assertThrows<EntitlementTxRefConflictException> { controller(testMode = false).verify(req()) }
+        verify(auditService).publish(
+            eq("user-1"),
+            eq("ENTITLEMENT_GRANT_TXREF_CONFLICT"),
+            eq("Entitlement"),
+            eq("free_placement"),
+            anyOrNull(),
+        )
+    }
+
+    @Test
+    fun `V36 — 환불된 토큰(REVOKED terminal)의 재검증은 200 + granted=false (권리 미생성 멱등)`() {
+        // REVOKE 가 이미 처리된 purchaseToken 의 verify 재호출 — 권리를 만들지 않고 멱등 응답.
+        whenever(verifier.verifyToken(any(), any(), any())).thenReturn(VerificationResult.Ok)
+        whenever(entitlementService.grant(any(), any(), any(), anyOrNull())).thenReturn(GrantResult.REVOKED)
+        val res = controller(testMode = false).verify(req())
+        assertEquals(200, res.statusCode.value())
+        assertEquals(false, res.body!!.granted)
     }
 
     @Test

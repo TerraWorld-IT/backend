@@ -137,22 +137,25 @@ class IapVerifyController(
             }
         }
 
+        // V36 재설계: tx_ref 충돌은 [EntitlementService.grant] 가 자신의 @Transactional 안에서
+        // 직접 throw (entitlement/원장 함께 롤백). 200/granted=false 로 삼키면 스토어 결제 완료 +
+        // entitlement 미부여가 영구 은폐된다 — 5xx 전파 → 클라(usePayment) 재시도 + 운영 surface.
+        // conflict audit 은 서비스 tx 롤백과 함께 유실되므로 여기(tx 밖)서 publish —
+        // AuditEventListener 의 fallbackExecution=true 가 tx 부재 publish 를 수신한다.
         val grantResult =
-            entitlementService.grant(
-                userId = userId,
-                entitlementKey = entitlementKey,
-                reason = EntitlementEvent.REASON_PURCHASE,
-                txRef = body.purchaseToken,
-            )
-        // R4-ENT-01: tx_ref 충돌은 "이미 보유" 멱등이 아니라 실제 실패 — 200/granted=false 로
-        // 삼키면 스토어 결제 완료 + entitlement 미부여가 영구 은폐된다. 5xx 전파 → 클라이언트
-        // (usePayment) 재시도 + 운영 surface. (grant 자체 tx 는 이미 커밋 — conflict audit 보존.)
-        if (grantResult == GrantResult.TX_REF_CONFLICT) {
-            throw EntitlementTxRefConflictException(
-                "IAP grant tx_ref conflict — userId=$userId key=$entitlementKey (purchaseToken 이 다른 entitlement 에 이미 사용됨)",
-            )
-        }
-        // AlreadyPresent 는 기존 멱등 계약 유지: 200 + granted=false (중복 verify 호출 대응).
+            try {
+                entitlementService.grant(
+                    userId = userId,
+                    entitlementKey = entitlementKey,
+                    reason = EntitlementEvent.REASON_PURCHASE,
+                    txRef = body.purchaseToken,
+                )
+            } catch (e: EntitlementTxRefConflictException) {
+                publishTxRefConflictAudit(e)
+                throw e
+            }
+        // ALREADY_PRESENT(중복 verify 호출) 와 REVOKED(환불된 토큰 terminal — 권리 미생성) 는
+        // 정상 멱등 — 기존 계약 유지: 200 + granted=false.
         val granted = grantResult == GrantResult.GRANTED
         auditService.publish(
             userId = userId,
@@ -167,6 +170,20 @@ class IapVerifyController(
                 ),
         )
         return ResponseEntity.ok(IapVerifyResponse(granted = granted, entitlementKey = entitlementKey))
+    }
+
+    /**
+     * V36 재설계: tx_ref 충돌 audit — 서비스 tx 안 publish 는 롤백과 함께 유실되므로
+     * (AFTER_COMMIT 미도달, fallbackExecution 은 tx 부재 시에만 동작) 컨트롤러가 tx 밖에서 기록.
+     */
+    private fun publishTxRefConflictAudit(e: EntitlementTxRefConflictException) {
+        auditService.publish(
+            userId = e.userId,
+            action = "ENTITLEMENT_GRANT_TXREF_CONFLICT",
+            resourceType = "Entitlement",
+            resourceId = e.entitlementKey,
+            payload = mapOf("reason" to e.reason, "txRef" to (e.txRef ?: "null")),
+        )
     }
 }
 

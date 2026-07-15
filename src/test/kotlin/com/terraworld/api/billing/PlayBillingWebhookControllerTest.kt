@@ -10,6 +10,7 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
+import org.mockito.kotlin.eq
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
 import org.mockito.kotlin.verify
@@ -156,17 +157,37 @@ class PlayBillingWebhookControllerTest {
     }
 
     @Test
-    fun `R4-ENT-01 — grant TxRefConflict 는 예외 전파 (inbox tx rollback → 5xx → 재전송 재처리 계약)`() {
-        // tx_ref 충돌은 정상 멱등이 아닌 실제 실패. 구 Boolean false 뭉갬은 inbox 가 함께 커밋돼
-        // 200 → Pub/Sub 재전송이 duplicate 차단 → 결제 영구 유실이었다. 예외는 action 람다가
-        // BillingWebhookTxService.processWithInboxDedup 의 @Transactional 안에서 던지므로 실제
-        // 런타임에서는 inbox insert 까지 함께 롤백된다 (단위 테스트는 tx 미적용 — 전파를 pin).
+    fun `V36 — grant TxRefConflict throw 는 예외 전파 + tx 밖 conflict audit publish`() {
+        // V36 재설계: tx_ref 충돌은 서비스가 자신의 tx 안에서 throw. 실제 런타임에서는
+        // BillingWebhookTxService.processWithInboxDedup 의 @Transactional 안(action 람다)에서
+        // 던져져 inbox insert 까지 함께 롤백 → 5xx → 재전송이 duplicate-skip 으로 은폐되지
+        // 않는다 (단위 테스트는 tx 미적용 — 전파만 pin). conflict audit 은 tx 롤백과 함께
+        // 유실되므로 컨트롤러가 tx 밖에서 publish 해야 한다 (fallbackExecution=true 수신 경로).
         whenever(webhookInboxRepository.insertIfAbsent(any(), any())).thenReturn(1)
         whenever(verifier.verifyToken(any(), any(), any())).thenReturn(VerificationResult.Ok)
-        whenever(entitlementService.grant(any(), any(), any(), anyOrNull())).thenReturn(GrantResult.TX_REF_CONFLICT)
+        whenever(entitlementService.grant(any(), any(), any(), anyOrNull()))
+            .thenThrow(EntitlementTxRefConflictException("user-1", "free_placement", "ptoken-1", "PURCHASE"))
         org.junit.jupiter.api.assertThrows<EntitlementTxRefConflictException> {
             controller().handleRtdn(token, rtdn(type = "ONE_TIME_PRODUCT_PURCHASED"))
         }
+        verify(auditService).publish(
+            eq("user-1"),
+            eq("ENTITLEMENT_GRANT_TXREF_CONFLICT"),
+            eq("Entitlement"),
+            eq("free_placement"),
+            anyOrNull(),
+        )
+    }
+
+    @Test
+    fun `V36 — 환불된 토큰(REVOKED terminal)의 grant 재전송은 200 ACK (권리 미생성 멱등)`() {
+        // REVOKE 가 이미 처리된 purchaseToken 의 grant webhook 재전송(순서 역전 포함) —
+        // 결과가 불변인 재전송에 5xx 재시도를 유도하지 않고 200 ACK 로 종결한다.
+        whenever(webhookInboxRepository.insertIfAbsent(any(), any())).thenReturn(1)
+        whenever(verifier.verifyToken(any(), any(), any())).thenReturn(VerificationResult.Ok)
+        whenever(entitlementService.grant(any(), any(), any(), anyOrNull())).thenReturn(GrantResult.REVOKED)
+        val res = controller().handleRtdn(token, rtdn(type = "ONE_TIME_PRODUCT_PURCHASED"))
+        assertEquals(200, res.statusCode.value())
     }
 
     @Test

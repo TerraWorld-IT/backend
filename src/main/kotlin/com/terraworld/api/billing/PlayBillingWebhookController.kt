@@ -4,7 +4,6 @@ import com.fasterxml.jackson.core.JsonProcessingException
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.terraworld.api.entitlement.EntitlementService
 import com.terraworld.api.entitlement.EntitlementTxRefConflictException
-import com.terraworld.api.entitlement.GrantResult
 import com.terraworld.common.audit.AuditService
 import com.terraworld.domain.entitlement.EntitlementEvent
 import io.swagger.v3.oas.annotations.Hidden
@@ -217,10 +216,15 @@ class PlayBillingWebhookController(
             when (body.notificationType) {
                 in GRANT_NOTIFICATION_TYPES -> {
                     {
-                        grantOrThrowOnTxRefConflict(
+                        // V36 재설계: tx_ref 충돌은 grant 가 자신의 tx 안에서 직접 throw —
+                        // processWithInboxDedup 의 tx 에 참여 중이므로 inbox insert 까지 함께
+                        // 롤백 + 500 전파 → 재전송이 duplicate-skip 으로 은폐되지 않는다.
+                        // ALREADY_PRESENT / REVOKED(환불 토큰 terminal) 는 멱등 — 200 ACK.
+                        entitlementService.grant(
                             userId = userId,
                             entitlementKey = entitlementKey,
-                            purchaseToken = purchaseToken,
+                            reason = EntitlementEvent.REASON_PURCHASE,
+                            txRef = purchaseToken,
                         )
                     }
                 }
@@ -253,7 +257,16 @@ class PlayBillingWebhookController(
         if (notificationId == null) {
             log.warn("billing.webhook.no-notification-id — dedup 우회 (type={})", body.notificationType)
         }
-        val processed = billingWebhookTxService.processWithInboxDedup(notificationId, body.notificationType, action)
+        val processed =
+            try {
+                billingWebhookTxService.processWithInboxDedup(notificationId, body.notificationType, action)
+            } catch (e: EntitlementTxRefConflictException) {
+                // V36 재설계: 서비스 tx 안 throw → inbox insert 까지 함께 롤백된 뒤 여기 도달.
+                // conflict audit 은 롤백과 함께 유실되므로 tx 밖(여기)서 publish 후 재-throw →
+                // 500 → 재전송이 duplicate-skip 으로 은폐되지 않는다.
+                publishTxRefConflictAudit(e)
+                throw e
+            }
         if (!processed) {
             log.info(
                 "billing.webhook.duplicate-skip notificationId={} type={}",
@@ -350,7 +363,8 @@ class PlayBillingWebhookController(
         val action: (() -> Unit)? =
             when (notifType) {
                 1 -> {
-                    { grantOrThrowOnTxRefConflict(userId, entitlementKey, purchaseToken) }
+                    // V36 재설계: tx_ref 충돌은 grant 가 자신의 tx 안에서 직접 throw (아래 catch 참조).
+                    { entitlementService.grant(userId, entitlementKey, EntitlementEvent.REASON_PURCHASE, txRef = purchaseToken) }
                 }
                 2 -> {
                     { entitlementService.revoke(userId, entitlementKey, EntitlementEvent.REASON_CHARGEBACK, txRef = purchaseToken) }
@@ -363,7 +377,14 @@ class PlayBillingWebhookController(
         }
         // BE-01 불변 제약: messageId dedup insert + grant/revoke 는 같은 짧은 tx 로 커밋.
         // inbox 만 먼저 커밋하면 grant 실패 후 재전송이 duplicate 판정 → 권리 영구 유실.
-        val processed = billingWebhookTxService.processWithInboxDedup(messageId, "pubsub", action)
+        val processed =
+            try {
+                billingWebhookTxService.processWithInboxDedup(messageId, "pubsub", action)
+            } catch (e: EntitlementTxRefConflictException) {
+                // V36 재설계: tx 롤백(inbox 포함) 후 tx 밖에서 conflict audit publish + 재-throw.
+                publishTxRefConflictAudit(e)
+                throw e
+            }
         if (!processed) {
             log.info("billing.pubsub.duplicate-skip messageId={}", messageId)
         }
@@ -374,30 +395,18 @@ class PlayBillingWebhookController(
     private fun mapProductIdToEntitlementKey(productId: String): String? = ProductEntitlementMapper.toEntitlementKey(productId)
 
     /**
-     * R4-ENT-01: grant 결과 3분류 처리 — [GrantResult.TX_REF_CONFLICT] 는 실제 실패이므로
-     * throw 로 escalate. 본 함수는 [BillingWebhookTxService.processWithInboxDedup] 의 tx 안
-     * (action 람다)에서 실행되므로, throw 는 inbox dedup insert 까지 함께 롤백시키고 500 으로
-     * 전파된다 → 재전송이 duplicate-skip 으로 은폐되지 않는다 (결제 영구 유실 방지).
-     * [GrantResult.ALREADY_PRESENT] 는 기존 멱등 성공 시맨틱 그대로 (200 ACK).
+     * V36 재설계: tx_ref 충돌 audit — grant 가 서비스 tx 안에서 throw 하므로 tx 안 publish 는
+     * 롤백과 함께 유실된다 (AFTER_COMMIT 미도달, fallbackExecution 은 tx 부재 시에만 동작).
+     * 컨트롤러(tx 밖)에서 예외 필드로 기록해 audit 유실을 막는다.
      */
-    private fun grantOrThrowOnTxRefConflict(
-        userId: String,
-        entitlementKey: String,
-        purchaseToken: String,
-    ) {
-        val result =
-            entitlementService.grant(
-                userId = userId,
-                entitlementKey = entitlementKey,
-                reason = EntitlementEvent.REASON_PURCHASE,
-                txRef = purchaseToken,
-            )
-        if (result == GrantResult.TX_REF_CONFLICT) {
-            throw EntitlementTxRefConflictException(
-                "webhook grant tx_ref conflict — userId=$userId key=$entitlementKey " +
-                    "(purchaseToken 이 다른 entitlement 에 이미 사용됨 — inbox 롤백 + 5xx 재전송 유도)",
-            )
-        }
+    private fun publishTxRefConflictAudit(e: EntitlementTxRefConflictException) {
+        auditService.publish(
+            userId = e.userId,
+            action = "ENTITLEMENT_GRANT_TXREF_CONFLICT",
+            resourceType = "Entitlement",
+            resourceId = e.entitlementKey,
+            payload = mapOf("reason" to e.reason, "txRef" to (e.txRef ?: "null")),
+        )
     }
 
     /** PAY-001 fix: timing attack 방어. SHA-256 후 MessageDigest.isEqual (constant-time). */
