@@ -43,6 +43,8 @@ jobs:
         with:
           java-version: '21'
           distribution: 'temurin'
+          # ci.yml 과 동일 — 부재 시 매 스캔마다 의존성 전체 재다운로드 + 콜드 컴파일
+          cache: gradle
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3

@@ -3,12 +3,31 @@ name: Backend CI
 on:
   push:
     branches: [main, develop]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
   pull_request:
     branches: [main, develop]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+  # 수동 재배포 경로 (구 deploy-selfhosted.yml 의 workflow_dispatch 대체) —
+  # main 에서 dispatch 하면 CI 통과 후 build-push-image → deploy 까지 이어진다.
+  workflow_dispatch:
+
+# 연속 push 시 구식 커밋 빌드 취소 (frontend/mobile CI 와 정합).
+# 단 main 은 cancel 금지 — 배포 job(컨테이너 교체)이 중간에 죽으면 안 됨. 연속 push 는 큐잉.
+concurrency:
+  group: backend-ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  IMAGE: ghcr.io/terraworld-it/terraworld-backend
 
 jobs:
   test-and-build:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - uses: actions/checkout@v4
@@ -74,3 +93,95 @@ jobs:
           name: backend-build
           path: build/libs/*.jar
           retention-days: 7
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # 배포 (구 deploy-selfhosted.yml 통합, 2026-07-15)
+  #
+  # 이전 구조의 문제: 별도 push-트리거 워크플로가 CI 와 병렬로 맥 러너에서
+  # `git reset --hard` + `bootJar -x test` + docker build 를 수행 —
+  # (a) 테스트를 우회한 jar 가 CI 결과와 무관하게 프로덕션 직행
+  # (b) OOM 이력 있는 맥에서 Kotlin 컴파일 + docker build 반복
+  # (c) CI 가 이미 만든 테스트 통과 jar 아티팩트와 중복 빌드
+  #
+  # 새 구조: `needs` 체인으로 같은 run = 같은 SHA 보장. jar 는 플랫폼 무관이라
+  # CI 아티팩트 재사용이 안전 (frontend 의 .output 과 다름). 이미지는 ubuntu 에서
+  # 빌드해 ghcr 로 push, 맥은 pull 후 컨테이너 교체만 (frontend 와 동일 모델).
+  # push(main) 전용 — fork PR 에서는 절대 실행 안 함(self-hosted 보안).
+  # ───────────────────────────────────────────────────────────────────────────
+  build-push-image:
+    name: Build image (ubuntu) → ghcr
+    needs: test-and-build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      # Dockerfile 은 jar COPY 뿐이라 서브모듈 불필요 — 얕은 checkout 으로 충분.
+      - uses: actions/checkout@v4
+
+      - name: Download tested jar from this run
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-build
+          path: build/libs/
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # :latest 는 compose 가 참조하는 태그, :<sha> 는 롤백용.
+      - name: Build and push image
+        run: |
+          set -euo pipefail
+          docker build -t "$IMAGE:latest" -t "$IMAGE:$GITHUB_SHA" .
+          docker push "$IMAGE:latest"
+          docker push "$IMAGE:$GITHUB_SHA"
+
+  deploy:
+    name: Pull and restart (self-hosted Mac)
+    needs: build-push-image
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, terraworld]
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Pull image and restart backend
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USER: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          export PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin"
+          DEPLOY=/Users/jaeseok/TerraWorld-IT/deploy
+
+          # 비대화형 맥 러너는 osxkeychain 잠김으로 `docker login` 불가 —
+          # frontend deploy 와 동일하게 임시 DOCKER_CONFIG 에 auth 직접 기록.
+          TMPCFG="$(mktemp -d)"
+          trap 'rm -rf "$TMPCFG"' EXIT
+          if [ -d "$HOME/.docker/cli-plugins" ]; then
+            ln -s "$HOME/.docker/cli-plugins" "$TMPCFG/cli-plugins"
+          fi
+          GHCR_AUTH="$(printf '%s:%s' "$GHCR_USER" "$GHCR_TOKEN" | base64 | tr -d '\n')"
+          umask 077
+          printf '{"auths":{"ghcr.io":{"auth":"%s"}}}' "$GHCR_AUTH" > "$TMPCFG/config.json"
+          unset GHCR_AUTH
+          export DOCKER_CONFIG="$TMPCFG"
+          docker compose version >/dev/null || { echo "❌ docker compose 플러그인을 찾지 못함"; exit 1; }
+
+          cd "$DEPLOY"
+          docker compose -f docker-compose.yml -f docker-compose.tunnel.yml pull backend
+          docker compose -f docker-compose.yml -f docker-compose.tunnel.yml up -d --no-deps backend
+
+          echo "backend healthy 대기..."
+          for i in $(seq 1 24); do
+            s=$(docker inspect --format '{{.State.Health.Status}}' tw-backend 2>/dev/null || echo n/a)
+            [ "$s" = healthy ] && { echo "✅ backend healthy"; exit 0; }
+            sleep 5
+          done
+          echo "❌ backend not healthy"; docker logs --tail 50 tw-backend; exit 1
