@@ -7,7 +7,7 @@ import com.terraworld.domain.item.Item
 import com.terraworld.domain.item.PriceType
 import com.terraworld.domain.item.UserItem
 import com.terraworld.domain.item.UserItemRepository
-import com.terraworld.domain.terrarium.TerrariumRepository
+import com.terraworld.domain.terrarium.TerrariumPlacementRepository
 import com.terraworld.domain.user.User
 import com.terraworld.domain.user.UserRepository
 import com.terraworld.domain.user.UserRole
@@ -16,7 +16,6 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import org.mockito.Mockito
-import java.util.Optional
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
@@ -29,7 +28,7 @@ import kotlin.test.assertTrue
 class UserServiceTest {
     private lateinit var userRepo: FakeUserRepository
     private lateinit var userItemRepo: FakeUserItemRepository
-    private lateinit var terrariumRepo: TerrariumRepository
+    private lateinit var placementRepo: TerrariumPlacementRepository
     private lateinit var entitlementService: com.terraworld.api.entitlement.EntitlementService
     private lateinit var service: UserService
 
@@ -37,7 +36,7 @@ class UserServiceTest {
     fun setup() {
         userRepo = FakeUserRepository()
         userItemRepo = FakeUserItemRepository()
-        terrariumRepo = Mockito.mock(TerrariumRepository::class.java)
+        placementRepo = Mockito.mock(TerrariumPlacementRepository::class.java)
         entitlementService = Mockito.mock(com.terraworld.api.entitlement.EntitlementService::class.java)
 
         val walletBuilder =
@@ -56,13 +55,13 @@ class UserServiceTest {
             UserService(
                 userRepo,
                 userItemRepo,
-                terrariumRepo,
+                placementRepo,
                 walletBuilder,
                 entitlementService,
             )
 
-        // 기본: terrarium 없음 (placedItems 빈 목록)
-        Mockito.`when`(terrariumRepo.findByUserId(Mockito.anyString())).thenReturn(Optional.empty())
+        // 기본: 배치 없음 (placedItems 빈 목록) — BE-02: EntityGraph 조회로 대체
+        Mockito.`when`(placementRepo.findAllByTerrariumUserIdOrderById(Mockito.anyString())).thenReturn(emptyList())
     }
 
     @Test
@@ -128,5 +127,15 @@ class UserServiceTest {
             userId: String,
             itemId: Long,
         ): Boolean = store.values.any { it.user.id == userId && it.item.id == itemId }
+
+        // BE-03: TerrariumService.updatePlacements 일괄 소유 검증용
+        override fun findOwnedItemIds(
+            userId: String,
+            itemIds: Collection<Long>,
+        ): Set<Long> =
+            store.values
+                .filter { it.user.id == userId && it.item.id in itemIds }
+                .map { it.item.id }
+                .toSet()
     }
 }

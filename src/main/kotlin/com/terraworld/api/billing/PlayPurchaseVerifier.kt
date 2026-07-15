@@ -52,6 +52,24 @@ class PlayPurchaseVerifier(
             .build()
 
     /**
+     * BE-13 (2026-07-15 성능 감사): GoogleCredentials 를 호출마다 fromStream 재생성하면
+     * 내부 OAuth access-token 캐시가 매번 버려져 검증마다 파일 IO + 토큰 발급 round-trip 발생 →
+     * lazy 필드로 1회 생성 승격. kotlin lazy 기본 mode = SYNCHRONIZED (thread-safe 1회 초기화,
+     * 초기화 실패 시 미초기화 상태 유지 — 다음 호출이 재시도). refreshIfExpired() 는 호출마다 유지
+     * (GoogleCredentials 내부 동기화로 thread-safe, 만료 시에만 실제 갱신).
+     * serviceAccountJsonPath 가 blank 면 caller(verifyToken/resolveObfuscatedAccountId)가
+     * 선분기하므로 본 필드는 절대 초기화되지 않는다.
+     */
+    private val credentials: GoogleCredentials by lazy {
+        // Codex 보안 LOW: FileInputStream use{} 로 FD 누수 방지.
+        FileInputStream(serviceAccountJsonPath).use { stream ->
+            GoogleCredentials
+                .fromStream(stream)
+                .createScoped(listOf("https://www.googleapis.com/auth/androidpublisher"))
+        }
+    }
+
+    /**
      * service-account 주입 여부 = 실 Play API 검증 가능 상태.
      * caller(RTDN/IAP)가 "검증 비활성(미설정)" 과 "검증 결과 not-found" 를 구분하게 한다
      * (Codex SEC-002: prod 미설정 시 silent-drop 대신 fail-loud 분기).
@@ -134,15 +152,9 @@ class PlayPurchaseVerifier(
     }
 
     private fun fetchAccessToken(): String {
-        // Codex 보안 LOW: FileInputStream use{} 로 FD 누수 방지.
-        val creds =
-            FileInputStream(serviceAccountJsonPath).use { stream ->
-                GoogleCredentials
-                    .fromStream(stream)
-                    .createScoped(listOf("https://www.googleapis.com/auth/androidpublisher"))
-            }
-        creds.refreshIfExpired()
-        return creds.accessToken.tokenValue
+        // BE-13: credentials 는 lazy 1회 생성 — 토큰은 만료 시에만 갱신 (재사용).
+        credentials.refreshIfExpired()
+        return credentials.accessToken.tokenValue
     }
 
     internal fun parsePurchase(

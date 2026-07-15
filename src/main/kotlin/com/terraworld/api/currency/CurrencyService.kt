@@ -61,10 +61,8 @@ class CurrencyService(
         require(amount >= 0) { "credit amount must be >= 0" }
         validateCurrency(currencyCode)
         // 감사 MED#6: 원자적 UPSERT — read-modify-write race(동시 credit/최초삽입) 제거. 호출부 tx 내 실행(원자성 유지).
-        balanceRepository.creditAtomic(userId, currencyCode, amount)
-        val newAmount =
-            balanceRepository.findAmount(userId, currencyCode)
-                ?: throw BusinessException(ErrorCode.INTERNAL_ERROR, "credit 후 잔액 조회 실패")
+        // BE-09: RETURNING 이 새 잔액을 같은 statement 로 반환 — 후속 findAmount 재조회 왕복 제거.
+        val newAmount = balanceRepository.creditAtomic(userId, currencyCode, amount)
         appendLedger(userId, currencyCode, amount, newAmount, reason, refType, refKey)
         return newAmount
     }
@@ -79,18 +77,18 @@ class CurrencyService(
         refKey: String? = null,
     ): Long {
         require(amount >= 0) { "debit amount must be >= 0" }
-        // 감사 MED#6: 원자적 조건부 UPDATE — 잔액검사+차감을 단일 statement 로. rows==0 = 부재/잔액부족.
-        val rows = balanceRepository.debitAtomic(userId, currencyCode, amount)
-        if (rows == 0) throw BusinessException(ErrorCode.INSUFFICIENT_FUNDS)
+        // 감사 MED#6: 원자적 조건부 UPDATE — 잔액검사+차감을 단일 statement 로.
+        // BE-09: RETURNING 으로 새 잔액 반환 — null = 행 부재 OR 잔액 부족 (기존 rows==0 동일 의미).
         val newAmount =
-            balanceRepository.findAmount(userId, currencyCode)
+            balanceRepository.debitAtomic(userId, currencyCode, amount)
                 ?: throw BusinessException(ErrorCode.INSUFFICIENT_FUNDS)
         appendLedger(userId, currencyCode, -amount, newAmount, reason, refType, refKey)
         return newAmount
     }
 
+    // BE-08: existsByCode 는 Caffeine TTL 10분 캐시 (화폐 7종 고정 seed — 매 credit 검증 SELECT 제거).
     private fun validateCurrency(currencyCode: String) {
-        if (!currencyRepository.existsById(currencyCode)) throw BusinessException(ErrorCode.INVALID_CURRENCY)
+        if (!currencyRepository.existsByCode(currencyCode)) throw BusinessException(ErrorCode.INVALID_CURRENCY)
     }
 
     private fun appendLedger(

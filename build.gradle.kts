@@ -30,6 +30,12 @@ dependencies {
     implementation("org.springframework.boot:spring-boot-starter-data-redis")
     implementation("org.springframework.boot:spring-boot-starter-actuator")
 
+    // BE-08 (2026-07-15 성능 감사) — 정적 config(화폐/티어/육성/카탈로그/카테고리) 로컬 캐시.
+    // CacheConfig 가 CaffeineCacheManager 를 명시 @Bean 으로 선언 — redis starter 가 classpath 에
+    // 있어도 auto-config 가 Redis cache 로 잡지 않는다 (로컬 인메모리 의도).
+    implementation("org.springframework.boot:spring-boot-starter-cache")
+    implementation("com.github.ben-manes.caffeine:caffeine")
+
     // Kotlin
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
     implementation("org.jetbrains.kotlin:kotlin-reflect")

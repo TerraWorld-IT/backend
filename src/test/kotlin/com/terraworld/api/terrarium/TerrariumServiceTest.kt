@@ -273,6 +273,9 @@ class TerrariumServiceTest {
         override fun extractId(entity: TierConfig): String = entity.tier
 
         override fun findAllByOrderByTierOrderAsc(): List<TierConfig> = store.values.sortedBy { it.tierOrder }
+
+        // BE-08: TerrariumService 가 findById 대신 캐시 대상 scalar 조회 사용
+        override fun findSlotsByTier(tier: String): Int? = store[tier]?.slots
     }
 
     private class FakeRecordRepository :
@@ -291,11 +294,15 @@ class TerrariumServiceTest {
             org.springframework.data.domain.Page
                 .empty()
 
-        override fun findAllByUserIdAndRecordedDateBetweenAndIsDeletedFalse(
+        // BE-16: 월 조회 pageable 계약 정합 — Page 반환
+        override fun findAllByUserIdAndRecordedDateBetweenAndIsDeletedFalseOrderByCreatedAtDesc(
             userId: String,
             from: LocalDate,
             to: LocalDate,
-        ): List<ActivityRecord> = emptyList()
+            pageable: org.springframework.data.domain.Pageable,
+        ): org.springframework.data.domain.Page<ActivityRecord> =
+            org.springframework.data.domain.Page
+                .empty()
 
         override fun findAllByUserIdAndCategoryIdAndIsDeletedFalseOrderByCreatedAtDesc(
             userId: String,
@@ -305,12 +312,15 @@ class TerrariumServiceTest {
             org.springframework.data.domain.Page
                 .empty()
 
-        override fun findAllByUserIdAndCategoryIdAndRecordedDateBetweenAndIsDeletedFalse(
+        override fun findAllByUserIdAndCategoryIdAndRecordedDateBetweenAndIsDeletedFalseOrderByCreatedAtDesc(
             userId: String,
             categoryId: Long,
             from: LocalDate,
             to: LocalDate,
-        ): List<ActivityRecord> = emptyList()
+            pageable: org.springframework.data.domain.Pageable,
+        ): org.springframework.data.domain.Page<ActivityRecord> =
+            org.springframework.data.domain.Page
+                .empty()
 
         override fun acquireRecordDailyLock(key: String): Int = 1
 
@@ -339,6 +349,20 @@ class TerrariumServiceTest {
         ): Long = 0
 
         override fun countByCategoryGrouped(userId: String): List<Array<Any>> = emptyList()
+
+        // BE-05 / ADD-BE-02: 신규 배치·집계 메서드 — 본 테스트 경로 미사용 (zero stub)
+        override fun findMaxRecordedDatePerUser(): List<com.terraworld.domain.record.UserMaxRecordedDateProjection> = emptyList()
+
+        override fun countStatisticsSummary(
+            userId: String,
+            today: LocalDate,
+            weekAgo: LocalDate,
+        ): com.terraworld.domain.record.RecordStatisticsSummary =
+            object : com.terraworld.domain.record.RecordStatisticsSummary {
+                override val todayCount: Long? = null
+                override val weekCount: Long? = null
+                override val totalCount: Long = 0
+            }
 
         override fun findEngagementRanking(
             start: LocalDate,

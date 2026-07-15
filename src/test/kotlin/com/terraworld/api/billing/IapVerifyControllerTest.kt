@@ -1,6 +1,8 @@
 package com.terraworld.api.billing
 
 import com.terraworld.api.entitlement.EntitlementService
+import com.terraworld.api.entitlement.EntitlementTxRefConflictException
+import com.terraworld.api.entitlement.GrantResult
 import com.terraworld.common.audit.AuditService
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
@@ -127,11 +129,39 @@ class IapVerifyControllerTest {
     @Test
     fun `verifier Ok 면 grant 호출 + 200`() {
         whenever(verifier.verifyToken(any(), any(), any())).thenReturn(VerificationResult.Ok)
-        whenever(entitlementService.grant(any(), any(), any(), anyOrNull())).thenReturn(true)
+        whenever(entitlementService.grant(any(), any(), any(), anyOrNull())).thenReturn(GrantResult.GRANTED)
         val res = controller(testMode = false).verify(req())
         assertEquals(200, res.statusCode.value())
         assertTrue(res.body!!.granted)
         assertEquals("free_placement", res.body!!.entitlementKey)
         verify(entitlementService).grant(any(), any(), any(), anyOrNull())
+    }
+
+    @Test
+    fun `R4-ENT-01 — 이미 보유(ALREADY_PRESENT)는 기존 멱등 계약 유지 — 200 + granted=false`() {
+        whenever(verifier.verifyToken(any(), any(), any())).thenReturn(VerificationResult.Ok)
+        whenever(entitlementService.grant(any(), any(), any(), anyOrNull())).thenReturn(GrantResult.ALREADY_PRESENT)
+        val res = controller(testMode = false).verify(req())
+        assertEquals(200, res.statusCode.value())
+        assertEquals(false, res.body!!.granted)
+    }
+
+    @Test
+    fun `R4-ENT-01 — grant TxRefConflict 는 예외 전파(5xx) — 200 granted=false 로 삼키기 금지`() {
+        // tx_ref 충돌은 "이미 보유" 멱등이 아니라 실제 실패 — 200 으로 삼키면 스토어 결제 완료 +
+        // entitlement 미부여가 영구 은폐된다. 예외 전파 → 500 → 클라(usePayment) 재시도 + 운영 surface.
+        whenever(verifier.verifyToken(any(), any(), any())).thenReturn(VerificationResult.Ok)
+        whenever(entitlementService.grant(any(), any(), any(), anyOrNull())).thenReturn(GrantResult.TX_REF_CONFLICT)
+        assertThrows<EntitlementTxRefConflictException> { controller(testMode = false).verify(req()) }
+    }
+
+    @Test
+    fun `BE-01 — verify 성공 + grant 예외는 전파(5xx 재시도 계약, 200 삼키기 금지)`() {
+        // 컨트롤러 @Transactional 제거 후에도 grant 실패는 그대로 전파돼 5xx 가 되어야 한다.
+        // 200 으로 삼키면 스토어 결제 완료 + entitlement 미부여가 영구 은폐됨 (클라 재시도 차단).
+        whenever(verifier.verifyToken(any(), any(), any())).thenReturn(VerificationResult.Ok)
+        whenever(entitlementService.grant(any(), any(), any(), anyOrNull()))
+            .thenThrow(RuntimeException("db down"))
+        assertThrows<RuntimeException> { controller(testMode = false).verify(req()) }
     }
 }

@@ -18,7 +18,6 @@ import io.terraworld.api.model.RecordResponse
 import io.terraworld.api.model.RewardInfo
 import io.terraworld.api.model.StatisticsResponse
 import org.springframework.data.domain.Page
-import org.springframework.data.domain.PageImpl
 import org.springframework.data.domain.Pageable
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
@@ -283,14 +282,16 @@ class RecordService(
             val from = LocalDate.of(year, month, 1)
             val to = from.withDayOfMonth(from.lengthOfMonth())
             // L3: categoryId 지정 시 카테고리 필터 적용 (RecordApi categoryId query 계약 정합).
-            val records =
-                if (categoryId != null) {
-                    recordRepository.findAllByUserIdAndCategoryIdAndRecordedDateBetweenAndIsDeletedFalse(userId, categoryId, from, to)
-                } else {
-                    recordRepository.findAllByUserIdAndRecordedDateBetweenAndIsDeletedFalse(userId, from, to)
-                }
-            val responses = records.map { it.toResponse() }
-            return PageImpl(responses, pageable, responses.size.toLong())
+            // BE-16: 월 조회도 pageable 적용 (기존: 전건 List + PageImpl 로 pageable 무시 — 계약 위반).
+            return if (categoryId != null) {
+                recordRepository
+                    .findAllByUserIdAndCategoryIdAndRecordedDateBetweenAndIsDeletedFalseOrderByCreatedAtDesc(userId, categoryId, from, to, pageable)
+                    .map { it.toResponse() }
+            } else {
+                recordRepository
+                    .findAllByUserIdAndRecordedDateBetweenAndIsDeletedFalseOrderByCreatedAtDesc(userId, from, to, pageable)
+                    .map { it.toResponse() }
+            }
         }
         // L3: categoryId 지정 시 카테고리 필터 적용.
         return if (categoryId != null) {
@@ -314,10 +315,14 @@ class RecordService(
         val categoryCounts = recordRepository.countByCategoryGrouped(userId)
         val countMap = categoryCounts.associate { (it[0] as Long) to (it[1] as Long) }
 
+        // ADD-BE-02 (2026-07-15 성능 감사): today/week/total 3 COUNT 쿼리 → 조건부 집계 1쿼리.
+        // SUM(CASE WHEN) 은 기록 0건 시 null — 0 으로 정규화.
+        val summary = recordRepository.countStatisticsSummary(userId, today, weekAgo)
+
         return StatisticsResponse(
-            todayRecords = recordRepository.countByUserIdAndRecordedDateAndIsDeletedFalse(userId, today),
-            thisWeekRecords = recordRepository.countByUserIdAndRecordedDateGreaterThanEqualAndIsDeletedFalse(userId, weekAgo),
-            totalRecords = recordRepository.countByUserIdAndIsDeletedFalse(userId),
+            todayRecords = summary.todayCount ?: 0L,
+            thisWeekRecords = summary.weekCount ?: 0L,
+            totalRecords = summary.totalCount,
             byCategory =
                 categories.map { cat ->
                     CategoryCount(

@@ -3,8 +3,9 @@ package com.terraworld.api.billing
 import com.fasterxml.jackson.core.JsonProcessingException
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.terraworld.api.entitlement.EntitlementService
+import com.terraworld.api.entitlement.EntitlementTxRefConflictException
+import com.terraworld.api.entitlement.GrantResult
 import com.terraworld.common.audit.AuditService
-import com.terraworld.domain.billing.WebhookInboxRepository
 import com.terraworld.domain.entitlement.EntitlementEvent
 import io.swagger.v3.oas.annotations.Hidden
 import jakarta.annotation.PostConstruct
@@ -12,19 +13,13 @@ import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.core.env.Environment
 import org.springframework.http.ResponseEntity
-import org.springframework.transaction.annotation.Transactional
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestHeader
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
-import java.net.URI
-import java.net.http.HttpClient
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
 import java.security.MessageDigest
-import java.time.Duration
 import java.util.Base64
 
 /**
@@ -54,17 +49,32 @@ class PlayBillingWebhookController(
     private val auditService: AuditService,
     private val objectMapper: ObjectMapper,
     private val environment: Environment,
-    // N11 (구현 계획서 v4): webhook 중복 수신 dedup inbox
-    private val webhookInboxRepository: WebhookInboxRepository,
+    // BE-01: inbox dedup + grant/revoke 를 하나의 짧은 tx 로 묶는 경계 (verify 는 tx 밖).
+    private val billingWebhookTxService: BillingWebhookTxService,
+    // BE-01: Discord alert @Async best-effort 분리 (요청/tx 스레드에서 동기 HTTP 금지).
+    private val billingAlertService: BillingAlertService,
     @Value("\${terraworld.internal-api-token:}")
     private val expectedInternalToken: String,
-    @Value("\${terraworld.billing.alert-discord-webhook:}")
-    private val alertDiscordWebhook: String,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    private val httpClient: HttpClient =
-        HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build()
+    companion object {
+        private val GRANT_NOTIFICATION_TYPES =
+            setOf(
+                "ONE_TIME_PRODUCT_PURCHASED",
+                "SUBSCRIPTION_PURCHASED",
+                "SUBSCRIPTION_RECOVERED",
+                "SUBSCRIPTION_RENEWED",
+            )
+        private val REVOKE_NOTIFICATION_TYPES =
+            setOf(
+                "REFUND",
+                "ONE_TIME_PRODUCT_CANCELED",
+                "SUBSCRIPTION_CANCELED",
+                "SUBSCRIPTION_REVOKED",
+                "SUBSCRIPTION_EXPIRED",
+            )
+    }
 
     /**
      * PAY-001 fix: prod profile 부팅 시 internal-api-token 미설정 = fail-fast.
@@ -89,12 +99,20 @@ class PlayBillingWebhookController(
     }
 
     /**
-     * N11 (구현 계획서 v4): inbox dedup + 처리를 단일 @Transactional 로 묶음.
-     * inbox row 저장과 entitlement grant/revoke 가 atomic — 처리 실패 시 inbox 도 rollback
-     * 되어 재시도 시 정상 재처리.
+     * BE-01 (2026-07-15 성능 감사): 메서드 @Transactional 제거 + 처리 순서 재배치.
+     *
+     * 기존: tx { auth → inbox dedup → 매핑 → Google verify(외부 HTTP, timeout 8s) → grant/revoke }
+     *  — verify 대기 동안 DB 커넥션(pool 10) 점유 (pool 고갈 벡터).
+     * 신규: auth → 매핑 → verify(tx 밖) → tx { inbox dedup + grant/revoke }.
+     *
+     * 시맨틱 (N11 원자성 유지):
+     *  - inbox insertIfAbsent 와 grant/revoke 는 [BillingWebhookTxService] 의 같은 짧은 tx 로
+     *    원자 커밋 — grant 실패 시 inbox 도 rollback → 5xx → 재전송이 정상 재처리 (분리 금지).
+     *  - 중복 notification 은 verify 를 재수행 후 dedup 에서 skip (dup 은 드묾 — 정합성 우선).
+     *  - verify 실패(400/401/503)는 inbox 미기록 — 재전송이 dup-skip 으로 은폐되지 않고
+     *    재시도된다 (pubsub 경로 SEC-002 의 fail-loud 철학과 정렬).
      */
     @PostMapping("/play-billing")
-    @Transactional
     fun handleRtdn(
         @RequestHeader("X-Internal-Token", required = false) token: String?,
         @RequestBody body: PlayBillingNotification,
@@ -124,33 +142,14 @@ class PlayBillingWebhookController(
             return ResponseEntity.status(401).build()
         }
 
-        // N11 fix: webhook 중복 수신 dedup. notificationId 가 이미 inbox 에 있으면 재처리 skip.
-        // Codex audit Q3: check-then-insert race 회피 — 원자적 INSERT ... ON CONFLICT DO NOTHING.
-        // inserted == 0 (conflict) 이면 이미 처리된 notification → skip.
-        // notificationId 미제공 (legacy caller) 시 dedup 우회 — entitlement grant 자체는
-        // idempotent (uq_user_entitlement_tx_ref) 라 안전.
-        val notificationId = body.notificationId
-        if (notificationId != null) {
-            val inserted = webhookInboxRepository.insertIfAbsent(notificationId, body.notificationType)
-            if (inserted == 0) {
-                log.info(
-                    "billing.webhook.duplicate-skip notificationId={} type={}",
-                    notificationId,
-                    body.notificationType,
-                )
-                return ResponseEntity.ok().build()
-            }
-        } else {
-            log.warn("billing.webhook.no-notification-id — dedup 우회 (type={})", body.notificationType)
-        }
-
         val userId = body.userId
         val productId = body.productId
         val purchaseToken = body.purchaseToken
         val entitlementKey = mapProductIdToEntitlementKey(productId)
 
         if (entitlementKey == null) {
-            // PAY-003 fix: unknown productId → warn log + Discord alert (운영 누락 회피)
+            // PAY-003 fix: unknown productId → warn log + Discord alert (운영 누락 회피).
+            // BE-01: alert 는 @Async best-effort. 200 ACK = 재전송 없음 — inbox 기록 불요.
             log.warn("billing.webhook.unknown-product productId={} purchaseToken={}", productId, redact(purchaseToken))
             auditService.publish(
                 userId = userId.ifBlank { "anonymous" },
@@ -162,11 +161,12 @@ class PlayBillingWebhookController(
                         "notificationType" to body.notificationType,
                     ),
             )
-            sendDiscordAlert("⚠️ Unknown Play product: `$productId` (type=${body.notificationType})")
+            billingAlertService.sendDiscordAlert("⚠️ Unknown Play product: `$productId` (type=${body.notificationType})")
             return ResponseEntity.ok().build()
         }
 
         // PAY-002 fix: Google Play API 로 purchaseToken cross-check.
+        // BE-01: 외부 HTTP — tx 밖에서 수행 (DB 커넥션 미점유).
         // 별 cycle 활성화 (serviceAccountJsonPath 주입) 전까지는 Disabled 반환 — 본 cycle 운영 시
         // **개발/스테이징 환경 only** 로 사용 (prod 는 verifier 활성화 필수).
         val verification = verifier.verifyToken(productId, purchaseToken, userId)
@@ -189,7 +189,7 @@ class PlayBillingWebhookController(
                             "productId" to productId,
                         ),
                 )
-                sendDiscordAlert("🚨 Play webhook user mismatch — productId=$productId")
+                billingAlertService.sendDiscordAlert("🚨 Play webhook user mismatch — productId=$productId")
                 return ResponseEntity.status(401).build()
             }
             is VerificationResult.InvalidToken -> {
@@ -212,41 +212,55 @@ class PlayBillingWebhookController(
             }
         }
 
-        when (body.notificationType) {
-            "ONE_TIME_PRODUCT_PURCHASED",
-            "SUBSCRIPTION_PURCHASED",
-            "SUBSCRIPTION_RECOVERED",
-            "SUBSCRIPTION_RENEWED",
-            -> {
-                entitlementService.grant(
-                    userId = userId,
-                    entitlementKey = entitlementKey,
-                    reason = EntitlementEvent.REASON_PURCHASE,
-                    txRef = purchaseToken,
-                )
+        // 반영할 entitlement action 결정. 무처리 type 은 inbox 기록 없이 ACK (200 = 재전송 없음).
+        val action: (() -> Unit)? =
+            when (body.notificationType) {
+                in GRANT_NOTIFICATION_TYPES -> {
+                    {
+                        grantOrThrowOnTxRefConflict(
+                            userId = userId,
+                            entitlementKey = entitlementKey,
+                            purchaseToken = purchaseToken,
+                        )
+                    }
+                }
+                in REVOKE_NOTIFICATION_TYPES -> {
+                    {
+                        entitlementService.revoke(
+                            userId = userId,
+                            entitlementKey = entitlementKey,
+                            reason =
+                                when (body.notificationType) {
+                                    "REFUND" -> EntitlementEvent.REASON_REFUND
+                                    else -> EntitlementEvent.REASON_CHARGEBACK
+                                },
+                            txRef = purchaseToken,
+                        )
+                    }
+                }
+                else -> null
             }
-            "REFUND",
-            "ONE_TIME_PRODUCT_CANCELED",
-            "SUBSCRIPTION_CANCELED",
-            "SUBSCRIPTION_REVOKED",
-            "SUBSCRIPTION_EXPIRED",
-            -> {
-                entitlementService.revoke(
-                    userId = userId,
-                    entitlementKey = entitlementKey,
-                    reason =
-                        when (body.notificationType) {
-                            "REFUND" -> EntitlementEvent.REASON_REFUND
-                            else -> EntitlementEvent.REASON_CHARGEBACK
-                        },
-                    txRef = purchaseToken,
-                )
-            }
-            else -> {
-                log.info("billing.webhook.ignore type={}", body.notificationType)
-            }
+        if (action == null) {
+            log.info("billing.webhook.ignore type={}", body.notificationType)
+            return ResponseEntity.ok().build()
         }
 
+        // N11 fix (BE-01 재배치): webhook 중복 수신 dedup — inbox insertIfAbsent + grant/revoke 를
+        // 같은 짧은 tx 로 원자 커밋 (Codex audit Q3 의 원자적 ON CONFLICT DO NOTHING 유지).
+        // notificationId 미제공 (legacy caller) 시 dedup 우회 — entitlement grant 자체는
+        // idempotent (uq_user_entitlement_tx_ref) 라 안전.
+        val notificationId = body.notificationId
+        if (notificationId == null) {
+            log.warn("billing.webhook.no-notification-id — dedup 우회 (type={})", body.notificationType)
+        }
+        val processed = billingWebhookTxService.processWithInboxDedup(notificationId, body.notificationType, action)
+        if (!processed) {
+            log.info(
+                "billing.webhook.duplicate-skip notificationId={} type={}",
+                notificationId,
+                body.notificationType,
+            )
+        }
         return ResponseEntity.ok().build()
     }
 
@@ -260,9 +274,14 @@ class PlayBillingWebhookController(
      * 인증: Pub/Sub push subscription URL 의 `?token=<shared secret>`(INTERNAL_API_TOKEN), constant-time.
      * one-time notificationType: 1=PURCHASED→grant, 2=CANCELED→revoke. messageId dedup.
      * ⚠️ 실 RTDN 트래픽 미검증(.env-ready) — Pub/Sub 구독 + service-account 후 1회 검증 필요.
+     *
+     * BE-01 (2026-07-15 성능 감사): 메서드 @Transactional 제거. 외부 HTTP(Play API
+     * resolveObfuscatedAccountId / Discord alert)는 tx 밖 — DB 반영(messageId dedup +
+     * grant/revoke)만 [BillingWebhookTxService] 의 같은 짧은 tx 로 원자 커밋. malformed/
+     * missing-field 류는 200 ACK 자체가 Pub/Sub 재전송을 차단하므로 inbox 기록 불요
+     * (기존 SEC-001 의 "throw 금지 → ACK" 시맨틱 유지 — dedup 선커밋은 tx 축소로 불필요해짐).
      */
     @PostMapping("/play-billing/pubsub")
-    @Transactional
     fun handlePubSubRtdn(
         @RequestParam(name = "token", required = false) token: String?,
         @RequestBody envelope: PubSubEnvelope,
@@ -290,12 +309,9 @@ class PlayBillingWebhookController(
             return ResponseEntity.ok().build()
         }
         val messageId = envelope.message.messageId
-        if (messageId != null && webhookInboxRepository.insertIfAbsent(messageId, "pubsub") == 0) {
-            log.info("billing.pubsub.duplicate-skip messageId={}", messageId)
-            return ResponseEntity.ok().build()
-        }
-        // SEC-001 (Codex MEDIUM): malformed base64/JSON 은 200 OK 로 ACK (messageId 는 위에서 insert 완료).
-        // throw 시 @Transactional 롤백 → dedup insert 취소 → 동일 메시지 무한 redelivery storm. 차단.
+        // SEC-001 (Codex MEDIUM) — BE-01 변형: malformed base64/JSON 은 200 OK 로 ACK.
+        // 200 ACK 자체가 Pub/Sub 재전송을 차단하므로 (기존의 dedup 선커밋 없이도)
+        // redelivery storm 이 발생하지 않는다. decode 는 tx 밖 — throw/rollback 상호작용 없음.
         val root =
             try {
                 objectMapper.readTree(String(Base64.getDecoder().decode(dataB64), Charsets.UTF_8))
@@ -315,31 +331,74 @@ class PlayBillingWebhookController(
         val purchaseToken = otp.get("purchaseToken")?.asText()
         val sku = otp.get("sku")?.asText()
         if (purchaseToken.isNullOrBlank() || sku.isNullOrBlank()) {
-            // 필드 누락 = 처리 불능. dedup 은 이미 커밋(위 insert) → ACK 로 재전송 차단.
+            // 필드 누락 = 처리 불능. 200 ACK 로 재전송 차단 (inbox 기록 불요 — BE-01).
             log.warn("billing.pubsub.missing-fields messageId={}", messageId)
             return ResponseEntity.ok().build()
         }
         val entitlementKey = mapProductIdToEntitlementKey(sku)
         if (entitlementKey == null) {
-            sendDiscordAlert("⚠️ Unknown Play product (pubsub): `$sku`")
+            billingAlertService.sendDiscordAlert("⚠️ Unknown Play product (pubsub): `$sku`")
             return ResponseEntity.ok().build()
         }
         // userId 해석 — verifier enabled 확정 상태. 부재 = genuine not-found (client setObfuscatedAccountId 누락 추정).
+        // BE-01: 외부 HTTP(Play API) — tx 밖에서 수행 (DB 커넥션 미점유).
         val userId = verifier.resolveObfuscatedAccountId(sku, purchaseToken)
         if (userId.isNullOrBlank()) {
             log.warn("billing.pubsub.no-account sku={} (obfuscatedAccountId 부재)", sku)
             return ResponseEntity.ok().build()
         }
-        when (notifType) {
-            1 -> entitlementService.grant(userId, entitlementKey, EntitlementEvent.REASON_PURCHASE, txRef = purchaseToken)
-            2 -> entitlementService.revoke(userId, entitlementKey, EntitlementEvent.REASON_CHARGEBACK, txRef = purchaseToken)
-            else -> log.info("billing.pubsub.ignore-type type={}", notifType)
+        val action: (() -> Unit)? =
+            when (notifType) {
+                1 -> {
+                    { grantOrThrowOnTxRefConflict(userId, entitlementKey, purchaseToken) }
+                }
+                2 -> {
+                    { entitlementService.revoke(userId, entitlementKey, EntitlementEvent.REASON_CHARGEBACK, txRef = purchaseToken) }
+                }
+                else -> null
+            }
+        if (action == null) {
+            log.info("billing.pubsub.ignore-type type={}", notifType)
+            return ResponseEntity.ok().build()
+        }
+        // BE-01 불변 제약: messageId dedup insert + grant/revoke 는 같은 짧은 tx 로 커밋.
+        // inbox 만 먼저 커밋하면 grant 실패 후 재전송이 duplicate 판정 → 권리 영구 유실.
+        val processed = billingWebhookTxService.processWithInboxDedup(messageId, "pubsub", action)
+        if (!processed) {
+            log.info("billing.pubsub.duplicate-skip messageId={}", messageId)
         }
         return ResponseEntity.ok().build()
     }
 
     // 매핑 단일 SoT = ProductEntitlementMapper (IapVerifyController 와 공유 — 2026-06-04 dedupe).
     private fun mapProductIdToEntitlementKey(productId: String): String? = ProductEntitlementMapper.toEntitlementKey(productId)
+
+    /**
+     * R4-ENT-01: grant 결과 3분류 처리 — [GrantResult.TX_REF_CONFLICT] 는 실제 실패이므로
+     * throw 로 escalate. 본 함수는 [BillingWebhookTxService.processWithInboxDedup] 의 tx 안
+     * (action 람다)에서 실행되므로, throw 는 inbox dedup insert 까지 함께 롤백시키고 500 으로
+     * 전파된다 → 재전송이 duplicate-skip 으로 은폐되지 않는다 (결제 영구 유실 방지).
+     * [GrantResult.ALREADY_PRESENT] 는 기존 멱등 성공 시맨틱 그대로 (200 ACK).
+     */
+    private fun grantOrThrowOnTxRefConflict(
+        userId: String,
+        entitlementKey: String,
+        purchaseToken: String,
+    ) {
+        val result =
+            entitlementService.grant(
+                userId = userId,
+                entitlementKey = entitlementKey,
+                reason = EntitlementEvent.REASON_PURCHASE,
+                txRef = purchaseToken,
+            )
+        if (result == GrantResult.TX_REF_CONFLICT) {
+            throw EntitlementTxRefConflictException(
+                "webhook grant tx_ref conflict — userId=$userId key=$entitlementKey " +
+                    "(purchaseToken 이 다른 entitlement 에 이미 사용됨 — inbox 롤백 + 5xx 재전송 유도)",
+            )
+        }
+    }
 
     /** PAY-001 fix: timing attack 방어. SHA-256 후 MessageDigest.isEqual (constant-time). */
     private fun constantTimeEquals(
@@ -356,29 +415,6 @@ class PlayBillingWebhookController(
     private fun redact(token: String): String {
         if (token.length <= 8) return "***"
         return token.take(4) + "..." + token.takeLast(4)
-    }
-
-    /** Discord webhook alert (실구현, 2026-06-04 WP-1). alert 실패는 main flow 비차단(try/catch). */
-    private fun sendDiscordAlert(message: String) {
-        if (alertDiscordWebhook.isBlank()) {
-            log.info("billing.alert.discord-skip — webhook URL 미설정. message: {}", message)
-            return
-        }
-        try {
-            // Codex MED: 수동 escape 대신 Jackson 직렬화 — \r \t 등 제어문자/injection 안전.
-            val body = objectMapper.writeValueAsString(mapOf("content" to message))
-            val req =
-                HttpRequest
-                    .newBuilder()
-                    .uri(URI.create(alertDiscordWebhook))
-                    .timeout(Duration.ofSeconds(5))
-                    .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(body))
-                    .build()
-            httpClient.send(req, HttpResponse.BodyHandlers.discarding())
-        } catch (e: Exception) {
-            log.warn("billing.alert.discord-failed msg={}", e.message)
-        }
     }
 }
 

@@ -10,6 +10,8 @@ import com.terraworld.domain.category.Category
 import com.terraworld.domain.category.CategoryRepository
 import com.terraworld.domain.record.ActivityRecord
 import com.terraworld.domain.record.RecordRepository
+import com.terraworld.domain.record.RecordStatisticsSummary
+import com.terraworld.domain.record.UserMaxRecordedDateProjection
 import com.terraworld.domain.social.InviteRepository
 import com.terraworld.domain.user.User
 import com.terraworld.domain.user.UserRepository
@@ -242,6 +244,28 @@ class RecordServiceTest {
         assertEquals(null, reloaded.content.first().duration)
     }
 
+    // ─── getStatistics (ADD-BE-02: 조건부 집계 1쿼리) ───────────
+
+    @Test
+    fun `getStatistics — 조건부 집계 결과가 today,week,total 로 매핑된다`() {
+        service.createRecord("user-1", CreateRecordRequest(categoryId = 1L))
+
+        val stats = service.getStatistics("user-1")
+
+        assertEquals(1L, stats.todayRecords)
+        assertEquals(1L, stats.thisWeekRecords)
+        assertEquals(1L, stats.totalRecords)
+    }
+
+    @Test
+    fun `getStatistics — 기록 0건이면 전부 0 (SUM null 정규화)`() {
+        val stats = service.getStatistics("user-1")
+
+        assertEquals(0L, stats.todayRecords)
+        assertEquals(0L, stats.thisWeekRecords)
+        assertEquals(0L, stats.totalRecords)
+    }
+
     // ─── Fakes ─────────────────────────────────────────────────
 
     private class FakeRecordRepository :
@@ -283,14 +307,19 @@ class RecordServiceTest {
             pageable: Pageable,
         ): Page<ActivityRecord> = PageImpl(store.values.filter { it.user.id == userId && !it.isDeleted }.sortedByDescending { it.createdAt })
 
-        override fun findAllByUserIdAndRecordedDateBetweenAndIsDeletedFalse(
+        // BE-16: 월 조회 pageable 계약 정합 — Page 반환 (테스트는 Pageable.unpaged() 로 전건 확인)
+        override fun findAllByUserIdAndRecordedDateBetweenAndIsDeletedFalseOrderByCreatedAtDesc(
             userId: String,
             from: LocalDate,
             to: LocalDate,
-        ): List<ActivityRecord> =
-            store.values.filter {
-                it.user.id == userId && !it.isDeleted && !it.recordedDate.isBefore(from) && !it.recordedDate.isAfter(to)
-            }
+            pageable: Pageable,
+        ): Page<ActivityRecord> =
+            PageImpl(
+                store.values
+                    .filter {
+                        it.user.id == userId && !it.isDeleted && !it.recordedDate.isBefore(from) && !it.recordedDate.isAfter(to)
+                    }.sortedByDescending { it.createdAt },
+            )
 
         override fun findAllByUserIdAndCategoryIdAndIsDeletedFalseOrderByCreatedAtDesc(
             userId: String,
@@ -303,19 +332,23 @@ class RecordServiceTest {
                     .sortedByDescending { it.createdAt },
             )
 
-        override fun findAllByUserIdAndCategoryIdAndRecordedDateBetweenAndIsDeletedFalse(
+        override fun findAllByUserIdAndCategoryIdAndRecordedDateBetweenAndIsDeletedFalseOrderByCreatedAtDesc(
             userId: String,
             categoryId: Long,
             from: LocalDate,
             to: LocalDate,
-        ): List<ActivityRecord> =
-            store.values.filter {
-                it.user.id == userId &&
-                    it.category.id == categoryId &&
-                    !it.isDeleted &&
-                    !it.recordedDate.isBefore(from) &&
-                    !it.recordedDate.isAfter(to)
-            }
+            pageable: Pageable,
+        ): Page<ActivityRecord> =
+            PageImpl(
+                store.values
+                    .filter {
+                        it.user.id == userId &&
+                            it.category.id == categoryId &&
+                            !it.isDeleted &&
+                            !it.recordedDate.isBefore(from) &&
+                            !it.recordedDate.isAfter(to)
+                    }.sortedByDescending { it.createdAt },
+            )
 
         override fun acquireRecordDailyLock(key: String): Int = 1
 
@@ -334,6 +367,32 @@ class RecordServiceTest {
         override fun countByCategoryGrouped(userId: String): List<Array<Any>> = emptyList()
 
         override fun findMaxRecordedDate(userId: String): LocalDate? = null
+
+        // BE-05: 배치 projection — store 기반 실동작 (스케줄러 경로용)
+        override fun findMaxRecordedDatePerUser(): List<UserMaxRecordedDateProjection> =
+            store.values
+                .filter { !it.isDeleted }
+                .groupBy { it.user.id }
+                .map { (uid, records) ->
+                    object : UserMaxRecordedDateProjection {
+                        override val userId = uid
+                        override val maxRecordedDate = records.maxOf { it.recordedDate }
+                    }
+                }
+
+        // ADD-BE-02: 조건부 집계 1쿼리 — JPQL 시맨틱 모사 (row 0건 시 SUM=null, COUNT=0)
+        override fun countStatisticsSummary(
+            userId: String,
+            today: LocalDate,
+            weekAgo: LocalDate,
+        ): RecordStatisticsSummary {
+            val mine = store.values.filter { it.user.id == userId && !it.isDeleted }
+            return object : RecordStatisticsSummary {
+                override val todayCount = if (mine.isEmpty()) null else mine.count { it.recordedDate == today }.toLong()
+                override val weekCount = if (mine.isEmpty()) null else mine.count { !it.recordedDate.isBefore(weekAgo) }.toLong()
+                override val totalCount = mine.size.toLong()
+            }
+        }
 
         override fun findEngagementRanking(
             start: LocalDate,

@@ -7,6 +7,12 @@ spring:
     username: ${SPRING_DATASOURCE_USERNAME:terraworld}
     password: ${SPRING_DATASOURCE_PASSWORD:terraworld}
     driver-class-name: org.postgresql.Driver
+    # BE-14 (2026-07-15 성능 감사): pool 크기를 명시 고정 (Hikari 기본값 10 과 동일 — 암묵 의존 제거)
+    # + leak-detection 으로 "커넥션 30초 이상 미반납" 을 WARN 으로 가시화 (BE-01 류
+    # tx-내-외부-HTTP 패턴 재발 시 운영 로그에서 즉시 검출).
+    hikari:
+      maximum-pool-size: 10
+      leak-detection-threshold: 30000
 
   jpa:
     hibernate:
@@ -16,6 +22,14 @@ spring:
         dialect: org.hibernate.dialect.PostgreSQLDialect
         format_sql: true
         default_schema: public
+        # BE-12 (2026-07-15 성능 감사): JDBC batching. PK 전략이 IDENTITY 라 INSERT batching 은
+        # Hibernate 가 비활성(즉시 INSERT 로 id 획득) — UPDATE/DELETE batching 만 유효
+        # (예: GrowthService.advanceAllStreaks 의 saveAll 갱신 N건 → 1 batch round-trip).
+        # order_inserts/order_updates: 같은 테이블 statement 를 인접 정렬해 batch 성립률 향상.
+        jdbc:
+          batch_size: 30
+        order_inserts: true
+        order_updates: true
     open-in-view: false
 
   flyway:

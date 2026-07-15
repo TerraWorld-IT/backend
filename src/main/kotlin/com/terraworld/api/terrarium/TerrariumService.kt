@@ -71,8 +71,27 @@ class TerrariumService(
             terrariumRepository
                 .findByUserId(userId)
                 .orElseThrow { BusinessException(ErrorCode.TERRARIUM_NOT_FOUND) }
+        return buildTerrariumResponse(userId, terrarium)
+    }
+
+    /**
+     * BE-03 (2026-07-15 성능 감사): 이미 로드한 terrarium 으로 응답 조립.
+     *
+     * - placedItems: 컬렉션 lazy 순회(placement 마다 item 프록시 SELECT — N+1) 대신
+     *   [TerrariumPlacementRepository.findAllByTerrariumUserIdOrderById] 의 @EntityGraph(item)
+     *   fetch join 1쿼리 (free.vue 로드 경로와 동일 패턴). OrderById 라 응답 순서 결정적.
+     * - wilting: computeWiltingState 가 같은 terrarium 을 findByUserId 로 재조회하던
+     *   중복 제거 — 로드된 terrarium 을 인자로 전달.
+     * - updatePlacements 의 응답 재조회도 본 메서드 재사용 — terrarium 재-findByUserId 없이
+     *   placements 1쿼리만 (JPQL 실행 전 auto-flush 로 재INSERT 분 반영 보장).
+     */
+    private fun buildTerrariumResponse(
+        userId: String,
+        terrarium: com.terraworld.domain.terrarium.Terrarium,
+    ): TerrariumResponse {
         // 낙서장 P2: 배치 슬롯 = 현재 티어 슬롯 (구 level_configs 대체)
-        val maxSlots = tierConfigRepository.findById(terrarium.tier).map { it.slots }.orElse(6)
+        // BE-08: findSlotsByTier 는 Caffeine TTL 10분 캐시 (4행 seed config — 매 조회 SELECT 제거)
+        val maxSlots = tierConfigRepository.findSlotsByTier(terrarium.tier) ?: 6
 
         return TerrariumResponse(
             terrariumId = terrarium.id,
@@ -83,7 +102,7 @@ class TerrariumService(
                     assetUrl = terrarium.background.assetUrl,
                 ),
             placedItems =
-                terrarium.placedItems.map { p ->
+                terrariumPlacementRepository.findAllByTerrariumUserIdOrderById(userId).map { p ->
                     PlacedItemDetail(
                         id = p.id,
                         itemId = p.item.id,
@@ -97,7 +116,7 @@ class TerrariumService(
                 },
             maxSlots = maxSlots,
             tier = terrarium.tier,
-            wilting = computeWiltingState(userId),
+            wilting = computeWiltingState(userId, terrarium),
         )
     }
 
@@ -109,14 +128,16 @@ class TerrariumService(
      * 갱신하면 본 함수가 stage 0 으로 자동 reset (Codex pre-audit J-WILT 해결).
      *
      * 둘 다 null = 기록 없는 신규 사용자 → stage 0 / daysSinceRecord null.
+     *
+     * BE-03: 호출자가 이미 로드한 terrarium 을 인자로 받는다 — 기존에는 같은 terrarium 을
+     * findByUserId 로 다시 SELECT 했음 (getTerrarium 경로에서 호출당 1쿼리 중복).
      */
-    private fun computeWiltingState(userId: String): WiltingState {
+    private fun computeWiltingState(
+        userId: String,
+        terrarium: com.terraworld.domain.terrarium.Terrarium,
+    ): WiltingState {
         val lastRecordDate = recordRepository.findMaxRecordedDate(userId)
-        val wiltRecoveredDate =
-            terrariumRepository
-                .findByUserId(userId)
-                .map { it.wiltRecoveredAt?.toLocalDate() }
-                .orElse(null)
+        val wiltRecoveredDate = terrarium.wiltRecoveredAt?.toLocalDate()
 
         val effective =
             listOfNotNull(lastRecordDate, wiltRecoveredDate).maxOrNull()
@@ -144,15 +165,32 @@ class TerrariumService(
                 .orElseThrow { BusinessException(ErrorCode.TERRARIUM_NOT_FOUND) }
 
         // 낙서장 P2 (FP-05): 배치 슬롯 수 = 현재 tier 슬롯(GLASS_JAR 6 / LARGE_JAR 10 / GRAND_TANK 16 / HOUSE_TANK 24).
+        // R4-TIER (2026-07-15 적대적 리뷰): 쓰기 경로 검증은 캐시(findSlotsByTier, TTL 10분)
+        // 우회 — admin 이 슬롯을 축소한 직후 stale 캐시 값으로 초과 배치가 영속되는 것을 차단.
+        // findById 직접 조회(fresh). 읽기 경로(getTerrarium/buildTerrariumResponse)는 캐시 유지.
         val maxSlots = tierConfigRepository.findById(terrarium.tier).map { it.slots }.orElse(6)
 
-        for (placement in request.placedItems) {
-            val item =
-                itemRepository
-                    .findById(placement.itemId)
-                    .orElseThrow { BusinessException(ErrorCode.ITEM_NOT_FOUND) }
+        // BE-03 (2026-07-15 성능 감사): 검증 루프의 아이템당 findById + existsByUserIdAndItemId
+        // (배치 N개당 2N 쿼리) → 루프 전 일괄 로드 2쿼리. 검증 순서/예외 시맨틱은 기존과 동일
+        // (placement 순서대로 미존재 → ITEM_NOT_FOUND, 미보유 → ITEM_NOT_FOUND+메시지, 슬롯 범위 → INVALID_SLOT).
+        val requestedItemIds = request.placedItems.map { it.itemId }.toSet()
+        val itemsById: Map<Long, com.terraworld.domain.item.Item> =
+            if (requestedItemIds.isEmpty()) {
+                emptyMap()
+            } else {
+                itemRepository.findAllById(requestedItemIds).associateBy { it.id }
+            }
+        val ownedItemIds: Set<Long> =
+            if (requestedItemIds.isEmpty()) {
+                emptySet()
+            } else {
+                userItemRepository.findOwnedItemIds(userId, requestedItemIds)
+            }
 
-            if (!userItemRepository.existsByUserIdAndItemId(userId, item.id)) {
+        for (placement in request.placedItems) {
+            val item = itemsById[placement.itemId] ?: throw BusinessException(ErrorCode.ITEM_NOT_FOUND)
+
+            if (item.id !in ownedItemIds) {
                 throw BusinessException(ErrorCode.ITEM_NOT_FOUND, "보유하지 않은 아이템입니다")
             }
 
@@ -190,7 +228,8 @@ class TerrariumService(
         terrariumPlacementRepository.flush()
 
         request.placedItems.forEach { p ->
-            val item = itemRepository.findById(p.itemId).orElseThrow()
+            // BE-03: 재삽입 루프의 중복 findById 제거 — 위 일괄 로드 맵 재사용 (검증 통과 = 존재 보장).
+            val item = itemsById.getValue(p.itemId)
             val free = freeBySlot[item.id to p.slotId]
             terrarium.placedItems.add(
                 TerrariumPlacement(
@@ -217,7 +256,10 @@ class TerrariumService(
         }
         terrariumRepository.save(terrarium)
 
-        return getTerrarium(userId)
+        // BE-03: 응답 재조립 — terrarium 재-findByUserId + wilting 중복 조회 제거.
+        // placements 는 buildTerrariumResponse 의 JPQL 이 실행 전 auto-flush 를 유발해
+        // 위 재INSERT 분이 반영된 상태로 1회만 재조회된다 (id 채번 재조회는 유지 — 안전).
+        return buildTerrariumResponse(userId, terrarium)
     }
 
     @Transactional

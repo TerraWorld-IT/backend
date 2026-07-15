@@ -28,13 +28,16 @@ class ItemControllerMvcTest : AbstractMvcTest() {
 
     @MockBean private lateinit var itemRepository: ItemRepository
 
+    // BE-08: 카탈로그 목록은 ItemCatalogService(캐시 컴포넌트) 경유
+    @MockBean private lateinit var itemCatalogService: ItemCatalogService
+
     @MockBean private lateinit var jwtAuthenticationFilter: JwtAuthenticationFilter
 
     @MockBean private lateinit var rateLimitFilter: RateLimitFilter
 
     @Test
     fun `GET _api_v1_items 200`() {
-        whenever(itemRepository.findAllByIsActiveTrue()).thenReturn(listOf(stubItem()))
+        whenever(itemCatalogService.listActiveItems(null, null, null)).thenReturn(listOf(ItemMapper.toApi(stubItem())))
 
         mockMvc
             .perform(get("/api/v1/items"))

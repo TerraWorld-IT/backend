@@ -20,18 +20,23 @@ interface RecordRepository : JpaRepository<ActivityRecord, Long> {
         pageable: Pageable,
     ): Page<ActivityRecord>
 
-    fun findAllByUserIdAndCategoryIdAndRecordedDateBetweenAndIsDeletedFalse(
+    // BE-16 (2026-07-15 성능 감사): 월 조회 분기가 전건 List 로드 후 PageImpl 로 감싸며 pageable 을
+    // 무시하던 계약 위반 수정 — Pageable 을 받아 Page 로 반환 (COUNT + LIMIT/OFFSET).
+    // 정렬은 비-월 분기와 동일하게 CreatedAtDesc (페이지네이션에 안정 정렬 필수).
+    fun findAllByUserIdAndCategoryIdAndRecordedDateBetweenAndIsDeletedFalseOrderByCreatedAtDesc(
         userId: String,
         categoryId: Long,
         from: LocalDate,
         to: LocalDate,
-    ): List<ActivityRecord>
+        pageable: Pageable,
+    ): Page<ActivityRecord>
 
-    fun findAllByUserIdAndRecordedDateBetweenAndIsDeletedFalse(
+    fun findAllByUserIdAndRecordedDateBetweenAndIsDeletedFalseOrderByCreatedAtDesc(
         userId: String,
         from: LocalDate,
         to: LocalDate,
-    ): List<ActivityRecord>
+        pageable: Pageable,
+    ): Page<ActivityRecord>
 
     fun countByUserIdAndRecordedDateAndCategoryIdAndIsDeletedFalse(
         userId: String,
@@ -81,6 +86,42 @@ interface RecordRepository : JpaRepository<ActivityRecord, Long> {
     """,
     )
     fun findMaxRecordedDate(userId: String): LocalDate?
+
+    /**
+     * BE-05 (2026-07-15 성능 감사): WiltScheduler 배치용 — 전체 사용자의 최신 기록일을
+     * GROUP BY 1쿼리로. 기존 유저별 findMaxRecordedDate 루프(테라리움 N개 = N쿼리) 대체.
+     * 기록이 전혀 없는 사용자는 결과에 없음 (호출부에서 null 처리).
+     */
+    @Query(
+        """
+        SELECT r.user.id AS userId, MAX(r.recordedDate) AS maxRecordedDate
+        FROM ActivityRecord r
+        WHERE r.isDeleted = false
+        GROUP BY r.user.id
+    """,
+    )
+    fun findMaxRecordedDatePerUser(): List<UserMaxRecordedDateProjection>
+
+    /**
+     * ADD-BE-02 (2026-07-15 성능 감사): getStatistics 의 today/week/total 3 COUNT 쿼리를
+     * 조건부 집계(CASE WHEN) 1쿼리로. 집계 쿼리라 row 0건이어도 항상 1행 반환
+     * (SUM 은 그때 null — 호출부에서 0 처리, COUNT 는 0).
+     */
+    @Query(
+        """
+        SELECT
+            SUM(CASE WHEN r.recordedDate = :today THEN 1 ELSE 0 END) AS todayCount,
+            SUM(CASE WHEN r.recordedDate >= :weekAgo THEN 1 ELSE 0 END) AS weekCount,
+            COUNT(r) AS totalCount
+        FROM ActivityRecord r
+        WHERE r.user.id = :userId AND r.isDeleted = false
+    """,
+    )
+    fun countStatisticsSummary(
+        @Param("userId") userId: String,
+        @Param("today") today: LocalDate,
+        @Param("weekAgo") weekAgo: LocalDate,
+    ): RecordStatisticsSummary
 
     /**
      * 월간 engagement 랭킹용 — 지정 기간 내 사용자별 활동 기록 수.
@@ -134,4 +175,17 @@ interface RecordRepository : JpaRepository<ActivityRecord, Long> {
     fun acquireRecordDailyLock(
         @Param("key") key: String,
     ): Int
+}
+
+/** BE-05: WiltScheduler 배치 스캔용 read-only projection (userId + 최신 기록일). */
+interface UserMaxRecordedDateProjection {
+    val userId: String
+    val maxRecordedDate: LocalDate?
+}
+
+/** ADD-BE-02: getStatistics 조건부 집계 projection. SUM 은 row 0건 시 null (호출부 0 처리). */
+interface RecordStatisticsSummary {
+    val todayCount: Long?
+    val weekCount: Long?
+    val totalCount: Long
 }

@@ -37,13 +37,19 @@ class FriendService(
                     if (invite.inviterUserId == userId) invite.inviteeUserId else invite.inviterUserId
                 }.distinct()
         if (friendIds.isEmpty()) return emptyList()
+        // BE-10 (2026-07-15 성능 감사): 친구당 countByTargetUserId N+1 → IN + GROUP BY 1쿼리.
+        // like 0건인 친구는 집계 결과에 없으므로 0 default (기존 count=0 semantics 동일).
+        val likeCountByTarget =
+            terrariumLikeRepository
+                .countGroupedByTargetUserIdIn(friendIds)
+                .associate { it.targetUserId to it.likeCount }
         return userRepository
             .findAllById(friendIds)
             .map { user ->
                 FriendInfo(
                     userId = user.id,
                     nickname = user.nickname,
-                    likeCount = terrariumLikeRepository.countByTargetUserId(user.id),
+                    likeCount = likeCountByTarget[user.id] ?: 0L,
                 )
             }
     }

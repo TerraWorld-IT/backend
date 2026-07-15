@@ -16,7 +16,8 @@ import kotlin.test.assertTrue
 
 /**
  * EntitlementService 의 분기 커버.
- * - grant: 해피 패스 (row + GRANT ledger) / idempotency (중복 grant 시 ledger 1회만)
+ * - grant: 해피 패스 (row + GRANT ledger) / idempotency (중복 grant 시 ledger 1회만) /
+ *          R4-ENT-01 — tx_ref 가 다른 row 에 선점된 경우 TX_REF_CONFLICT (멱등 아님)
  * - revoke: 해피 패스 (row 삭제 + REVOKE ledger) /
  *           PAY-005 — 존재하지 않는 entitlement revoke 시에도 REVOKE ledger 보강 (reason suffix)
  */
@@ -51,7 +52,7 @@ class EntitlementServiceTest {
                 txRef = "tok-1",
             )
 
-        assertTrue(granted)
+        assertEquals(GrantResult.GRANTED, granted)
         assertTrue(entitlementRepo.existsByIdUserIdAndIdEntitlementKey("user-1", UserEntitlementId.FREE_PLACEMENT))
 
         val ledger = eventRepo.findAllByUserIdAndEntitlementKeyOrderByOccurredAtDesc("user-1", UserEntitlementId.FREE_PLACEMENT)
@@ -62,19 +63,35 @@ class EntitlementServiceTest {
     }
 
     @Test
-    fun `grant idempotency — 중복 grant 시 no-op + 원장 1건만 유지`() {
+    fun `grant idempotency — 중복 grant 시 ALREADY_PRESENT + 원장 1건만 유지`() {
         val first =
             service.grant("user-1", UserEntitlementId.FREE_PLACEMENT, EntitlementEvent.REASON_PURCHASE, txRef = "tok-1")
         val second =
             service.grant("user-1", UserEntitlementId.FREE_PLACEMENT, EntitlementEvent.REASON_PURCHASE, txRef = "tok-1")
 
-        assertTrue(first)
-        assertFalse(second)
+        assertEquals(GrantResult.GRANTED, first)
+        assertEquals(GrantResult.ALREADY_PRESENT, second)
 
         // 중복 grant 는 row 도 ledger 도 추가되면 안 됨 (Play purchaseToken 중복 webhook 대응).
         assertEquals(1, entitlementRepo.count())
         val ledger = eventRepo.findAllByUserIdAndEntitlementKeyOrderByOccurredAtDesc("user-1", UserEntitlementId.FREE_PLACEMENT)
         assertEquals(1, ledger.size)
+    }
+
+    @Test
+    fun `grant R4-ENT-01 — 같은 txRef 를 다른 (user,key) 가 선점하면 TX_REF_CONFLICT + row·ledger 미생성`() {
+        // uq_user_entitlement_tx_ref (partial unique) 충돌: user-1 이 tok-1 로 이미 grant 된 상태에서
+        // user-2 가 같은 tok-1 로 grant 시도 — "이미 보유" 멱등이 아니라 실제 실패로 분류돼야 한다.
+        // (구 Boolean false 뭉갬은 webhook 200 → 재전송 duplicate 차단 → 결제 영구 유실이었음.)
+        service.grant("user-1", UserEntitlementId.FREE_PLACEMENT, EntitlementEvent.REASON_PURCHASE, txRef = "tok-1")
+
+        val result =
+            service.grant("user-2", UserEntitlementId.FREE_PLACEMENT, EntitlementEvent.REASON_PURCHASE, txRef = "tok-1")
+
+        assertEquals(GrantResult.TX_REF_CONFLICT, result)
+        // user-2 에게는 row 도 GRANT ledger 도 생기면 안 됨
+        assertFalse(entitlementRepo.existsByIdUserIdAndIdEntitlementKey("user-2", UserEntitlementId.FREE_PLACEMENT))
+        assertEquals(0, eventRepo.findAllByUserIdAndEntitlementKeyOrderByOccurredAtDesc("user-2", UserEntitlementId.FREE_PLACEMENT).size)
     }
 
     // ─── revoke ────────────────────────────────────────────────
@@ -163,7 +180,10 @@ class EntitlementServiceTest {
             txRef: String?,
         ): Int {
             val id = UserEntitlementId(userId, entitlementKey)
+            // PK (user_id, entitlement_key) 충돌 모사
             if (store.containsKey(id)) return 0
+            // uq_user_entitlement_tx_ref 모사 — partial unique (tx_ref NOT NULL, 전역)
+            if (txRef != null && store.values.any { it.txRef == txRef }) return 0
             store[id] = UserEntitlement(id = id, txRef = txRef)
             return 1
         }

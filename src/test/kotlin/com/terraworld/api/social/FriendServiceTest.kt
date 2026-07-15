@@ -4,6 +4,7 @@ import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
 import com.terraworld.domain.social.Invite
 import com.terraworld.domain.social.InviteRepository
+import com.terraworld.domain.social.TargetLikeCountProjection
 import com.terraworld.domain.social.TerrariumLike
 import com.terraworld.domain.social.TerrariumLikeRepository
 import com.terraworld.domain.user.User
@@ -253,5 +254,17 @@ class FriendServiceTest {
             )
 
         override fun countByTargetUserId(targetUserId: String): Long = store.values.count { it.targetUserId == targetUserId }.toLong()
+
+        // BE-10: listFriends 의 IN + GROUP BY 집계 (like 0건 target 은 결과에 없음 — 실 쿼리 동일)
+        override fun countGroupedByTargetUserIdIn(targetUserIds: Collection<String>): List<TargetLikeCountProjection> =
+            store.values
+                .filter { it.targetUserId in targetUserIds }
+                .groupBy { it.targetUserId }
+                .map { (target, likes) ->
+                    object : TargetLikeCountProjection {
+                        override val targetUserId: String = target
+                        override val likeCount: Long = likes.size.toLong()
+                    }
+                }
     }
 }

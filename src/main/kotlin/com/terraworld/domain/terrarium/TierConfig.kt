@@ -1,10 +1,14 @@
 package com.terraworld.domain.terrarium
 
+import com.terraworld.common.cache.CacheNames
 import jakarta.persistence.Column
 import jakarta.persistence.Entity
 import jakarta.persistence.Id
 import jakarta.persistence.Table
+import org.springframework.cache.annotation.Cacheable
 import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.data.jpa.repository.Query
+import org.springframework.data.repository.query.Param
 
 /**
  * 테라리움 티어 카탈로그 (낙서장 P2). 해금 비용(반짝이/루비) + 슬롯 수 + 티어 보상 정령.
@@ -33,4 +37,17 @@ class TierConfig(
 
 interface TierConfigRepository : JpaRepository<TierConfig, String> {
     fun findAllByOrderByTierOrderAsc(): List<TierConfig>
+
+    /**
+     * BE-08: tier → slots 조회 (TerrariumService getTerrarium/updatePlacements hot path).
+     * 티어 config 는 4행 seed — Caffeine TTL 10분 캐시(admin slots 변경 시 최대 10분 stale 수용).
+     * Int scalar projection 이라 detached entity 문제 없음. 미존재 tier 는 null (호출부 `?: 6` fallback
+     * — 기존 findById().map{slots}.orElse(6) semantics 동일).
+     * TierService(해금 mutation 경로)는 비용 검증에 fresh findById 를 유지 — 캐시 비대상.
+     */
+    @Cacheable(CacheNames.TIER_SLOTS)
+    @Query("SELECT t.slots FROM TierConfig t WHERE t.tier = :tier")
+    fun findSlotsByTier(
+        @Param("tier") tier: String,
+    ): Int?
 }

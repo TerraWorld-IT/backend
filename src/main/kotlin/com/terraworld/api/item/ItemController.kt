@@ -2,9 +2,7 @@ package com.terraworld.api.item
 
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
-import com.terraworld.domain.item.ItemLayout
 import com.terraworld.domain.item.ItemRepository
-import com.terraworld.domain.item.Rarity
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.tags.Tag
 import io.terraworld.api.api.ShopApi
@@ -27,6 +25,8 @@ import org.springframework.web.bind.annotation.RestController
 @RequestMapping("/api/v1")
 class ItemController(
     private val itemRepository: ItemRepository,
+    // BE-08: 카탈로그 목록은 캐시 컴포넌트 경유 (필터 분기/매핑 로직 이동, semantics 동일)
+    private val itemCatalogService: ItemCatalogService,
 ) : ShopApi {
     @Operation(summary = "아이템 목록 조회")
     @org.springframework.transaction.annotation.Transactional(readOnly = true)
@@ -34,18 +34,12 @@ class ItemController(
         categoryId: Long?,
         rarity: String?,
         layout: String?,
-    ): ResponseEntity<ItemListResponse> {
-        val items =
-            when {
-                categoryId != null -> itemRepository.findAllByIsActiveTrueAndCategoryId(categoryId)
-                rarity != null -> itemRepository.findAllByIsActiveTrueAndRarity(Rarity.valueOf(rarity))
-                layout != null -> itemRepository.findAllByIsActiveTrueAndLayout(ItemLayout.valueOf(layout))
-                else -> itemRepository.findAllByIsActiveTrue()
-            }
-        return ResponseEntity.ok(ItemListResponse(items = items.map(ItemMapper::toApi)))
-    }
+    ): ResponseEntity<ItemListResponse> = ResponseEntity.ok(ItemListResponse(items = itemCatalogService.listActiveItems(categoryId, rarity, layout)))
 
     @Operation(summary = "아이템 상세 조회")
+    // BE-11: listItems 와 동일한 readOnly tx — ItemMapper 가 lazy category 를 읽으므로
+    // tx 부재 시 LazyInitializationException 500 (listItems 만 고친 반쪽 fix 보완).
+    @org.springframework.transaction.annotation.Transactional(readOnly = true)
     override fun getItem(itemId: Long): ResponseEntity<ItemResponse> {
         val item =
             itemRepository

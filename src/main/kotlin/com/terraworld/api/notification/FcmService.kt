@@ -6,6 +6,7 @@ import com.google.firebase.FirebaseOptions
 import com.google.firebase.messaging.FirebaseMessaging
 import com.google.firebase.messaging.FirebaseMessagingException
 import com.google.firebase.messaging.Message
+import com.google.firebase.messaging.MulticastMessage
 import com.google.firebase.messaging.Notification
 import io.micrometer.core.instrument.Counter
 import io.micrometer.core.instrument.MeterRegistry
@@ -49,6 +50,9 @@ class FcmService(
 
         // body 도 alert/lock-screen 표시 길이 제한 (iOS ~120, Android ~240). 보수적 90자.
         const val MAX_BODY_LENGTH = 90
+
+        // BE-18: MulticastMessage 는 호출당 최대 500 토큰 (Firebase 제한) — 초과분 chunk 분할.
+        const val MULTICAST_MAX_TOKENS = 500
 
         internal fun truncatePushText(
             text: String,
@@ -128,6 +132,80 @@ class FcmService(
             sendFailure.increment()
             false
         }
+    }
+
+    /**
+     * BE-18 (2026-07-15 성능 감사): 다중 디바이스 token 일괄 전송 — `sendEachForMulticast`.
+     *
+     * 기존 FcmEventListener 의 토큰별 순차 [sendToToken] 루프(토큰당 HTTP 왕복 1회)를
+     * 배치 API 로 대체. 토큰 500개/호출 제한은 chunk 분할로 준수.
+     *
+     * 에러 시맨틱은 기존 [sendToToken] 과 동일 보존:
+     *  - noop(미구성) 모드: debug log + noop counter (토큰 수만큼 — counter 의미 = 메시지 건수 유지)
+     *  - per-token 실패: errorCode warn log + failure counter (토큰 정리는 기존과 동일하게
+     *    domain layer 권장 사항으로 유지 — 본 메서드가 DB 를 만지지 않음)
+     *
+     * @return 발송 성공 토큰 수 (noop 모드는 전체 성공 취급 — sendToToken 의 true 반환과 정합)
+     */
+    fun sendToTokens(
+        tokens: List<String>,
+        title: String,
+        body: String,
+        data: Map<String, String> = emptyMap(),
+    ): Int {
+        if (tokens.isEmpty()) return 0
+        if (messagingOrNoop == null) {
+            // SEC-402 (code-review): noop log 는 debug 강등 — title/body.length 만 노출.
+            log.debug(
+                "FCM noop multicast mode — tokens={} title chars={} body chars={} dataKeys={}",
+                tokens.size,
+                title.length,
+                body.length,
+                data.keys,
+            )
+            sendNoop.increment(tokens.size.toDouble())
+            return tokens.size
+        }
+        var successTotal = 0
+        tokens.chunked(MULTICAST_MAX_TOKENS).forEach { chunk ->
+            val message =
+                MulticastMessage
+                    .builder()
+                    .addAllTokens(chunk)
+                    .setNotification(
+                        Notification
+                            .builder()
+                            .setTitle(truncatePushText(title, MAX_TITLE_LENGTH))
+                            .setBody(truncatePushText(body, MAX_BODY_LENGTH))
+                            .build(),
+                    ).putAllData(data)
+                    .build()
+            try {
+                val response = messagingOrNoop.sendEachForMulticast(message)
+                successTotal += response.successCount
+                if (response.successCount > 0) sendSuccess.increment(response.successCount.toDouble())
+                if (response.failureCount > 0) {
+                    sendFailure.increment(response.failureCount.toDouble())
+                    // per-token 실패 사유 가시화 (token 자체는 비노출 — 기존 sendToToken 정책).
+                    // registration-token-not-registered / invalid-argument 는 domain layer 에서
+                    // UserDevice.isActive=false invalidate 권장 (기존 시맨틱 유지).
+                    response.responses.forEach { r ->
+                        if (!r.isSuccessful) {
+                            log.warn(
+                                "FCM multicast send failed: errorCode={} message={}",
+                                r.exception?.messagingErrorCode,
+                                r.exception?.message,
+                            )
+                        }
+                    }
+                }
+            } catch (e: FirebaseMessagingException) {
+                // 배치 호출 자체 실패 (인증/네트워크) — chunk 전체 failure 집계.
+                log.warn("FCM multicast batch failed: errorCode={} message={}", e.messagingErrorCode, e.message)
+                sendFailure.increment(chunk.size.toDouble())
+            }
+        }
+        return successTotal
     }
 
     /**

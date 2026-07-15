@@ -3,7 +3,7 @@ package com.terraworld.api.user
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
 import com.terraworld.domain.item.UserItemRepository
-import com.terraworld.domain.terrarium.TerrariumRepository
+import com.terraworld.domain.terrarium.TerrariumPlacementRepository
 import com.terraworld.domain.user.UserRepository
 import io.terraworld.api.model.EntitlementsResponse
 import io.terraworld.api.model.PlacedItemResponse
@@ -24,7 +24,7 @@ import org.springframework.transaction.annotation.Transactional
 class UserService(
     private val userRepository: UserRepository,
     private val userItemRepository: UserItemRepository,
-    private val terrariumRepository: TerrariumRepository,
+    private val terrariumPlacementRepository: TerrariumPlacementRepository,
     private val walletBuilder: WalletBuilder,
     private val entitlementService: com.terraworld.api.entitlement.EntitlementService,
 ) {
@@ -44,18 +44,19 @@ class UserService(
                 .findAllByUserId(userId)
                 .mapNotNull { it.item.slug }
 
-        val terrarium = terrariumRepository.findByUserId(userId)
+        // BE-02 (2026-07-15 성능 감사): terrarium.placedItems lazy 컬렉션 + per-row item 로드 N+1 을
+        // @EntityGraph(item) 조회로 대체 (TerrariumPlacementRepository 기존 자유배치 로드 패턴 재사용).
+        // terrarium 부재 시 빈 목록 — 기존 orElse(emptyList()) semantics 동일.
         val placedItems =
-            terrarium
-                .map { t ->
-                    t.placedItems.map { p ->
-                        PlacedItemResponse(
-                            itemId = p.item.id,
-                            itemSlug = p.item.slug,
-                            slotId = p.slotId,
-                        )
-                    }
-                }.orElse(emptyList())
+            terrariumPlacementRepository
+                .findAllByTerrariumUserIdOrderById(userId)
+                .map { p ->
+                    PlacedItemResponse(
+                        itemId = p.item.id,
+                        itemSlug = p.item.slug,
+                        slotId = p.slotId,
+                    )
+                }
 
         return UserMeResponse(
             userId = user.id,

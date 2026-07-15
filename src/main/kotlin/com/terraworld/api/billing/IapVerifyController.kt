@@ -1,6 +1,8 @@
 package com.terraworld.api.billing
 
 import com.terraworld.api.entitlement.EntitlementService
+import com.terraworld.api.entitlement.EntitlementTxRefConflictException
+import com.terraworld.api.entitlement.GrantResult
 import com.terraworld.common.audit.AuditService
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
@@ -11,7 +13,6 @@ import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.core.env.Environment
 import org.springframework.http.ResponseEntity
-import org.springframework.transaction.annotation.Transactional
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
@@ -48,8 +49,20 @@ class IapVerifyController(
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
+    /**
+     * BE-01 (2026-07-15 성능 감사): 메서드 레벨 @Transactional 제거.
+     *
+     * 기존: 컨트롤러 tx 안에서 Google/Apple verify(외부 HTTP, timeout 8s) 호출 — DB 커넥션
+     * (pool 10)을 외부 응답 대기 동안 점유하는 pool 고갈 벡터. 변경 후 tx 경계:
+     *  - verify(외부 HTTP): tx 밖 — DB 커넥션 미점유.
+     *  - grant + GRANT ledger: [EntitlementService.grant] 자체의 @Transactional (짧은 tx,
+     *    별도 bean 이라 proxy 적용 — self-invocation 아님). 멱등 키 = tx_ref(purchaseToken,
+     *    uq_user_entitlement_tx_ref) + PK(user_id, entitlement_key).
+     *  - verify 성공 + grant 실패(예외): 그대로 전파 → 5xx — 클라이언트(usePayment) 재시도
+     *    경로 유지. 200 으로 삼키면 스토어 결제 완료 + entitlement 미부여가 영구 은폐된다.
+     *  - audit publish: tx 밖 발행 — AuditEventListener 의 fallbackExecution=true 로 수신.
+     */
     @PostMapping("/verify")
-    @Transactional
     fun verify(
         @RequestBody body: IapVerifyRequest,
     ): ResponseEntity<IapVerifyResponse> {
@@ -124,13 +137,23 @@ class IapVerifyController(
             }
         }
 
-        val granted =
+        val grantResult =
             entitlementService.grant(
                 userId = userId,
                 entitlementKey = entitlementKey,
                 reason = EntitlementEvent.REASON_PURCHASE,
                 txRef = body.purchaseToken,
             )
+        // R4-ENT-01: tx_ref 충돌은 "이미 보유" 멱등이 아니라 실제 실패 — 200/granted=false 로
+        // 삼키면 스토어 결제 완료 + entitlement 미부여가 영구 은폐된다. 5xx 전파 → 클라이언트
+        // (usePayment) 재시도 + 운영 surface. (grant 자체 tx 는 이미 커밋 — conflict audit 보존.)
+        if (grantResult == GrantResult.TX_REF_CONFLICT) {
+            throw EntitlementTxRefConflictException(
+                "IAP grant tx_ref conflict — userId=$userId key=$entitlementKey (purchaseToken 이 다른 entitlement 에 이미 사용됨)",
+            )
+        }
+        // AlreadyPresent 는 기존 멱등 계약 유지: 200 + granted=false (중복 verify 호출 대응).
+        val granted = grantResult == GrantResult.GRANTED
         auditService.publish(
             userId = userId,
             action = "BILLING_IAP_VERIFIED",

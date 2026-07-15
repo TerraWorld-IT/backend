@@ -1,5 +1,7 @@
 package com.terraworld.security
 
+import com.github.benmanes.caffeine.cache.Cache
+import com.github.benmanes.caffeine.cache.Caffeine
 import jakarta.servlet.FilterChain
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
@@ -9,6 +11,7 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority
 import org.springframework.security.core.context.SecurityContextHolder
 import org.springframework.stereotype.Component
 import org.springframework.web.filter.OncePerRequestFilter
+import java.time.Duration
 
 /**
  * Extracts the bearer JWT, verifies it via [JwtTokenProvider], and wires
@@ -38,6 +41,25 @@ class JwtAuthenticationFilter(
 ) : OncePerRequestFilter() {
     private val log = LoggerFactory.getLogger(JwtAuthenticationFilter::class.java)
 
+    /**
+     * BE-04 (2026-07-15 성능 감사): fallback provisioning 확인 캐시.
+     *
+     * 기존에는 모든 인증 요청마다 [UserBootstrapService.ensureExists] 가 SELECT(+tx) 를
+     * 수행했다 — 인증 hot path 의 상시 DB 왕복. 이미 존재 확인된 userId 는 skip.
+     *
+     * 캐시 의미는 **"도메인 프로필 존재 확인됨" 뿐**이다 — 탈퇴 후 재가입 등으로 stale 해질
+     * 수 있으나 TTL(1시간)로 자연 해소되고, miss 시 ensureExists 는 원래 멱등(existsById +
+     * 동시성 race catch)이라 중복 호출도 안전하다. 공유 CacheConfig(CacheNames, TTL 10분)는
+     * 정적 seed config 용이라 TTL/용도가 달라 별도 인스턴스를 사용한다 (부수효과 있는 void
+     * 메서드에 @Cacheable 을 붙이는 memoization-side-effect 함정도 회피).
+     */
+    private val bootstrapEnsured: Cache<String, Boolean> =
+        Caffeine
+            .newBuilder()
+            .expireAfterWrite(Duration.ofHours(1))
+            .maximumSize(100_000)
+            .build()
+
     override fun doFilterInternal(
         request: HttpServletRequest,
         response: HttpServletResponse,
@@ -59,7 +81,12 @@ class JwtAuthenticationFilter(
                 // databaseHooks.user.create.after → Spring internal endpoint
                 // at signup time. This catches the rare case where the hook
                 // failed (network blip, Spring unreachable at signup).
-                userBootstrapService.ensureExists(userId, email)
+                // BE-04: 확인된 userId 는 캐시로 skip. 실패(예외) 시 캐시 미기록 —
+                // 기존 시맨틱 그대로 예외는 전파(요청 실패)되고 다음 요청이 재시도한다.
+                if (bootstrapEnsured.getIfPresent(userId) == null) {
+                    userBootstrapService.ensureExists(userId, email)
+                    bootstrapEnsured.put(userId, true)
+                }
 
                 val authorities = listOf(SimpleGrantedAuthority("ROLE_${role.name}"))
                 val principal = AuthenticatedUser(id = userId, email = email)

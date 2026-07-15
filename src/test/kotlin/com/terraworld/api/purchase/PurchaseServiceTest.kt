@@ -235,5 +235,15 @@ class PurchaseServiceTest {
             userId: String,
             itemId: Long,
         ): Boolean = store.values.any { it.user.id == userId && it.item.id == itemId }
+
+        // BE-03: TerrariumService.updatePlacements 일괄 소유 검증용
+        override fun findOwnedItemIds(
+            userId: String,
+            itemIds: Collection<Long>,
+        ): Set<Long> =
+            store.values
+                .filter { it.user.id == userId && it.item.id in itemIds }
+                .map { it.item.id }
+                .toSet()
     }
 }

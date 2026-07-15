@@ -24,6 +24,9 @@ import org.springframework.stereotype.Component
  *  - i18n key 는 ko.json 의 `notification.*` namespace
  *
  * 본 listener 는 `@Async` — 도메인 transaction 과 분리. FCM 발송 실패가 DB rollback 유발 X.
+ *
+ * BE-18 (2026-07-15 성능 감사): 토큰별 순차 `sendToToken` 루프(토큰당 HTTP 왕복) →
+ * [FcmService.sendToTokens] (`sendEachForMulticast`, 500 토큰/호출) 배치 전송.
  */
 @Component
 class FcmEventListener(
@@ -47,14 +50,12 @@ class FcmEventListener(
                 3 -> "💀 식물이 곧 죽을 위기예요" to "오랜만에 돌아와주세요! 광고 1회로 즉시 복구 가능"
                 else -> "TerraWorld" to "식물 상태를 확인해주세요"
             }
-        tokens.forEach { token ->
-            fcmService.sendToToken(
-                token,
-                title,
-                body,
-                mapOf("type" to "WILTING", "stage" to event.stage.toString()),
-            )
-        }
+        fcmService.sendToTokens(
+            tokens,
+            title,
+            body,
+            mapOf("type" to "WILTING", "stage" to event.stage.toString()),
+        )
     }
 
     @Async("fcmExecutor")
@@ -62,14 +63,12 @@ class FcmEventListener(
     fun onAttendanceMissed(event: AttendanceMissedEvent) {
         val tokens = userDeviceRepository.findAllByUserIdAndIsActiveTrue(event.userId).map { it.token }
         if (tokens.isEmpty()) return
-        tokens.forEach { token ->
-            fcmService.sendToToken(
-                token,
-                "🌿 오늘도 한 줄 기록 어때요?",
-                "출석 보상 + 카테고리 토큰을 받을 수 있어요",
-                mapOf("type" to "ATTENDANCE", "missedDays" to event.missedDays.toString()),
-            )
-        }
+        fcmService.sendToTokens(
+            tokens,
+            "🌿 오늘도 한 줄 기록 어때요?",
+            "출석 보상 + 카테고리 토큰을 받을 수 있어요",
+            mapOf("type" to "ATTENDANCE", "missedDays" to event.missedDays.toString()),
+        )
     }
 
     @Async("fcmExecutor")
@@ -77,14 +76,12 @@ class FcmEventListener(
     fun onFriendActivity(event: FriendActivityEvent) {
         val tokens = userDeviceRepository.findAllByUserIdAndIsActiveTrue(event.toUserId).map { it.token }
         if (tokens.isEmpty()) return
-        tokens.forEach { token ->
-            fcmService.sendToToken(
-                token,
-                "👯 친구가 활동했어요",
-                event.message,
-                mapOf("type" to "FRIEND", "fromUserId" to event.fromUserId),
-            )
-        }
+        fcmService.sendToTokens(
+            tokens,
+            "👯 친구가 활동했어요",
+            event.message,
+            mapOf("type" to "FRIEND", "fromUserId" to event.fromUserId),
+        )
     }
 }
 
