@@ -66,14 +66,31 @@ class HabitService(
             } else {
                 null
             }
-        return habitTrackerRepository.save(
-            HabitTracker(
-                userId = userId,
-                title = title.trim(),
-                startDate = KstTime.today(),
-                friendLinkId = resolvedLinkId,
-            ),
-        )
+        val saved =
+            habitTrackerRepository.save(
+                HabitTracker(
+                    userId = userId,
+                    title = title.trim(),
+                    startDate = KstTime.today(),
+                    friendLinkId = resolvedLinkId,
+                ),
+            )
+
+        // 친구 연동 습관 생성 — 상대에게 즉시 알림 (2026-07-21 사용자 리포트: 생성해도 상대가
+        // 몰라 "연동되는 부분이 없음"으로 체감). 상대가 같은 친구로 습관을 만들면 같은
+        // friendLinkId 를 공유해 lockstep 2배가 작동한다 — 이 푸시가 그 참여를 유도한다.
+        // AFTER_COMMIT listener 라 저장 롤백 시 발송되지 않는다.
+        if (resolvedLinkId != null && !friendUserId.isNullOrBlank()) {
+            val nickname = userRepository.findById(userId).map { it.nickname }.orElse("친구")
+            eventPublisher.publishEvent(
+                FriendActivityEvent(
+                    fromUserId = userId,
+                    toUserId = friendUserId,
+                    message = "$nickname 님이 「${saved.title}」 습관을 함께 시작했어요! 기록하기에서 함께 해보세요",
+                ),
+            )
+        }
+        return saved
     }
 
     @Transactional(readOnly = true)

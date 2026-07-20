@@ -85,7 +85,8 @@ class FcmEventListener(
             tokens,
             "👯 친구가 활동했어요",
             event.message,
-            mapOf("type" to "FRIEND", "fromUserId" to event.fromUserId),
+            // route: 클라 capacitor.client.ts 의 pushNotificationActionPerformed 가 탭 시 이동.
+            mapOf("type" to "FRIEND", "fromUserId" to event.fromUserId, "route" to event.route),
         )
     }
 }
@@ -105,4 +106,6 @@ data class FriendActivityEvent(
     val fromUserId: String,
     val toUserId: String,
     val message: String,
+    /** 푸시 탭 시 이동 경로 — 습관 연동은 /record, 초대 수락은 /friends. */
+    val route: String = "/record",
 )

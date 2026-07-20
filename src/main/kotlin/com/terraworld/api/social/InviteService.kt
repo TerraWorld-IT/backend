@@ -118,6 +118,7 @@ class InviteService(
                 fromUserId = inviteeUserId,
                 toUserId = inviterUserId,
                 message = "${invitee.nickname} 님이 초대를 수락했어요",
+                route = "/friends",
             ),
         )
 
