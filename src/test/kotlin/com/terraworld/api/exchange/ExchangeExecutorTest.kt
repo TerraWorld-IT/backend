@@ -3,6 +3,7 @@ package com.terraworld.api.exchange
 import com.terraworld.api.currency.CurrencyService
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
+import com.terraworld.common.time.KstTime
 import com.terraworld.domain.exchange.ExchangeDailyUsage
 import com.terraworld.domain.exchange.ExchangeDailyUsageId
 import com.terraworld.domain.exchange.ExchangeDailyUsageRepository
@@ -37,7 +38,11 @@ class ExchangeExecutorTest {
     private lateinit var usageRepo: FakeExchangeDailyUsageRepository
     private lateinit var currencyService: CurrencyService
     private lateinit var executor: ExchangeExecutor
-    private val today: LocalDate = LocalDate.now()
+
+    // KST 고정 — 실행부(ExchangeExecutor)가 KstTime.today() 를 쓰므로 테스트가
+    // LocalDate.now()(시스템 zone)면 CI(UTC) 의 15~24시 창(KST 자정~09시)에서 날짜가
+    // 어긋나 daily-cap 시딩/검증 3건이 flake 했다 (2026-07-21 CI 실측 — UTC 18:40 실패).
+    private val today: LocalDate = KstTime.today()
 
     @BeforeEach
     fun setup() {
