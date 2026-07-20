@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
-import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 /**
@@ -38,8 +37,11 @@ class PlayPurchaseVerifierTest {
     }
 
     @Test
-    fun `resolveObfuscatedAccountId — service-account 미설정이면 null`() {
-        assertNull(verifier(path = "").resolveObfuscatedAccountId("p", "tok"))
+    fun `resolveObfuscatedAccountId — service-account 미설정이면 Unavailable (ACK 금지 신호)`() {
+        assertEquals(
+            PlayPurchaseVerifier.AccountResolution.Unavailable,
+            verifier(path = "").resolveObfuscatedAccountId("p", "tok"),
+        )
     }
 
     // ─── parsePurchase (purchaseState + user 바인딩) ──────────────

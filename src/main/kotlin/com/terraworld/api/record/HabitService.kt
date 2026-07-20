@@ -1,6 +1,7 @@
 package com.terraworld.api.record
 
 import com.terraworld.api.currency.CurrencyService
+import com.terraworld.api.notification.FriendActivityEvent
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
 import com.terraworld.common.time.KstTime
@@ -9,6 +10,8 @@ import com.terraworld.domain.record.HabitStatus
 import com.terraworld.domain.record.HabitTracker
 import com.terraworld.domain.record.HabitTrackerRepository
 import com.terraworld.domain.social.InviteRepository
+import com.terraworld.domain.user.UserRepository
+import org.springframework.context.ApplicationEventPublisher
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 
@@ -22,6 +25,8 @@ class HabitService(
     private val habitTrackerRepository: HabitTrackerRepository,
     private val currencyService: CurrencyService,
     private val inviteRepository: InviteRepository,
+    private val userRepository: UserRepository,
+    private val eventPublisher: ApplicationEventPublisher,
 ) {
     companion object {
         const val SPARKLE_PER_CYCLE = 120L
@@ -123,8 +128,42 @@ class HabitService(
         }
 
         habitTrackerRepository.save(tracker)
+
+        // 친구 연동 습관 — 체크인/완주를 상대에게 알림 (낙서장 "트래커 기록 시 상대 알림").
+        // 같은 날 재체크인은 위에서 조기 return 이라 알림 최대 1회/일. 실패해도 체크인은 유지
+        // (listener 가 @Async 라 도메인 tx 와 분리 — InviteService N8 과 동일 패턴).
+        tracker.friendLinkId?.let { linkId ->
+            val partnerId = resolvePartnerUserId(userId, linkId)
+            if (partnerId != null) {
+                val nickname = userRepository.findById(userId).map { it.nickname }.orElse("친구")
+                val message =
+                    if (cycleCompleted) {
+                        "$nickname 님이 「${tracker.title}」 습관 ${tracker.cycleLengthDays}일을 완주했어요! 🎉"
+                    } else {
+                        "$nickname 님이 「${tracker.title}」 습관을 체크인했어요 (${tracker.currentStreakDays}일째)"
+                    }
+                eventPublisher.publishEvent(
+                    FriendActivityEvent(fromUserId = userId, toUserId = partnerId, message = message),
+                )
+            }
+        }
+
         return HabitCheckInResult(tracker, cycleCompleted, sparkleGranted)
     }
+
+    /** friendLinkId(=수락된 invite.id)에서 상대 userId 해석. 해석 불가 시 null(알림 skip). */
+    private fun resolvePartnerUserId(
+        userId: String,
+        linkId: Long,
+    ): String? =
+        inviteRepository
+            .findById(linkId)
+            .map { invite ->
+                when (userId) {
+                    invite.inviterUserId -> invite.inviteeUserId
+                    else -> invite.inviterUserId
+                }
+            }.orElse(null)
 }
 
 data class HabitCheckInResult(

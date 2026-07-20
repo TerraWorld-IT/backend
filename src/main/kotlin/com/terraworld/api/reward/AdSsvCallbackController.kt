@@ -1,7 +1,6 @@
 package com.terraworld.api.reward
 
 import com.terraworld.common.audit.AuditService
-import com.terraworld.domain.reward.AdRewardNonceInbox
 import com.terraworld.domain.reward.AdRewardNonceInboxRepository
 import io.swagger.v3.oas.annotations.Hidden
 import jakarta.servlet.http.HttpServletRequest
@@ -98,12 +97,13 @@ class AdSsvCallbackController(
         }
 
         // (4) transaction_id dedup — SSV replay 차단.
-        // Codex 보안 LOW: 64자(nonce inbox VARCHAR) 초과는 truncate(dedup 충돌 의미 변질) 대신 거부.
-        if (transactionId.length > 64) {
+        // nonce 슬롯은 'ssv:' prefix(4자) 포함 VARCHAR(64) — 초과는 truncate(dedup 충돌 의미
+        // 변질) 대신 거부. transaction_id 컬럼 자체는 VARCHAR(128).
+        if (transactionId.length > 60) {
             log.warn("ad.ssv.transaction-id-too-long len={}", transactionId.length)
             return ResponseEntity.status(400).build()
         }
-        val inserted = nonceInboxRepository.insertIfAbsent(transactionId, userId, AdRewardNonceInbox.SOURCE_SSV_CALLBACK)
+        val inserted = nonceInboxRepository.insertSsvIfAbsent(transactionId, userId)
         if (inserted == 0) {
             log.info("ad.ssv.duplicate transactionId={}", transactionId)
             return ResponseEntity.ok().build()

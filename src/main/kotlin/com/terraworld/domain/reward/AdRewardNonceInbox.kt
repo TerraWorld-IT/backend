@@ -71,4 +71,33 @@ interface AdRewardNonceInboxRepository : JpaRepository<AdRewardNonceInbox, Strin
         @Param("userId") userId: String,
         @Param("source") source: String,
     ): Int
+
+    /**
+     * SSV callback 전용 insert — `transaction_id` 컬럼을 실제로 바인딩한다.
+     *
+     * 기존 insertIfAbsent 로 SSV 를 기록하면 transactionId 가 nonce 슬롯에만 들어가고
+     * transaction_id 는 NULL → V21 `chk_ad_reward_nonce_ssv_tx` CHECK 위반으로 정상 콜백마다
+     * 실패했다(2026-07-20 audit B2-1, SSV 활성 시 발현). 또한 nonce PK 를 raw transactionId 로
+     * 선점하면 향후 client 가 같은 값을 nonce 로 claim 할 때 NONCE_ALREADY_CONSUMED 오충돌이
+     * 생기므로 nonce 슬롯은 `ssv:` prefix 로 네임스페이스를 분리한다.
+     *
+     * ON CONFLICT 무타깃 — nonce PK replay 뿐 아니라 uq_ad_reward_nonce_tx_id(부분 unique)
+     * 충돌(예: CLIENT 행이 이미 같은 transaction_id 와 매핑된 경우)도 0 으로 흡수한다.
+     *
+     * @return 1 = 신규 기록 / 0 = replay 또는 기존 매핑 존재
+     */
+    @Modifying
+    @Query(
+        value =
+            """
+            INSERT INTO ad_reward_nonce_inbox (nonce, user_id, source, transaction_id, consumed_at)
+            VALUES (CONCAT('ssv:', :transactionId), :userId, 'SSV_CALLBACK', :transactionId, NOW())
+            ON CONFLICT DO NOTHING
+            """,
+        nativeQuery = true,
+    )
+    fun insertSsvIfAbsent(
+        @Param("transactionId") transactionId: String,
+        @Param("userId") userId: String,
+    ): Int
 }

@@ -353,13 +353,21 @@ class PlayBillingWebhookController(
             billingAlertService.sendDiscordAlert("⚠️ Unknown Play product (pubsub): `$sku`")
             return ResponseEntity.ok().build()
         }
-        // userId 해석 — verifier enabled 확정 상태. 부재 = genuine not-found (client setObfuscatedAccountId 누락 추정).
-        // BE-01: 외부 HTTP(Play API) — tx 밖에서 수행 (DB 커넥션 미점유).
-        val userId = verifier.resolveObfuscatedAccountId(sku, purchaseToken)
-        if (userId.isNullOrBlank()) {
-            log.warn("billing.pubsub.no-account sku={} (obfuscatedAccountId 부재)", sku)
-            return ResponseEntity.ok().build()
-        }
+        // userId 해석 — verifier enabled 확정 상태. BE-01: 외부 HTTP(Play API) — tx 밖에서 수행.
+        // "확정 부재"만 ACK 하고, 일시 실패(Unavailable)는 503 으로 Pub/Sub 재전송을 유도한다 —
+        // 구현이 null 로 뭉개던 시절엔 장애 중 도착한 구매/취소 알림이 영구 유실됐다 (audit B1-4).
+        val userId =
+            when (val resolution = verifier.resolveObfuscatedAccountId(sku, purchaseToken)) {
+                is PlayPurchaseVerifier.AccountResolution.Resolved -> resolution.userId
+                is PlayPurchaseVerifier.AccountResolution.Absent -> {
+                    log.warn("billing.pubsub.no-account sku={} (obfuscatedAccountId 확정 부재)", sku)
+                    return ResponseEntity.ok().build()
+                }
+                is PlayPurchaseVerifier.AccountResolution.Unavailable -> {
+                    log.warn("billing.pubsub.resolve-unavailable sku={} — 503 재전송 유도", sku)
+                    return ResponseEntity.status(503).build()
+                }
+            }
         val action: (() -> Unit)? =
             when (notifType) {
                 1 -> {

@@ -115,14 +115,34 @@ class PlayPurchaseVerifier(
     }
 
     /**
+     * resolveObfuscatedAccountId 결과 — "확정 부재"와 "조회 실패"를 분리한다.
+     *
+     * 구 시그니처는 둘 다 null 로 뭉갰고, RTDN 웹훅이 null 을 genuine not-found 로 간주해
+     * 200 ACK → Pub/Sub 재전송 차단 → 일시 장애(네트워크/5xx/자격증명) 중 도착한 구매/취소
+     * 알림이 영구 유실됐다 (2026-07-20 audit B1-4, lossy failure sentinel).
+     */
+    sealed interface AccountResolution {
+        /** 조회 성공 + 계정 매핑 존재. */
+        data class Resolved(
+            val userId: String,
+        ) : AccountResolution
+
+        /** 확정 부재(404/410 토큰 미존재, 200 인데 obfuscated id 없음 등) — ACK 하고 버려도 안전. */
+        data object Absent : AccountResolution
+
+        /** 일시 실패(네트워크/타임아웃/5xx/401·403/미설정) — ACK 금지, 재전송을 유도해야 함. */
+        data object Unavailable : AccountResolution
+    }
+
+    /**
      * RTDN(Pub/Sub) 처리용 — purchaseToken 의 obfuscatedExternalAccountId(=userId) 조회.
-     * service-account 미설정/미구매/오류 시 null. (fullstack-ultraplan WP-1-F)
+     * (fullstack-ultraplan WP-1-F)
      */
     fun resolveObfuscatedAccountId(
         productId: String,
         purchaseToken: String,
-    ): String? {
-        if (serviceAccountJsonPath.isBlank()) return null
+    ): AccountResolution {
+        if (serviceAccountJsonPath.isBlank()) return AccountResolution.Unavailable
         return try {
             val accessToken = fetchAccessToken()
             val url =
@@ -137,17 +157,27 @@ class PlayPurchaseVerifier(
                     .GET()
                     .build()
             val res = httpClient.send(req, HttpResponse.BodyHandlers.ofString())
-            if (res.statusCode() != 200) {
-                return null
+            when {
+                res.statusCode() == 200 -> {
+                    val id =
+                        objectMapper
+                            .readTree(res.body())
+                            .get("obfuscatedExternalAccountId")
+                            ?.asText()
+                            ?.takeIf { it.isNotBlank() }
+                    if (id != null) AccountResolution.Resolved(id) else AccountResolution.Absent
+                }
+                // 404/410 = 토큰 자체가 없거나 소비됨 — 재시도해도 결과가 바뀌지 않는 확정 부재.
+                res.statusCode() == 404 || res.statusCode() == 410 -> AccountResolution.Absent
+                else -> {
+                    // 401/403(자격증명 회전)·429·5xx — 재시도로 회복 가능. ACK 금지.
+                    log.warn("billing.resolve-account.api-status status={} product={}", res.statusCode(), productId)
+                    AccountResolution.Unavailable
+                }
             }
-            objectMapper
-                .readTree(res.body())
-                .get("obfuscatedExternalAccountId")
-                ?.asText()
-                ?.takeIf { it.isNotBlank() }
         } catch (e: Exception) {
             log.warn("billing.resolve-account.error product={} msg={}", productId, e.message)
-            null
+            AccountResolution.Unavailable
         }
     }
 

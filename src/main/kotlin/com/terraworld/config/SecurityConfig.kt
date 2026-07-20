@@ -153,6 +153,10 @@ class SecurityConfig(
                         "Accept-Language",
                         "X-Requested-With",
                         "X-Idempotency-Key",
+                        // openapi.ts 401 재시도 마커 — 미허용 시 교차출처(dev) 환경에서 재시도
+                        // preflight 가 거부돼 401 복구가 통째로 실패한다 (2026-07-20 시각검증 실측.
+                        // 프로덕션은 same-origin 프록시라 잠복했던 갭).
+                        "x-tw-retried",
                     )
                 exposedHeaders = listOf("X-Request-Id")
                 allowCredentials = true

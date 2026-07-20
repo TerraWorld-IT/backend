@@ -170,7 +170,9 @@ class EntitlementServiceTest {
         service.grant("user-1", UserEntitlementId.FREE_PLACEMENT, EntitlementEvent.REASON_PURCHASE, txRef = "tok-A")
 
         val second = service.grant("user-1", UserEntitlementId.FREE_PLACEMENT, EntitlementEvent.REASON_PURCHASE, txRef = "tok-B")
-        assertEquals(GrantResult.ALREADY_PRESENT, second)
+        // 2026-07-20 Codex R1 HIGH: 미선점 다른 토큰은 일반 ALREADY_PRESENT 와 구분 —
+        // IAP 클라가 이 토큰을 finish(alreadyOwned) 하면 회수 후 재시도 경로가 사라진다.
+        assertEquals(GrantResult.ALREADY_PRESENT_UNSEEN_TOKEN, second)
         // 핵심: tok-B 의 GRANT 원장이 선점되지 않았다.
         assertNull(txLedgerRepo.findByTxRefAndAction("tok-B", EntitlementTxLedger.ACTION_GRANT))
 

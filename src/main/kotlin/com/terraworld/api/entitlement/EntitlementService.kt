@@ -25,8 +25,19 @@ enum class GrantResult {
     /** 신규 부여 — row + GRANT 원장 기록됨. */
     GRANTED,
 
-    /** 동일 (user, entitlementKey) 이미 보유 — 정상 멱등 no-op (기존 granted=false 계약). */
+    /**
+     * 동일 (user, entitlementKey) 이미 보유 + **이 tx_ref 가 그 보유와 연결됨**(동일 토큰
+     * 재전송/무토큰/과거 처리 이력) — 정상 멱등. IAP 클라는 alreadyOwned=true 로 finish 가능.
+     */
     ALREADY_PRESENT,
+
+    /**
+     * 이미 보유 중이나 **이 tx_ref 는 원장에 미선점(UNSEEN)인 다른 토큰** — 멱등이되
+     * 클라가 이 토큰을 finish 하면 안 된다. finish 해버리면 기존 권리가 환불·회수된 뒤
+     * 이 토큰의 정당한 재시도 경로(스토어 재노출→재검증)가 사라져 "결제했지만 권리 없음"
+     * 상태가 영구화된다 (2026-07-20 Codex R1 HIGH). IAP 응답: granted=false, alreadyOwned=false.
+     */
+    ALREADY_PRESENT_UNSEEN_TOKEN,
 
     /**
      * 이 tx_ref 는 이미 REVOKE 처리된 terminal 상태 — grant 하지 않고 멱등 반환.
@@ -223,13 +234,14 @@ class EntitlementService(
             owner == null -> {
                 // 이 토큰은 아직 아무 권리도 생성하지 않았다 — 여기서 GRANT 원장을 쓰면(구 구현)
                 // 기존 권리가 회수된 뒤 이 토큰의 정당한 재시도가 "이미 처리됨"으로 영구 차단된다.
-                // **원장 기록 없이** 멱등 반환해 토큰 미선점(UNSEEN) 상태를 유지한다.
+                // **원장 기록 없이** 반환해 토큰 미선점(UNSEEN) 상태를 유지하고, 클라가 이 토큰을
+                // finish 하지 않도록 별도 결과로 구분한다 (Codex R1 HIGH — alreadyOwned 뭉갬 방지).
                 log.info(
                     "entitlement.grant.skip user={} key={} (already granted — 미처리 tx_ref 는 미선점 유지)",
                     userId,
                     entitlementKey,
                 )
-                GrantResult.ALREADY_PRESENT
+                GrantResult.ALREADY_PRESENT_UNSEEN_TOKEN
             }
             owner.userId == userId && owner.entitlementKey == entitlementKey -> {
                 // 같은 (user,key) 가 과거 처리한 토큰의 재전송 — 무해 멱등.

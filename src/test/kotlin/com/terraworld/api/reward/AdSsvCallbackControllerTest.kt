@@ -84,31 +84,33 @@ class AdSsvCallbackControllerTest {
         val res = controller().handleSsv(request())
         assertEquals(403, res.statusCode.value())
         verify(auditService).publish(eq("user-1"), eq("REWARD_AD_SSV_INVALID"), anyOrNull(), anyOrNull(), anyOrNull())
-        verify(nonceInboxRepository, never()).insertIfAbsent(any(), any(), any())
+        verify(nonceInboxRepository, never()).insertSsvIfAbsent(any(), any())
     }
 
     @Test
-    fun `transaction_id 64자 초과는 400 (inbox 컬럼 truncation 방지)`() {
+    fun `transaction_id 60자 초과는 400 (ssv- prefix 포함 inbox 컬럼 truncation 방지)`() {
         whenever(verifier.verify(any(), any(), any())).thenReturn(true)
-        val res = controller().handleSsv(request(transactionId = "a".repeat(65)))
+        val res = controller().handleSsv(request(transactionId = "a".repeat(61)))
         assertEquals(400, res.statusCode.value())
-        verify(nonceInboxRepository, never()).insertIfAbsent(any(), any(), any())
+        verify(nonceInboxRepository, never()).insertSsvIfAbsent(any(), any())
     }
 
     @Test
-    fun `이미 처리된 transaction(insertIfAbsent=0)은 200 dedup (replay 차단)`() {
+    fun `이미 처리된 transaction(insertSsvIfAbsent=0)은 200 dedup (replay 차단)`() {
         whenever(verifier.verify(any(), any(), any())).thenReturn(true)
-        whenever(nonceInboxRepository.insertIfAbsent(any(), any(), any())).thenReturn(0)
+        whenever(nonceInboxRepository.insertSsvIfAbsent(any(), any())).thenReturn(0)
         val res = controller().handleSsv(request())
         assertEquals(200, res.statusCode.value())
     }
 
     @Test
-    fun `정상 SSV 는 200 + VERIFIED audit + inbox 기록`() {
+    fun `정상 SSV 는 200 + VERIFIED audit + transaction_id 바인딩 insert`() {
         whenever(verifier.verify(any(), any(), any())).thenReturn(true)
-        whenever(nonceInboxRepository.insertIfAbsent(any(), any(), any())).thenReturn(1)
+        whenever(nonceInboxRepository.insertSsvIfAbsent(any(), any())).thenReturn(1)
         val res = controller().handleSsv(request())
         assertEquals(200, res.statusCode.value())
+        // audit B2-1 회귀 가드: SSV 는 transaction_id 를 실제 바인딩하는 전용 insert 를 쓴다.
+        verify(nonceInboxRepository).insertSsvIfAbsent(eq("tx-1"), eq("user-1"))
         verify(auditService).publish(eq("user-1"), eq("REWARD_AD_SSV_VERIFIED"), anyOrNull(), anyOrNull(), anyOrNull())
     }
 }

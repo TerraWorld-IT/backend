@@ -39,7 +39,14 @@ class HabitServiceTest {
     fun setup() {
         repo = FakeHabitTrackerRepository()
         currencyService = mock(CurrencyService::class.java)
-        service = HabitService(repo, currencyService, mock(InviteRepository::class.java))
+        service =
+            HabitService(
+                repo,
+                currencyService,
+                mock(InviteRepository::class.java),
+                mock(com.terraworld.domain.user.UserRepository::class.java),
+                mock(org.springframework.context.ApplicationEventPublisher::class.java),
+            )
     }
 
     private fun tracker(

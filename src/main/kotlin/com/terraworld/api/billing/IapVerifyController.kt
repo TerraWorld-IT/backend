@@ -154,9 +154,14 @@ class IapVerifyController(
                 publishTxRefConflictAudit(e)
                 throw e
             }
-        // ALREADY_PRESENT(중복 verify 호출) 와 REVOKED(환불된 토큰 terminal — 권리 미생성) 는
-        // 정상 멱등 — 기존 계약 유지: 200 + granted=false.
+        // ALREADY_PRESENT(같은 토큰의 중복 verify) 는 멱등 성공 — granted=false 로만 주면 클라가
+        // "이미 소유"와 "검증 실패"를 구분 못해 스토어 트랜잭션을 영영 finish 못한다
+        // (2026-07-20 audit B1-1, lossy sentinel). alreadyOwned 를 분리해 클라가 finish 하게 한다.
+        // 단 ALREADY_PRESENT_UNSEEN_TOKEN(보유 중이지만 **다른** 미처리 토큰)은 alreadyOwned 로
+        // 취급하면 안 된다 — 클라가 그 토큰을 finish 하면 기존 권리 환불 후 재시도 경로가 사라진다
+        // (Codex R1 HIGH). REVOKED 와 함께 granted=false + alreadyOwned=false 유지.
         val granted = grantResult == GrantResult.GRANTED
+        val alreadyOwned = grantResult == GrantResult.ALREADY_PRESENT
         auditService.publish(
             userId = userId,
             action = "BILLING_IAP_VERIFIED",
@@ -166,10 +171,11 @@ class IapVerifyController(
                     "product" to body.productId,
                     "entitlementKey" to entitlementKey,
                     "granted" to granted,
+                    "alreadyOwned" to alreadyOwned,
                     "testMode" to testMode,
                 ),
         )
-        return ResponseEntity.ok(IapVerifyResponse(granted = granted, entitlementKey = entitlementKey))
+        return ResponseEntity.ok(IapVerifyResponse(granted = granted, entitlementKey = entitlementKey, alreadyOwned = alreadyOwned))
     }
 
     /**
@@ -198,4 +204,6 @@ data class IapVerifyRequest(
 data class IapVerifyResponse(
     val granted: Boolean,
     val entitlementKey: String,
+    // 멱등 재검증(이미 소유) — 클라는 granted 와 동일하게 성공 처리 + finish() 해야 한다.
+    val alreadyOwned: Boolean = false,
 )

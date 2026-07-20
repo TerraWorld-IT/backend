@@ -2,9 +2,10 @@ package com.terraworld.api.notification
 
 import com.terraworld.domain.userdevice.UserDeviceRepository
 import org.slf4j.LoggerFactory
-import org.springframework.context.event.EventListener
 import org.springframework.scheduling.annotation.Async
 import org.springframework.stereotype.Component
+import org.springframework.transaction.event.TransactionPhase
+import org.springframework.transaction.event.TransactionalEventListener
 
 /**
  * UltraPlan v3 P-FCM-001 + Codex pre-audit A-FCM-001 (2026-05-18):
@@ -23,7 +24,11 @@ import org.springframework.stereotype.Component
  *  - title / body 는 ko (현 시점) — Phase 5+ EN/JA 도입 시 user.locale 따라 분기
  *  - i18n key 는 ko.json 의 `notification.*` namespace
  *
- * 본 listener 는 `@Async` — 도메인 transaction 과 분리. FCM 발송 실패가 DB rollback 유발 X.
+ * 본 listener 는 `@Async` + `@TransactionalEventListener(AFTER_COMMIT, fallbackExecution=true)` —
+ * FCM 발송 실패가 DB rollback 유발 X, 그리고 **커밋 확정 후에만 발송**한다. 구 @EventListener 는
+ * 발행 즉시 비동기 발송을 시작해 트랜잭션이 이후 롤백되면(예: 습관 체크인 저장 실패) 실제로는
+ * 일어나지 않은 활동의 푸시가 나갔다 (2026-07-20 Codex R1). fallbackExecution=true 라
+ * 스케줄러 등 트랜잭션 밖 발행은 기존대로 즉시 처리된다.
  *
  * BE-18 (2026-07-15 성능 감사): 토큰별 순차 `sendToToken` 루프(토큰당 HTTP 왕복) →
  * [FcmService.sendToTokens] (`sendEachForMulticast`, 500 토큰/호출) 배치 전송.
@@ -36,7 +41,7 @@ class FcmEventListener(
     private val log = LoggerFactory.getLogger(javaClass)
 
     @Async("fcmExecutor")
-    @EventListener
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     fun onWiltingEntered(event: WiltingEnteredEvent) {
         val tokens = userDeviceRepository.findAllByUserIdAndIsActiveTrue(event.userId).map { it.token }
         if (tokens.isEmpty()) {
@@ -59,7 +64,7 @@ class FcmEventListener(
     }
 
     @Async("fcmExecutor")
-    @EventListener
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     fun onAttendanceMissed(event: AttendanceMissedEvent) {
         val tokens = userDeviceRepository.findAllByUserIdAndIsActiveTrue(event.userId).map { it.token }
         if (tokens.isEmpty()) return
@@ -72,7 +77,7 @@ class FcmEventListener(
     }
 
     @Async("fcmExecutor")
-    @EventListener
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     fun onFriendActivity(event: FriendActivityEvent) {
         val tokens = userDeviceRepository.findAllByUserIdAndIsActiveTrue(event.toUserId).map { it.token }
         if (tokens.isEmpty()) return
