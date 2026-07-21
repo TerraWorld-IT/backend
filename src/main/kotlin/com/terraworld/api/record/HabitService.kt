@@ -134,11 +134,18 @@ class HabitService(
             //   실제 완료 시각 window 를 비교하지 않아 서로 다른 시기의 동일 cycle 도 매칭될 수 있음. (2) 양측 동시
             //   완주 시 미커밋 상태를 못 봐 2배가 비결정적(첫 완료자 손해 가능). 완전 해소는 pair-cycle 정산 ledger +
             //   양측 tracker 직렬화 필요. prototype 한정 영향(친구쌍당 활성 습관 1개 제한 후 최대 1 cycle 오차, in-game SPARKLE).
+            // Codex R1 #1: 상대 트래커는 ACTIVE 만 인정 — stop() 신설로 BROKEN 잔존 트래커가
+            // 생기는데, 상태 무관 매칭이면 "중단 후 재생성 → 상대의 죽은 cycle=N 과 매칭" 으로
+            // 첫 완주마다 2배를 반복 수취할 수 있다. partnerActive(resolveFriendMeta) 판정과도 정합.
             val doubled =
                 tracker.friendLinkId?.let { linkId ->
                     habitTrackerRepository
                         .findAllByFriendLinkId(linkId)
-                        .any { it.userId != userId && it.completedCycles == tracker.completedCycles }
+                        .any {
+                            it.userId != userId &&
+                                it.status == HabitStatus.ACTIVE &&
+                                it.completedCycles == tracker.completedCycles
+                        }
                 } ?: false
             sparkleGranted = if (doubled) SPARKLE_PER_CYCLE * 2 else SPARKLE_PER_CYCLE
             currencyService.credit(userId, CurrencyCode.SPARKLE, sparkleGranted, REASON_HABIT_CYCLE, REF_TYPE, trackerId.toString())
@@ -168,7 +175,82 @@ class HabitService(
         return HabitCheckInResult(tracker, cycleCompleted, sparkleGranted)
     }
 
-    /** friendLinkId(=수락된 invite.id)에서 상대 userId 해석. 해석 불가 시 null(알림 skip). */
+    /**
+     * 습관 트래커 중단 — status 를 BROKEN 으로 전환한다 (M1: 종료 수단 부재 해소).
+     * 같은 친구쌍 활성 1개 제한(createTracker)은 ACTIVE 만 검사하므로, 중단 후
+     * 같은 친구와 새 습관을 만들 수 있게 된다. 이미 지급된 반짝이는 회수하지 않는다.
+     * 이미 종료된 트래커의 재중단은 멱등 no-op.
+     */
+    @Transactional
+    fun stop(
+        userId: String,
+        trackerId: Long,
+    ) {
+        // Codex R1 #8: read-then-save 는 동시 DELETE 시 @Version 낙관락 충돌로 한쪽이 500 —
+        // 조건부 UPDATE 로 전환해 동시에도 멱등 (0건이면 "이미 종료" vs "미존재/타인" 만 구분).
+        val updated = habitTrackerRepository.markBroken(trackerId, userId)
+        if (updated == 0 && habitTrackerRepository.findByIdAndUserId(trackerId, userId) == null) {
+            throw BusinessException(ErrorCode.HABIT_NOT_FOUND)
+        }
+    }
+
+    /**
+     * 응답용 친구 메타 배치 해석 (M2: 상대 참여 여부 미노출 해소, N+1 회피).
+     * 링크된 트래커마다 상대 userId/닉네임과 "상대도 같은 링크로 ACTIVE 트래커를 만들었는지"
+     * (partnerActive — true 일 때만 완주 2배 성립)를 trackerId 키로 반환한다.
+     */
+    @Transactional(readOnly = true)
+    fun resolveFriendMeta(
+        userId: String,
+        trackers: List<HabitTracker>,
+    ): Map<Long, HabitFriendMeta> {
+        val linkIds = trackers.mapNotNull { it.friendLinkId }.distinct()
+        if (linkIds.isEmpty()) return emptyMap()
+
+        // Codex R1 #9: 내가 inviter 도 invitee 도 아닌 malformed/legacy 링크는 null —
+        // "inviter 아니면 무조건 invitee" 가정은 무관한 사용자 ID/닉네임을 노출할 수 있다.
+        val partnerIdByLink =
+            inviteRepository
+                .findAllById(linkIds)
+                .associate { invite ->
+                    invite.id to
+                        when (userId) {
+                            invite.inviterUserId -> invite.inviteeUserId
+                            invite.inviteeUserId -> invite.inviterUserId
+                            else -> null
+                        }
+                }
+        val partnerTrackersByLink =
+            habitTrackerRepository
+                .findAllByFriendLinkIdIn(linkIds)
+                .filter { it.status == HabitStatus.ACTIVE }
+                .groupBy { it.friendLinkId }
+        val nicknameById =
+            userRepository
+                .findAllById(partnerIdByLink.values.filterNotNull().distinct())
+                .associate { it.id to it.nickname }
+
+        return trackers
+            .filter { it.friendLinkId != null }
+            .associate { tracker ->
+                val linkId = tracker.friendLinkId!!
+                val partnerId = partnerIdByLink[linkId]
+                tracker.id to
+                    HabitFriendMeta(
+                        friendUserId = partnerId,
+                        friendNickname = partnerId?.let { nicknameById[it] },
+                        // Codex R1 #9: "나 아닌 아무나" 가 아니라 해석된 상대 본인의 ACTIVE 트래커만.
+                        partnerActive =
+                            partnerId != null &&
+                                partnerTrackersByLink[linkId].orEmpty().any { it.userId == partnerId },
+                    )
+            }
+    }
+
+    /**
+     * friendLinkId(=수락된 invite.id)에서 상대 userId 해석. 해석 불가 시 null(알림 skip).
+     * 내가 어느 쪽도 아닌 malformed 링크도 null (Codex R1 #9 — 무관 사용자 노출 방지).
+     */
     private fun resolvePartnerUserId(
         userId: String,
         linkId: Long,
@@ -178,10 +260,17 @@ class HabitService(
             .map { invite ->
                 when (userId) {
                     invite.inviterUserId -> invite.inviteeUserId
-                    else -> invite.inviterUserId
+                    invite.inviteeUserId -> invite.inviterUserId
+                    else -> null
                 }
             }.orElse(null)
 }
+
+data class HabitFriendMeta(
+    val friendUserId: String?,
+    val friendNickname: String?,
+    val partnerActive: Boolean,
+)
 
 data class HabitCheckInResult(
     val tracker: HabitTracker,

@@ -40,6 +40,7 @@ class UserBootstrapService(
     private val currencyService: com.terraworld.api.currency.CurrencyService,
     private val terrariumRepository: TerrariumRepository,
     private val terrariumBackgroundRepository: TerrariumBackgroundRepository,
+    private val entitlementService: com.terraworld.api.entitlement.EntitlementService,
 ) {
     @Transactional
     fun ensureExists(
@@ -48,6 +49,12 @@ class UserBootstrapService(
         nickname: String? = null,
     ) {
         require(email.isNotBlank()) { "email must be non-blank" }
+        if (userRepository.existsById(userId)) return
+
+        // 동시 첫 요청 직렬화 (Codex R1 #3): 아래 save() 의 INSERT 는 flush 시점까지 지연될
+        // 수 있어 DataIntegrityViolationException catch 가 경쟁을 못 잡고, 잡더라도 공유 tx 가
+        // rollback-only 로 오염된다. 유저 단위 advisory lock 획득 후 재조회로 패자를 조기 return.
+        userRepository.acquireBootstrapLock("bootstrap|$userId")
         if (userRepository.existsById(userId)) return
 
         // 닉네임 정규화(Codex auth review): NFC + 제어/포맷(Bidi 포함, \p{Cc}\p{Cf}) 제거 + trim + 50자 절단.
@@ -79,6 +86,16 @@ class UserBootstrapService(
         // 낙서장 P1: 초기 잔액 seed — 신 substrate 단일 SoT (COIN=100, RUBY=10). 구 basicCoin/specialCoin·user_tokens 제거(V32).
         currencyService.credit(userId, com.terraworld.domain.currency.CurrencyCode.COIN, 100, "BOOTSTRAP")
         currencyService.credit(userId, com.terraworld.domain.currency.CurrencyCode.RUBY, 10, "BOOTSTRAP")
+
+        // 자유배치 기본 제공 (V37 과 짝) — 홈의 유일한 배치 모델이 자유배치라 위치 저장이
+        // 미활성 IAP entitlement 에 잠겨 전 계정 저장 불가였던 문제의 신규 유저 측 해소.
+        // grant 는 멱등(insertIfAbsent)이고 txRef 없는 SYSTEM_GRANT 라 원장 선점과 무관.
+        // 재유료화 시 이 한 줄 제거 + V37 backfill revoke 로 되돌린다.
+        entitlementService.grant(
+            userId,
+            com.terraworld.domain.entitlement.UserEntitlementId.FREE_PLACEMENT,
+            com.terraworld.domain.entitlement.EntitlementEvent.REASON_SYSTEM_GRANT,
+        )
 
         // SEC-021: deterministic ordering — always pick the lowest-id background
         // so concurrent first-requests for different users get the same default.

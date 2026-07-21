@@ -69,6 +69,9 @@ interface HabitTrackerRepository : JpaRepository<HabitTracker, Long> {
     /** 친구 연동(같은 friend_link_id) 트래커들 — 7일 완료 2배 판정용. */
     fun findAllByFriendLinkId(friendLinkId: Long): List<HabitTracker>
 
+    /** 여러 링크의 트래커 일괄 조회 — 목록 응답의 상대 참여 여부(partnerActive) 배치 해석용 (N+1 회피). */
+    fun findAllByFriendLinkIdIn(friendLinkIds: Collection<Long>): List<HabitTracker>
+
     /**
      * R8: 친구쌍 활성 습관 1개 제한의 원자성 — read-check(findAllByFriendLinkId.any)+save 사이 race 로
      * 동시 생성 시 중복 활성 tracker(→ 상대 1완료로 SPARKLE 2배 이중 판정) 방지. per-(userId|friendLinkId)
@@ -80,5 +83,22 @@ interface HabitTrackerRepository : JpaRepository<HabitTracker, Long> {
     )
     fun acquireHabitPairLock(
         @Param("key") key: String,
+    ): Int
+
+    /**
+     * 중단(BROKEN) 조건부 전환 — 동시 DELETE 에도 낙관락 충돌 없이 멱등 (Codex R1 #8).
+     * version 도 함께 올린다 (Codex R2 NEW): bulk UPDATE 는 @Version 을 우회하므로, 증가
+     * 없이는 "체크인이 ACTIVE/version=N 을 읽음 → 중단 커밋 → 체크인 저장" 순서에서
+     * 낙관락이 경합을 못 보고 중단된 트래커에 체크인(+보상)이 커밋될 수 있다.
+     * 반환 0 = 이미 종료됐거나 미존재/타인 (호출부가 존재 여부로 구분).
+     */
+    @org.springframework.data.jpa.repository.Modifying(clearAutomatically = true)
+    @Query(
+        "UPDATE HabitTracker t SET t.status = com.terraworld.domain.record.HabitStatus.BROKEN, t.version = t.version + 1 " +
+            "WHERE t.id = :id AND t.userId = :userId AND t.status = com.terraworld.domain.record.HabitStatus.ACTIVE",
+    )
+    fun markBroken(
+        @Param("id") id: Long,
+        @Param("userId") userId: String,
     ): Int
 }

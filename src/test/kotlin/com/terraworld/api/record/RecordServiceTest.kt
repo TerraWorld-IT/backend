@@ -411,6 +411,8 @@ class RecordServiceTest {
         FakeJpaRepository<User, String>(),
         UserRepository {
         override fun extractId(entity: User): String = entity.id
+
+        override fun acquireBootstrapLock(key: String): Int = 1
     }
 
     private class FakeCategoryRepository :

@@ -38,12 +38,16 @@ class UserBootstrapServiceTest {
     private val terrariumBackgroundRepository: TerrariumBackgroundRepository =
         mock(TerrariumBackgroundRepository::class.java)
 
+    private val entitlementService: com.terraworld.api.entitlement.EntitlementService =
+        mock(com.terraworld.api.entitlement.EntitlementService::class.java)
+
     private val service =
         UserBootstrapService(
             userRepository,
             currencyService,
             terrariumRepository,
             terrariumBackgroundRepository,
+            entitlementService,
         )
 
     @Test
@@ -79,6 +83,13 @@ class UserBootstrapServiceTest {
         // 초기 잔액 = 신 substrate credit
         verify(currencyService).credit(eq("cld-new"), eq("COIN"), eq(100L), anyOrNull(), anyOrNull(), anyOrNull())
         verify(currencyService).credit(eq("cld-new"), eq("RUBY"), eq(10L), anyOrNull(), anyOrNull(), anyOrNull())
+        // 자유배치 기본 제공 (V37 짝) — 가입 시 free_placement 멱등 grant
+        verify(entitlementService).grant(
+            eq("cld-new"),
+            eq(com.terraworld.domain.entitlement.UserEntitlementId.FREE_PLACEMENT),
+            eq(com.terraworld.domain.entitlement.EntitlementEvent.REASON_SYSTEM_GRANT),
+            anyOrNull(),
+        )
     }
 
     @Test
