@@ -2,7 +2,6 @@ package com.terraworld.api.terrarium
 
 import com.fasterxml.jackson.annotation.JsonProperty
 import com.terraworld.security.SecurityUtil
-import io.swagger.v3.oas.annotations.Hidden
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
@@ -25,12 +24,9 @@ import org.springframework.web.bind.annotation.RestController
  *
  * 좌표계 (2026-06-02): API 는 **0~1 비율(posX/posY)** 로 통신 — 캔버스 해상도 독립.
  * 저장은 기존 free_x/y_pixel(Int) 컬럼을 permille(0~10000) 로 재사용 (PlacementService).
- *
- * @Hidden — OpenAPI spec 미포함 (internal). frontend 가 raw authed fetch(useInternalApi) 로 호출.
  */
 @RestController
 @RequestMapping("/api/v1/terrarium/free-placement")
-@Hidden
 class PlacementController(
     private val placementService: PlacementService,
 ) {

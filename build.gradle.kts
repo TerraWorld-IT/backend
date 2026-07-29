@@ -21,6 +21,16 @@ repositories {
     mavenCentral()
 }
 
+// LOCK-1 (Gradle 의존성 잠금) 은 검토 후 **도입하지 않기로** 했다.
+// lockAllConfigurations() 자체는 동작했으나, dependabot 의 gradle ecosystem 과 상호
+// 배타적이다: dependabot 은 build.gradle.kts 의 버전만 바꾸고 lockfile 을 재생성하지
+// 못하므로 모든 bump PR 이 `Did not resolve ...` 로 빨갛게 도착하고, 매번 사람이
+// `./gradlew dependencies --write-locks` 를 돌려 커밋해야 한다 — 자동화를 도입한
+// 목적 자체를 상쇄하는 상시 수작업이다.
+// transitive 버전의 대부분은 이미 Spring Boot BOM 이 고정하고 있어 실익도 제한적이다.
+// 재검토 조건: dependabot gradle 블록을 제거하거나, lockfile 자동 재생성 워크플로를
+// 갖춘 뒤에 다시 검토한다.
+
 dependencies {
     // Spring Boot
     implementation("org.springframework.boot:spring-boot-starter-web")

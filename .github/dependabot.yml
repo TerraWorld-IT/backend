@@ -1,0 +1,34 @@
+# CI-1 (2026-07-29): backend 는 5개 repo 중 유일하게 dependabot 설정이 없었다.
+# mobile/.github/dependabot.yml 과 동일한 방침 —
+# 3rd-party GitHub Actions 의 SHA pin 대신 dependabot 자동 갱신,
+# first-party `actions/*` 는 major tag float 유지 (관리 부담 회피).
+version: 2
+updates:
+  - package-ecosystem: 'github-actions'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+      day: 'monday'
+    open-pull-requests-limit: 3
+    labels: ['dependencies', 'github-actions']
+    # 3rd-party action 만 PR 생성, first-party 는 ignore (관리 부담 절감)
+    # 참고: dependabot 의 default 동작은 모든 action update 이므로
+    # ignore 패턴 사용. 추후 first-party 도 PR 필요 시 ignore 행 제거.
+    ignore:
+      - dependency-name: 'actions/checkout'
+      - dependency-name: 'actions/setup-java'
+      - dependency-name: 'actions/upload-artifact'
+      - dependency-name: 'actions/download-artifact'
+  - package-ecosystem: 'gradle'
+    directory: '/'
+    schedule:
+      interval: 'monthly'
+    open-pull-requests-limit: 2
+    labels: ['dependencies', 'gradle']
+    # dependabot 관리 대상 밖 (수동 갱신 필요):
+    #  - settings.gradle.kts 의 `includeBuild("openapi-backend")` composite build —
+    #    외부 아티팩트가 아니라 소스 참여라 버전 개념이 없다.
+    #  - 그 openapi-backend 자체는 git submodule 이다. submodule 포인터 갱신은
+    #    spec push 시 codegen 파이프라인이 담당하며 dependabot 이 건드리지 않는다.
+    #    (dependabot 의 gitsubmodule ecosystem 은 의도적으로 미사용 — 코드젠 산출물이라
+    #     spec 과 짝을 맞춰 움직여야 하므로 자동 bump 는 오히려 drift 를 만든다.)

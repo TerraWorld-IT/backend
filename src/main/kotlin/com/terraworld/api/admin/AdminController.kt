@@ -5,7 +5,6 @@ import com.terraworld.domain.item.ItemLayout
 import com.terraworld.domain.item.PriceType
 import com.terraworld.domain.item.Rarity
 import com.terraworld.security.SecurityUtil
-import io.swagger.v3.oas.annotations.Hidden
 import io.terraworld.api.model.AdminItemCreateRequest
 import io.terraworld.api.model.ItemListResponse
 import io.terraworld.api.model.ItemResponse
@@ -26,12 +25,10 @@ import org.springframework.web.bind.annotation.RestController
  * 경로 admin 하위는 `SecurityConfig` 에서 `.hasRole("ADMIN")` 게이트.
  * frontend admin 페이지들의 백엔드 대응 (게임 밸런스 튜닝 + 아이템 활성 토글 + 대시보드).
  *
- * @Hidden — OpenAPI spec 미포함 (internal admin). frontend 는 raw authed fetch 로 호출.
  * 본 cycle 에서 backend API 우선 구현 — admin 페이지의 쓰기 폼 wiring 은 후속 (현재 placeholder).
  */
 @RestController
 @RequestMapping("/api/v1/admin")
-@Hidden
 class AdminController(
     private val adminService: AdminService,
 ) {

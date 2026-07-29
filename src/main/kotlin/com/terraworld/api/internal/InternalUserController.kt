@@ -29,8 +29,10 @@ import java.security.MessageDigest
  * Secured by a shared internal token (`INTERNAL_API_TOKEN`) rather than a
  * user JWT — there is no logged-in user at signup time. The token is
  * transferred out-of-band and scoped narrowly: the only endpoints under
- * ``/api/v1/internal/...`` rely on it. SecurityConfig blocks this path from
- * public traffic.
+ * ``/api/v1/internal/...`` rely on it. ARCH-02 (2026-07-29 주석 정정): SecurityConfig
+ * 는 이 경로를 차단하지 않는다 — `/api/v1/internal/...` 는 의도적으로 permitAll 이며,
+ * 실 인증 게이트는 아래 [isTokenValid] 의 상수시간 토큰 비교 하나뿐이다.
+ * 인터넷에서 이 경로에 도달하는 것 자체를 막는 심층방어는 리버스 프록시 몫이다.
  *
  * NOT added to the OpenAPI spec on purpose — these are infra endpoints,
  * not customer-facing.

@@ -23,8 +23,14 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource
  * - Authentication: stateless; JWTs are validated by [JwtAuthenticationFilter].
  * - CSRF: disabled (no session cookies) — relies on Bearer tokens.
  * - CORS: profile-scoped allow-list. Production does NOT trust localhost.
- * - Internal endpoints: `/api/v1/internal/`... is gated by a shared token
- *   inside the controller and not reachable by normal user JWTs.
+ * - permitAll 경로(의도된 설계): `/api/v1/internal/...`, `/api/v1/webhooks/...`,
+ *   `/api/v1/rewards/ad/ssv-callback` 은 Spring 레이어에서 인증을 요구하지 않는다.
+ *   각 경로의 실 인증 게이트는 컨트롤러 안에 있다 —
+ *   internal 은 X-Internal-Token 공유 시크릿(constant-time 비교), webhooks 는 공유 토큰,
+ *   SSV 콜백은 ECDSA 서명검증.
+ *   webhooks 와 SSV 콜백은 Google Pub/Sub(Play RTDN) 과 Google AdMob 이 인터넷에서 직접
+ *   호출하므로 공개가 정상이며, 호출자가 스스로를 인증한다.
+ *   `/api/v1/internal/` 의 네트워크 레벨 심층방어(외부 트래픽 차단)는 리버스 프록시 몫이다.
  * - Swagger / API docs: public in non-prod, locked down in prod.
  */
 @Configuration
@@ -46,10 +52,14 @@ class SecurityConfig(
             .sessionManagement { it.sessionCreationPolicy(SessionCreationPolicy.STATELESS) }
             .authorizeHttpRequests { auth ->
                 auth
-                    // Internal endpoints (bootstrap/purge) are gated by the
-                    // X-Internal-Token header inside the controller. Block
-                    // unauthenticated access here so no filter quirk can
-                    // bypass the header check.
+                    // ARCH-02 (2026-07-29 주석 정정): 아래 permitAll 은 **의도된 설계**이며
+                    // Spring Security 는 이 경로를 전혀 차단하지 않는다 (이전 주석의
+                    // "Block unauthenticated access here" 서술은 코드와 반대였음).
+                    // 실 인증 게이트는 오직 X-Internal-Token 공유 시크릿 하나 —
+                    // InternalUserController.isTokenValid 의 MessageDigest.isEqual
+                    // (constant-time) 비교. 로그인 세션/JWT 는 이 경로와 무관하다.
+                    // 네트워크 레벨 심층방어(외부에서 /api/v1/internal/ 도달 자체를 막는 것)는
+                    // 리버스 프록시가 담당해야 하며, 여기서 제공되지 않는다.
                     .requestMatchers("/api/v1/internal/**")
                     .permitAll()
                     // code-review SEC-001/CDX-001 (HIGH, 2026-05-21): Play Billing RTDN
