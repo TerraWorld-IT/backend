@@ -107,6 +107,8 @@ class EntitlementService(
     private val entitlementEventRepository: EntitlementEventRepository,
     private val entitlementTxLedgerRepository: EntitlementTxLedgerRepository,
     private val auditService: AuditService,
+    // apjek social loop: 결제 승인 확정(PURCHASE grant) 시 인앱 알림함 append 이벤트 발행
+    private val eventPublisher: org.springframework.context.ApplicationEventPublisher,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -207,6 +209,16 @@ class EntitlementService(
                         "txRef" to (txRef ?: "null"),
                     ),
             )
+            // apjek social loop: 결제 승인 확정 알림 — IAP verify / RTDN webhook 양 경로의 공통
+            // choke-point (둘 다 본 메서드를 REASON_PURCHASE 로 호출). tx 안 publish 이므로
+            // AFTER_COMMIT listener(NotificationEventListener)가 커밋 확정 후에만 알림함에 append —
+            // grant 롤백 시 미발송. SYSTEM_GRANT(전원 기본 부여)/ADMIN_OVERRIDE 는 결제가 아니라 제외.
+            if (reason == EntitlementEvent.REASON_PURCHASE) {
+                eventPublisher.publishEvent(
+                    com.terraworld.api.notification
+                        .PaymentCompletedEvent(userId = userId, entitlementKey = entitlementKey),
+                )
+            }
             return GrantResult.GRANTED
         }
 

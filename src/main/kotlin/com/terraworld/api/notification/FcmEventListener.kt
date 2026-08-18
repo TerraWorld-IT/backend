@@ -89,6 +89,20 @@ class FcmEventListener(
             mapOf("type" to "FRIEND", "fromUserId" to event.fromUserId, "route" to event.route),
         )
     }
+
+    /** 습관 응원 푸시 (apjek social loop) — [FriendActivityEvent] 패턴 복제. 알림함 append 는 NotificationEventListener 별도 경로. */
+    @Async("fcmExecutor")
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    fun onHabitCheer(event: HabitCheerEvent) {
+        val tokens = userDeviceRepository.findAllByUserIdAndIsActiveTrue(event.toUserId).map { it.token }
+        if (tokens.isEmpty()) return
+        fcmService.sendToTokens(
+            tokens,
+            "💌 ${event.fromNickname} 님이 응원을 보냈어요",
+            event.message,
+            mapOf("type" to "CHEER", "fromUserId" to event.fromUserId, "route" to event.route),
+        )
+    }
 }
 
 // 도메인 event 클래스 — 본 cycle 의 spec/skeleton. 별 cycle 에서 publisher 배선.
@@ -107,5 +121,19 @@ data class FriendActivityEvent(
     val toUserId: String,
     val message: String,
     /** 푸시 탭 시 이동 경로 — 습관 연동은 /record, 초대 수락은 /friends. */
+    val route: String = "/record",
+)
+
+/**
+ * 습관 응원 이벤트 (apjek social loop) — HabitCheerService.cheer 가 도메인 tx 안에서 publish.
+ * 푸시(본 listener)와 알림함 append(NotificationEventListener) 가 각자 수신한다.
+ */
+data class HabitCheerEvent(
+    val fromUserId: String,
+    val toUserId: String,
+    /** 발신자 닉네임 — 푸시/알림함 title 조립용 (service 가 tx 안에서 해석해 전달). */
+    val fromNickname: String,
+    /** 응원 메시지 원문 (1..100자 — service 가 검증). */
+    val message: String,
     val route: String = "/record",
 )

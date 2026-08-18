@@ -62,6 +62,13 @@ enum class ErrorCode(
     // Phase 4 — photoUrl 도메인 화이트리스트 (SF-005 follow-up)
     INVALID_PHOTO_URL(HttpStatus.BAD_REQUEST, "허용되지 않은 사진 URL 입니다"),
 
+    // apjek social loop (2026-08-18) — 투두 루틴
+    TODO_ROUTINE_NOT_FOUND(HttpStatus.NOT_FOUND, "투두 루틴을 찾을 수 없습니다"),
+    TODO_ROUTINE_LIMIT_EXCEEDED(HttpStatus.CONFLICT, "투두 루틴 최대 개수(20개)를 초과했습니다"),
+
+    // apjek social loop (2026-08-18) — 테라리움 배경 변경: 보유 아이템이지만 layout 이 BACKGROUND 가 아님 (spec 409)
+    NOT_BACKGROUND_LAYOUT(HttpStatus.CONFLICT, "배경으로 설정할 수 없는 아이템입니다"),
+
     // General
     BAD_REQUEST(HttpStatus.BAD_REQUEST, "잘못된 요청입니다"),
     FORBIDDEN(HttpStatus.FORBIDDEN, "권한이 없습니다"),
