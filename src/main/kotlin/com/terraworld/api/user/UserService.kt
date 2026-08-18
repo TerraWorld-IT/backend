@@ -30,6 +30,11 @@ class UserService(
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
+    companion object {
+        /** 닉네임 길이 계약 (spec UpdateMeRequest 1..20 — DB 컬럼 50 이내). */
+        const val MAX_NICKNAME_LENGTH = 20
+    }
+
     fun getMe(
         userId: String,
         email: String,
@@ -82,6 +87,32 @@ class UserService(
                         ),
                 ),
         )
+    }
+
+    /**
+     * 프로필(닉네임) 갱신 (PUT /users/me, apjek social loop).
+     * trim 후 1..20자 검증 — bean validation(@Size)은 raw 값 기준이라 공백-only 입력이
+     * 통과할 수 있어 서비스에서 재검증한다. 갱신 후 spec 계약대로 getMe 와 동일한
+     * 전체 스냅샷을 반환해 프론트가 상태를 그대로 교체할 수 있게 한다.
+     */
+    @Transactional
+    fun updateMe(
+        userId: String,
+        email: String,
+        nickname: String,
+    ): UserMeResponse {
+        val trimmed = nickname.trim()
+        if (trimmed.isEmpty() || trimmed.length > MAX_NICKNAME_LENGTH) {
+            throw BusinessException(ErrorCode.INVALID_INPUT, "닉네임은 1~${MAX_NICKNAME_LENGTH}자여야 합니다")
+        }
+        val user =
+            userRepository
+                .findById(userId)
+                .orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) }
+        user.nickname = trimmed
+        user.updatedAt = java.time.LocalDateTime.now()
+        userRepository.save(user)
+        return getMe(userId, email)
     }
 
     /**

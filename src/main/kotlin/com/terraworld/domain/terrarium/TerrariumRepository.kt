@@ -40,7 +40,13 @@ interface WiltScanProjection {
     val wiltRecoveredAt: LocalDateTime?
 }
 
-interface TerrariumBackgroundRepository : JpaRepository<TerrariumBackground, Long>
+interface TerrariumBackgroundRepository : JpaRepository<TerrariumBackground, Long> {
+    /**
+     * 배경 변경(setBackground)의 find-or-create 매칭 키 — 아이템 파생 배경은 asset_url 로 재사용 판정.
+     * 유니크 제약이 없어 동시 생성 시 중복 행이 있을 수 있으므로 최소 id 로 결정적 선택.
+     */
+    fun findFirstByAssetUrlOrderByIdAsc(assetUrl: String): TerrariumBackground?
+}
 
 interface TerrariumPlacementRepository : JpaRepository<TerrariumPlacement, Long> {
     fun findAllByTerrariumId(terrariumId: Long): List<TerrariumPlacement>

@@ -5,7 +5,9 @@ import com.terraworld.security.SecurityUtil
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.tags.Tag
 import io.terraworld.api.api.UserApi
+import io.terraworld.api.model.UpdateMeRequest
 import io.terraworld.api.model.UserMeResponse
+import jakarta.validation.Valid
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
@@ -31,6 +33,14 @@ class UserController(
         val current = SecurityUtil.getCurrentUser()
         val response = userService.getMe(current.id, current.email)
         return ResponseEntity.ok(response)
+    }
+
+    @Operation(summary = "내 프로필 수정", description = "닉네임 갱신 후 getMe 와 동일한 유저 전체 스냅샷을 반환합니다")
+    override fun updateMe(
+        @Valid updateMeRequest: UpdateMeRequest,
+    ): ResponseEntity<UserMeResponse> {
+        val current = SecurityUtil.getCurrentUser()
+        return ResponseEntity.ok(userService.updateMe(current.id, current.email, updateMeRequest.nickname))
     }
 
     @Operation(

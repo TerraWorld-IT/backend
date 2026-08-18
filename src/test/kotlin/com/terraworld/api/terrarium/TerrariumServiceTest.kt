@@ -57,6 +57,7 @@ class TerrariumServiceTest {
         val terrariumPlacementRepository = org.mockito.Mockito.mock(TerrariumPlacementRepository::class.java)
         val userItemRepository = org.mockito.Mockito.mock(UserItemRepository::class.java)
         val itemRepository = org.mockito.Mockito.mock(ItemRepository::class.java)
+        val terrariumBackgroundRepository = org.mockito.Mockito.mock(com.terraworld.domain.terrarium.TerrariumBackgroundRepository::class.java)
         val placementHistoryRepository = org.mockito.Mockito.mock(TerrariumPlacementHistoryRepository::class.java)
         val entitlementService = org.mockito.Mockito.mock(EntitlementService::class.java)
         val currencyService = org.mockito.Mockito.mock(com.terraworld.api.currency.CurrencyService::class.java)
@@ -73,6 +74,7 @@ class TerrariumServiceTest {
                 userRepo,
                 userItemRepository,
                 itemRepository,
+                terrariumBackgroundRepository,
                 tierConfigRepo,
                 recordRepo,
                 placementHistoryRepository,

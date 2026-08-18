@@ -95,6 +95,7 @@ class PlacementService(
 
         private fun ratioToStore(ratio: Double): Int = (ratio.coerceIn(0.0, 1.0) * STORE_SCALE).roundToInt()
 
-        private fun storeToRatio(stored: Int?): Double = (stored ?: 0) / STORE_SCALE.toDouble()
+        // internal: TerrariumService 의 freePlacements 응답 조립도 같은 permille→비율 변환을 재사용 (상수 중복 방지).
+        internal fun storeToRatio(stored: Int?): Double = (stored ?: 0) / STORE_SCALE.toDouble()
     }
 }

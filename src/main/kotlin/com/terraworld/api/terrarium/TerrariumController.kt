@@ -8,6 +8,7 @@ import io.terraworld.api.model.HeartResponse
 import io.terraworld.api.model.PlacementRequest
 import io.terraworld.api.model.PlacementResponse
 import io.terraworld.api.model.PlacementResponseItem
+import io.terraworld.api.model.TerrariumBackgroundRequest
 import io.terraworld.api.model.TerrariumResponse
 import io.terraworld.api.model.TierCatalogResponse
 import io.terraworld.api.model.TierUnlockRequest
@@ -60,6 +61,14 @@ class TerrariumController(
             ),
         )
     }
+
+    @Operation(summary = "테라리움 배경 변경", description = "보유한 BACKGROUND 레이아웃 아이템으로 배경 변경 — 미보유/미존재 404, 레이아웃 불일치 409")
+    override fun setTerrariumBackground(
+        @Valid terrariumBackgroundRequest: TerrariumBackgroundRequest,
+    ): ResponseEntity<TerrariumResponse> =
+        ResponseEntity.ok(
+            terrariumService.setBackground(SecurityUtil.getCurrentUserId(), terrariumBackgroundRequest.itemId),
+        )
 
     @Operation(summary = "하트 클릭", description = "클릭당 기본코인 +1 지급 (Phase 4: DB BIGINT 정합)")
     override fun clickTerrariumHeart(): ResponseEntity<HeartResponse> {

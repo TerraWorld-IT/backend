@@ -6,6 +6,8 @@ import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.tags.Tag
 import io.terraworld.api.api.HabitApi
 import io.terraworld.api.model.HabitCheckInResponse
+import io.terraworld.api.model.HabitCheerRequest
+import io.terraworld.api.model.HabitCheerResponse
 import io.terraworld.api.model.HabitCreateRequest
 import io.terraworld.api.model.HabitListResponse
 import io.terraworld.api.model.HabitTrackerResponse
@@ -14,6 +16,7 @@ import jakarta.validation.Valid
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
+import java.time.ZoneOffset
 
 /**
  * HabitApi 구현 — 습관 트래커(7일 연속 기록 → 반짝이). 낙서장 P1 습관/일상 분리.
@@ -23,6 +26,7 @@ import org.springframework.web.bind.annotation.RestController
 @RequestMapping("/api/v1")
 class HabitController(
     private val habitService: HabitService,
+    private val habitCheerService: HabitCheerService,
 ) : HabitApi {
     @Operation(summary = "습관 트래커 생성")
     override fun createHabit(
@@ -58,6 +62,16 @@ class HabitController(
                 sparkleGranted = result.sparkleGranted,
             ),
         )
+    }
+
+    @Operation(summary = "습관 응원 보내기", description = "친구 연동 습관에 하루 3회/트래커까지 응원 메시지 발송 (푸시 + 알림함)")
+    override fun cheerHabit(
+        trackerId: Long,
+        @Valid habitCheerRequest: HabitCheerRequest,
+    ): ResponseEntity<HabitCheerResponse> {
+        val saved = habitCheerService.cheer(SecurityUtil.getCurrentUserId(), trackerId, habitCheerRequest.message)
+        // 생성 시각 → sentAt (generated 모델의 OffsetDateTime — RecordService 의 UTC 변환 관례).
+        return ResponseEntity.ok(HabitCheerResponse(sentAt = saved.createdAt.atOffset(ZoneOffset.UTC)))
     }
 
     @Operation(summary = "습관 트래커 중단", description = "BROKEN 전환 — 같은 친구와 새 공동 습관 생성이 가능해진다. 멱등.")
