@@ -3,9 +3,12 @@ package com.terraworld.api.terrarium
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
 import com.terraworld.common.time.KstTime
+import com.terraworld.domain.item.ItemLayout
 import com.terraworld.domain.item.ItemRepository
 import com.terraworld.domain.item.UserItemRepository
 import com.terraworld.domain.record.RecordRepository
+import com.terraworld.domain.terrarium.TerrariumBackground
+import com.terraworld.domain.terrarium.TerrariumBackgroundRepository
 import com.terraworld.domain.terrarium.TerrariumPlacement
 import com.terraworld.domain.terrarium.TerrariumPlacementHistory
 import com.terraworld.domain.terrarium.TerrariumPlacementHistoryRepository
@@ -21,7 +24,9 @@ import io.terraworld.api.model.WiltingState
 import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import java.time.LocalDateTime
 import java.time.temporal.ChronoUnit
+import io.terraworld.api.model.FreePlacementItem as ApiFreePlacementItem
 
 /** 슬롯 재저장(delete-recreate) 시 보존할 자유배치 편집 상태 6필드. */
 private data class FreeEditState(
@@ -50,6 +55,8 @@ class TerrariumService(
     private val userRepository: UserRepository,
     private val userItemRepository: UserItemRepository,
     private val itemRepository: ItemRepository,
+    // apjek social loop: 배경 변경(setBackground) — 아이템 파생 배경 행 find-or-create
+    private val terrariumBackgroundRepository: TerrariumBackgroundRepository,
     // 낙서장 P2: maxSlots = 현재 티어 슬롯 (구 level_configs 대체)
     private val tierConfigRepository: com.terraworld.domain.terrarium.TierConfigRepository,
     private val recordRepository: RecordRepository,
@@ -93,6 +100,9 @@ class TerrariumService(
         // BE-08: findSlotsByTier 는 Caffeine TTL 10분 캐시 (4행 seed config — 매 조회 SELECT 제거)
         val maxSlots = tierConfigRepository.findSlotsByTier(terrarium.tier) ?: 6
 
+        // 기존 fetch join 1쿼리를 placedItems / freePlacements 양쪽 조립에 공유 (추가 쿼리 없음).
+        val placements = terrariumPlacementRepository.findAllByTerrariumUserIdOrderById(userId)
+
         return TerrariumResponse(
             terrariumId = terrarium.id,
             background =
@@ -102,7 +112,7 @@ class TerrariumService(
                     assetUrl = terrarium.background.assetUrl,
                 ),
             placedItems =
-                terrariumPlacementRepository.findAllByTerrariumUserIdOrderById(userId).map { p ->
+                placements.map { p ->
                     PlacedItemDetail(
                         id = p.id,
                         itemId = p.item.id,
@@ -117,7 +127,83 @@ class TerrariumService(
             maxSlots = maxSlots,
             tier = terrarium.tier,
             wilting = computeWiltingState(userId, terrarium),
+            // apjek social loop: 자유배치 사용 중(활성 항목 존재)일 때만 전체 배치의 실좌표 목록을 동봉 —
+            // 미사용이면 생략(null, spec 계약). 항목 구성은 GET /terrarium/free-placement (PlacementService.
+            // listForUser) 와 동일 — 친구 방문 화면(FE TerrariumView)이 홈과 같은 해석으로 재현한다
+            // (비자유배치 항목은 FE 가 index 폴백 좌표 사용).
+            freePlacements =
+                if (placements.any { it.isFreePlacement }) {
+                    placements.map { p ->
+                        ApiFreePlacementItem(
+                            placementId = p.id,
+                            itemId = p.item.id,
+                            itemName = p.item.name,
+                            itemImage = p.item.assetUrl,
+                            itemLayout = p.item.layout.name,
+                            posX = PlacementService.storeToRatio(p.freeXPixel),
+                            posY = PlacementService.storeToRatio(p.freeYPixel),
+                            isFreePlacement = p.isFreePlacement,
+                            scale = p.scale,
+                            flipped = p.flipped,
+                            zIndex = p.zIndex,
+                        )
+                    }
+                } else {
+                    null
+                },
         )
+    }
+
+    /**
+     * 테라리움 배경 변경 (PUT /terrarium/background, apjek social loop).
+     *
+     * 검증 순서는 spec(terrarium-background.yaml) 계약: 미존재/미보유 → 404 (존재 숨김 —
+     * 두 경우 모두 동일 ITEM_NOT_FOUND 응답으로 존재 여부를 드러내지 않는다), 보유했지만
+     * layout != BACKGROUND → 409 NOT_BACKGROUND_LAYOUT.
+     *
+     * terrariums.background_id 는 terrarium_backgrounds FK (substrate 재사용 — 스키마 변경 없음).
+     * 아이템에서 파생한 배경 행을 asset_url 기준 find-or-create 로 확보해 연결한다.
+     * 유니크 제약이 없어 동시 최초 설정 시 중복 행이 생길 수 있으나 둘 다 유효한 FK 대상이라 무해
+     * (조회는 최소 id 선택으로 결정적).
+     */
+    @Transactional
+    fun setBackground(
+        userId: String,
+        itemId: Long,
+    ): TerrariumResponse {
+        val terrarium =
+            terrariumRepository
+                .findByUserId(userId)
+                .orElseThrow { BusinessException(ErrorCode.TERRARIUM_NOT_FOUND) }
+
+        val item =
+            itemRepository
+                .findById(itemId)
+                .orElseThrow { BusinessException(ErrorCode.ITEM_NOT_FOUND) }
+        if (!userItemRepository.existsByUserIdAndItemId(userId, itemId)) {
+            // 존재 숨김: 미존재와 동일한 응답 (updatePlacements 의 보유 메시지 관례와 달리 메시지도 비노출)
+            throw BusinessException(ErrorCode.ITEM_NOT_FOUND)
+        }
+        if (item.layout != ItemLayout.BACKGROUND) {
+            throw BusinessException(ErrorCode.NOT_BACKGROUND_LAYOUT)
+        }
+
+        val background =
+            terrariumBackgroundRepository.findFirstByAssetUrlOrderByIdAsc(item.assetUrl)
+                ?: terrariumBackgroundRepository.save(
+                    TerrariumBackground(
+                        name = item.name,
+                        assetUrl = item.assetUrl,
+                        // 아이템 파생 배경 표식 — seed 카탈로그(DEFAULT/LEVEL)와 구분
+                        unlockCondition = "ITEM",
+                        unlockValue = 0,
+                    ),
+                )
+        terrarium.background = background
+        terrarium.updatedAt = LocalDateTime.now()
+        terrariumRepository.save(terrarium)
+
+        return buildTerrariumResponse(userId, terrarium)
     }
 
     /**

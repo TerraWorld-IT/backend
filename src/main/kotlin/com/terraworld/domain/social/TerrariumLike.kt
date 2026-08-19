@@ -40,6 +40,11 @@ interface TerrariumLikeRepository : JpaRepository<TerrariumLike, Long> {
 
     fun countByTargetUserId(targetUserId: String): Long
 
+    fun findAllByLikerUserIdAndTargetUserIdIn(
+        likerUserId: String,
+        targetUserIds: Collection<String>,
+    ): List<TerrariumLike>
+
     /**
      * BE-10 (2026-07-15 성능 감사): FriendService.listFriends 의 친구당 count N+1 을
      * IN + GROUP BY 단일 쿼리로 대체. like 0건인 target 은 결과에 없음 — 호출부가 0 default.

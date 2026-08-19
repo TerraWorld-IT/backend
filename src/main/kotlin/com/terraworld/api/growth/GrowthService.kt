@@ -1,6 +1,8 @@
 package com.terraworld.api.growth
 
 import com.terraworld.api.currency.CurrencyService
+import com.terraworld.common.exception.BusinessException
+import com.terraworld.common.exception.ErrorCode
 import com.terraworld.common.time.KstTime
 import com.terraworld.domain.currency.CurrencyCode
 import com.terraworld.domain.growth.GrowthInstance
@@ -12,6 +14,7 @@ import io.terraworld.api.model.GrowthItem
 import io.terraworld.api.model.GrowthResponse
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
+import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 
 /**
@@ -48,11 +51,7 @@ class GrowthService(
                 val effectiveProgress = (inst?.naturalStreak ?: 0) + (inst?.sparkleBoughtCount ?: 0)
                 val currentStage = stageForProgress(stages, effectiveProgress)
                 val stageLabel = stages.firstOrNull { it.stageOrder == currentStage }?.labelKo ?: ""
-                // P0.5 dormancy: 마지막 진행 이후 3일+ 미기록 = 동면 (lazy)
-                val dormant =
-                    inst?.lastProgressAt?.let {
-                        ChronoUnit.DAYS.between(it.toLocalDate(), today) >= DORMANCY_DAYS
-                    } ?: false
+                val dormant = isDormant(inst, today)
                 GrowthItem(
                     speciesCode = species.code,
                     kind = GrowthItem.Kind.forValue(species.kind),
@@ -112,14 +111,17 @@ class GrowthService(
     ): GrowthItem {
         val species =
             growthSpeciesRepository.findById(speciesCode).orElseThrow {
-                com.terraworld.common.exception
-                    .BusinessException(com.terraworld.common.exception.ErrorCode.INVALID_INPUT, "존재하지 않는 종: $speciesCode")
+                BusinessException(ErrorCode.INVALID_INPUT, "존재하지 않는 종: $speciesCode")
             }
-        currencyService.debit(userId, CurrencyCode.SPARKLE, SPARKLE_PER_BOOSTER, REASON_GROW_BOOST, REF_TYPE, speciesCode)
-
         val inst =
             growthInstanceRepository.findByUserIdAndSpeciesCode(userId, speciesCode)
                 ?: GrowthInstance(userId = userId, speciesCode = speciesCode)
+        // 동면이면 차감 전에 거절 — FE 잠금과 같은 서버 가드. 기록으로만 깨어남.
+        if (isDormant(inst, KstTime.today())) {
+            throw BusinessException(ErrorCode.GROWTH_DORMANT)
+        }
+        currencyService.debit(userId, CurrencyCode.SPARKLE, SPARKLE_PER_BOOSTER, REASON_GROW_BOOST, REF_TYPE, speciesCode)
+
         inst.sparkleBoughtCount += BOOSTER_PROGRESS
         val stages = growthStageRepository.findAllByKindOrderByStageOrderAsc(species.kind)
         val goal = stages.maxOfOrNull { it.threshold } ?: 30
@@ -137,6 +139,15 @@ class GrowthService(
             goal = goal,
             dormant = false,
         )
+    }
+
+    /** 마지막 진행 이후 [DORMANCY_DAYS]일 이상 미기록. lastProgressAt 없으면 동면 아님(신규 개체). */
+    private fun isDormant(
+        inst: GrowthInstance?,
+        today: LocalDate,
+    ): Boolean {
+        val last = inst?.lastProgressAt ?: return false
+        return ChronoUnit.DAYS.between(last.toLocalDate(), today) >= DORMANCY_DAYS
     }
 
     /** effectiveProgress 기준 도달 최고 stage_order (threshold <= progress). 최소 1. */

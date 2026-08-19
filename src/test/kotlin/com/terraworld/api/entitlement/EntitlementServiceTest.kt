@@ -36,6 +36,7 @@ class EntitlementServiceTest {
     private lateinit var entitlementRepo: FakeUserEntitlementRepository
     private lateinit var eventRepo: FakeEntitlementEventRepository
     private lateinit var txLedgerRepo: FakeEntitlementTxLedgerRepository
+    private lateinit var eventPublisher: org.springframework.context.ApplicationEventPublisher
     private lateinit var service: EntitlementService
 
     @BeforeEach
@@ -45,12 +46,15 @@ class EntitlementServiceTest {
         txLedgerRepo = FakeEntitlementTxLedgerRepository()
         // AuditService 는 side-effect publisher — 검증 대상 아님, mock.
         val auditService = org.mockito.Mockito.mock(AuditService::class.java)
+        // apjek social loop: PURCHASE grant 시 결제 완료 알림 이벤트 발행 검증용 mock.
+        eventPublisher = org.mockito.Mockito.mock(org.springframework.context.ApplicationEventPublisher::class.java)
         service =
             EntitlementService(
                 entitlementRepo,
                 eventRepo,
                 txLedgerRepo,
                 auditService,
+                eventPublisher,
             )
     }
 
@@ -76,6 +80,45 @@ class EntitlementServiceTest {
         assertEquals("tok-1", ledger[0].txRef)
         // 처리 원장에도 (tok-1, GRANT) 선점
         assertEquals("user-1", txLedgerRepo.findByTxRefAndAction("tok-1", EntitlementTxLedger.ACTION_GRANT)?.userId)
+    }
+
+    // ─── apjek social loop: 결제 완료 알림 이벤트 ─────────────────
+
+    @Test
+    fun `grant PURCHASE 신규 — PaymentCompletedEvent 발행 (알림함 append 트리거)`() {
+        service.grant(
+            userId = "user-1",
+            entitlementKey = UserEntitlementId.FREE_PLACEMENT,
+            reason = EntitlementEvent.REASON_PURCHASE,
+            txRef = "tok-pay",
+        )
+
+        org.mockito.kotlin.verify(eventPublisher).publishEvent(
+            com.terraworld.api.notification
+                .PaymentCompletedEvent(userId = "user-1", entitlementKey = UserEntitlementId.FREE_PLACEMENT),
+        )
+    }
+
+    @Test
+    fun `grant SYSTEM_GRANT — 결제가 아니므로 PaymentCompletedEvent 미발행`() {
+        service.grant(
+            userId = "user-1",
+            entitlementKey = UserEntitlementId.FREE_PLACEMENT,
+            reason = EntitlementEvent.REASON_SYSTEM_GRANT,
+        )
+
+        org.mockito.kotlin.verifyNoInteractions(eventPublisher)
+    }
+
+    @Test
+    fun `grant PURCHASE 중복(ALREADY_PRESENT) — PaymentCompletedEvent 재발행 없음`() {
+        service.grant("user-1", UserEntitlementId.FREE_PLACEMENT, EntitlementEvent.REASON_PURCHASE, "tok-1")
+        org.mockito.Mockito.clearInvocations(eventPublisher)
+
+        val second = service.grant("user-1", UserEntitlementId.FREE_PLACEMENT, EntitlementEvent.REASON_PURCHASE, "tok-1")
+
+        assertEquals(GrantResult.ALREADY_PRESENT, second)
+        org.mockito.kotlin.verifyNoInteractions(eventPublisher)
     }
 
     @Test
