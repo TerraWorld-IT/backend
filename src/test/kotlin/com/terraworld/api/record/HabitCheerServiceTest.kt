@@ -6,6 +6,7 @@ import com.terraworld.common.exception.ErrorCode
 import com.terraworld.common.time.KstTime
 import com.terraworld.domain.record.HabitCheer
 import com.terraworld.domain.record.HabitCheerRepository
+import com.terraworld.domain.record.HabitStatus
 import com.terraworld.domain.record.HabitTracker
 import com.terraworld.domain.record.HabitTrackerRepository
 import com.terraworld.domain.social.Invite
@@ -121,24 +122,78 @@ class HabitCheerServiceTest {
     }
 
     @Test
-    fun `cheer — 친구 연동 아닌 트래커 INVALID_INPUT`() {
+    fun `cheer — 친구 연동 아닌 본인 트래커는 NOT_FRIEND_LINKED`() {
         whenever(trackerRepository.findById(1L)).thenReturn(
             Optional.of(HabitTracker(id = 1L, userId = "u", title = "혼자 습관", startDate = KstTime.today(), friendLinkId = null)),
         )
         assertEquals(
-            ErrorCode.INVALID_INPUT,
+            ErrorCode.NOT_FRIEND_LINKED,
             assertThrows<BusinessException> { service.cheer("u", 1L, "화이팅") }.errorCode,
         )
     }
 
     @Test
-    fun `cheer — 링크 비참여자는 FORBIDDEN (무관 사용자 응원 차단)`() {
+    fun `cheer — 타인 솔로 트래커는 HABIT_NOT_FOUND (존재 숨김)`() {
+        whenever(trackerRepository.findById(1L)).thenReturn(
+            Optional.of(HabitTracker(id = 1L, userId = "u", title = "혼자 습관", startDate = KstTime.today(), friendLinkId = null)),
+        )
+        assertEquals(
+            ErrorCode.HABIT_NOT_FOUND,
+            assertThrows<BusinessException> { service.cheer("stranger", 1L, "화이팅") }.errorCode,
+        )
+    }
+
+    @Test
+    fun `cheer — 링크 비참여자는 HABIT_NOT_FOUND (존재 숨김)`() {
         linkedTracker()
         assertEquals(
-            ErrorCode.FORBIDDEN,
+            ErrorCode.HABIT_NOT_FOUND,
             assertThrows<BusinessException> { service.cheer("stranger", 1L, "화이팅") }.errorCode,
         )
         assertEquals(0, cheerRepository.all().size)
+    }
+
+    @Test
+    fun `cheer — COMPLETED 트래커는 HABIT_NOT_ACTIVE`() {
+        linkedTracker()
+        whenever(trackerRepository.findById(1L)).thenReturn(
+            Optional.of(
+                HabitTracker(
+                    id = 1L,
+                    userId = "u",
+                    title = "스트레칭",
+                    startDate = KstTime.today(),
+                    status = HabitStatus.COMPLETED,
+                    friendLinkId = 100L,
+                ),
+            ),
+        )
+        assertEquals(
+            ErrorCode.HABIT_NOT_ACTIVE,
+            assertThrows<BusinessException> { service.cheer("u", 1L, "화이팅") }.errorCode,
+        )
+        verifyNoInteractions(eventPublisher)
+    }
+
+    @Test
+    fun `cheer — BROKEN 트래커는 HABIT_NOT_ACTIVE`() {
+        linkedTracker()
+        whenever(trackerRepository.findById(1L)).thenReturn(
+            Optional.of(
+                HabitTracker(
+                    id = 1L,
+                    userId = "u",
+                    title = "스트레칭",
+                    startDate = KstTime.today(),
+                    status = HabitStatus.BROKEN,
+                    friendLinkId = 100L,
+                ),
+            ),
+        )
+        assertEquals(
+            ErrorCode.HABIT_NOT_ACTIVE,
+            assertThrows<BusinessException> { service.cheer("u", 1L, "화이팅") }.errorCode,
+        )
     }
 
     @Test

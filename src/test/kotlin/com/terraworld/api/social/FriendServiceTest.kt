@@ -89,8 +89,21 @@ class FriendServiceTest {
         val byId = friends.associateBy { it.userId }
         assertEquals("친구A", byId["friend-a"]!!.nickname)
         assertEquals(2L, byId["friend-a"]!!.likeCount)
+        assertFalse(byId["friend-a"]!!.liked)
         assertEquals("친구B", byId["friend-b"]!!.nickname)
         assertEquals(0L, byId["friend-b"]!!.likeCount)
+        assertFalse(byId["friend-b"]!!.liked)
+    }
+
+    @Test
+    fun `listFriends — 내가 좋아요한 친구는 liked=true`() {
+        acceptFriendship(inviter = "me", invitee = "friend-a")
+        acceptFriendship(inviter = "me", invitee = "friend-b")
+        likeRepo.save(TerrariumLike(likerUserId = "me", targetUserId = "friend-a"))
+
+        val byId = service.listFriends("me").associateBy { it.userId }
+        assertTrue(byId["friend-a"]!!.liked)
+        assertFalse(byId["friend-b"]!!.liked)
     }
 
     @Test
@@ -256,6 +269,11 @@ class FriendServiceTest {
             )
 
         override fun countByTargetUserId(targetUserId: String): Long = store.values.count { it.targetUserId == targetUserId }.toLong()
+
+        override fun findAllByLikerUserIdAndTargetUserIdIn(
+            likerUserId: String,
+            targetUserIds: Collection<String>,
+        ): List<TerrariumLike> = store.values.filter { it.likerUserId == likerUserId && it.targetUserId in targetUserIds }
 
         // BE-10: listFriends 의 IN + GROUP BY 집계 (like 0건 target 은 결과에 없음 — 실 쿼리 동일)
         override fun countGroupedByTargetUserIdIn(targetUserIds: Collection<String>): List<TargetLikeCountProjection> =

@@ -6,6 +6,7 @@ import com.terraworld.common.exception.ErrorCode
 import com.terraworld.common.time.KstTime
 import com.terraworld.domain.record.HabitCheer
 import com.terraworld.domain.record.HabitCheerRepository
+import com.terraworld.domain.record.HabitStatus
 import com.terraworld.domain.record.HabitTrackerRepository
 import com.terraworld.domain.social.InviteRepository
 import com.terraworld.domain.user.UserRepository
@@ -53,12 +54,13 @@ class HabitCheerService(
             habitTrackerRepository
                 .findById(trackerId)
                 .orElseThrow { BusinessException(ErrorCode.HABIT_NOT_FOUND) }
-        val linkId =
-            tracker.friendLinkId
-                ?: throw BusinessException(ErrorCode.INVALID_INPUT, "친구 연동 습관에만 응원을 보낼 수 있어요")
 
-        // 발신자 참여 검증 + 상대 해석 — invite 의 inviter/invitee 중 발신자의 반대편.
-        // 발신자가 어느 쪽도 아닌 경우(비참여자/ malformed 링크) null → 거부 (HabitService Codex R1 #9 와 동일 방어).
+        // spec: 비참여자 404(존재 숨김) / solo 409. 비참여자에게 409 를 주면 솔로 습관 존재가 드러난다.
+        val linkId = tracker.friendLinkId
+        if (linkId == null) {
+            if (tracker.userId != userId) throw BusinessException(ErrorCode.HABIT_NOT_FOUND)
+            throw BusinessException(ErrorCode.NOT_FRIEND_LINKED)
+        }
         val partnerId =
             inviteRepository
                 .findById(linkId)
@@ -69,7 +71,10 @@ class HabitCheerService(
                         else -> null
                     }
                 }.orElse(null)
-                ?: throw BusinessException(ErrorCode.FORBIDDEN, "이 습관의 참여자가 아닙니다")
+                ?: throw BusinessException(ErrorCode.HABIT_NOT_FOUND)
+        if (tracker.status != HabitStatus.ACTIVE) {
+            throw BusinessException(ErrorCode.HABIT_NOT_ACTIVE)
+        }
 
         // 일 3회/트래커 제한 — count-then-insert 의 TOCTOU 를 per-(발신자|트래커) advisory lock 으로 직렬화
         // (HabitService.createTracker R8 패턴). 날짜는 KST 기준 (KstTime 관례).

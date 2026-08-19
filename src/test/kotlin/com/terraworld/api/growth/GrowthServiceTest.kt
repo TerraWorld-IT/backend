@@ -19,6 +19,7 @@ import org.mockito.Mockito.mock
 import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.eq
+import org.mockito.kotlin.never
 import org.mockito.kotlin.verify
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -111,6 +112,23 @@ class GrowthServiceTest {
     fun `buyBooster 미존재 종 — INVALID_INPUT`() {
         val ex = assertThrows<BusinessException> { service.buyBooster("u", "unknown") }
         assertEquals(ErrorCode.INVALID_INPUT, ex.errorCode)
+    }
+
+    @Test
+    fun `buyBooster 동면 — GROWTH_DORMANT 이고 SPARKLE 미차감`() {
+        instanceRepo.save(
+            GrowthInstance(
+                id = 1L,
+                userId = "u",
+                speciesCode = "cat",
+                naturalStreak = 5,
+                lastProgressAt = today.minusDays(4).atStartOfDay(),
+            ),
+        )
+        val ex = assertThrows<BusinessException> { service.buyBooster("u", "cat") }
+        assertEquals(ErrorCode.GROWTH_DORMANT, ex.errorCode)
+        verify(currencyService, never()).debit(any(), any(), any(), any(), anyOrNull(), anyOrNull())
+        assertEquals(0, instanceRepo.findByUserIdAndSpeciesCode("u", "cat")!!.sparkleBoughtCount)
     }
 
     @Test

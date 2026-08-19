@@ -22,6 +22,12 @@ enum class ErrorCode(
     PLACEMENT_NOT_FOUND(HttpStatus.NOT_FOUND, "배치 정보를 찾을 수 없습니다"),
     HABIT_NOT_FOUND(HttpStatus.NOT_FOUND, "습관 트래커를 찾을 수 없습니다"),
 
+    // 응원: 친구 미연동(solo) 습관 — spec 409 NOT_FRIEND_LINKED
+    NOT_FRIEND_LINKED(HttpStatus.CONFLICT, "친구와 함께하는 습관에만 응원할 수 있습니다"),
+
+    // 응원: 참여자가 COMPLETED/BROKEN 트래커에 응원 — 존재는 이미 아는 경우
+    HABIT_NOT_ACTIVE(HttpStatus.CONFLICT, "종료된 습관에는 응원할 수 있습니다"),
+
     // Business
     INSUFFICIENT_FUNDS(HttpStatus.BAD_REQUEST, "재화가 부족합니다"),
     INVALID_CURRENCY(HttpStatus.BAD_REQUEST, "유효하지 않은 화폐 코드입니다"),
@@ -68,6 +74,9 @@ enum class ErrorCode(
 
     // apjek social loop (2026-08-18) — 테라리움 배경 변경: 보유 아이템이지만 layout 이 BACKGROUND 가 아님 (spec 409)
     NOT_BACKGROUND_LAYOUT(HttpStatus.CONFLICT, "배경으로 설정할 수 없는 아이템입니다"),
+
+    // 키우기 부스터: 동면 중 반짝이 구매는 FE 잠금과 같은 서버 가드
+    GROWTH_DORMANT(HttpStatus.CONFLICT, "잠든 개체는 기록으로 깨운 뒤에 반짝이를 사용할 수 있습니다"),
 
     // General
     BAD_REQUEST(HttpStatus.BAD_REQUEST, "잘못된 요청입니다"),

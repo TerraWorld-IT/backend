@@ -43,6 +43,11 @@ class FriendService(
             terrariumLikeRepository
                 .countGroupedByTargetUserIdIn(friendIds)
                 .associate { it.targetUserId to it.likeCount }
+        val likedTargets =
+            terrariumLikeRepository
+                .findAllByLikerUserIdAndTargetUserIdIn(userId, friendIds)
+                .map { it.targetUserId }
+                .toSet()
         return userRepository
             .findAllById(friendIds)
             .map { user ->
@@ -50,6 +55,7 @@ class FriendService(
                     userId = user.id,
                     nickname = user.nickname,
                     likeCount = likeCountByTarget[user.id] ?: 0L,
+                    liked = user.id in likedTargets,
                 )
             }
     }
@@ -105,6 +111,7 @@ data class FriendInfo(
     val userId: String,
     val nickname: String,
     val likeCount: Long,
+    val liked: Boolean,
 )
 
 data class LikeResult(
