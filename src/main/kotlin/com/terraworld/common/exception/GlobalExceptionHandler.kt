@@ -42,7 +42,10 @@ class GlobalExceptionHandler {
         log.warn("DataIntegrityViolation — class={} sqlState={}", e.javaClass.simpleName, sqlState)
 
         return when {
-            rootMessage.contains("ux_terrarium_items_terrarium_slot") -> {
+            // V15 키(ux_terrarium_items_terrarium_slot) 는 V39 에서 티어 스코프 키(ux_terrarium_items_terrarium_tier_slot)로
+            // 대체됐다 — 두 이름 모두 같은 의미(같은 병·같은 슬롯 중복)라 409 로 매핑.
+            rootMessage.contains("ux_terrarium_items_terrarium_slot") ||
+                rootMessage.contains("ux_terrarium_items_terrarium_tier_slot") -> {
                 val code = ErrorCode.TERRARIUM_SLOT_CONFLICT
                 ResponseEntity
                     .status(code.status)

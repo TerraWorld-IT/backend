@@ -42,8 +42,8 @@ class FlywayMigrationSmokeTest {
                     .load()
 
             val result = flyway.migrate()
-            // 최소 33개 마이그레이션(V1~V33) 적용
-            assertTrue(result.migrationsExecuted >= 33, "적용된 마이그레이션 수=${result.migrationsExecuted} (>=33 기대)")
+            // 최소 39개 마이그레이션(V1~V39) 적용
+            assertTrue(result.migrationsExecuted >= 39, "적용된 마이그레이션 수=${result.migrationsExecuted} (>=39 기대)")
 
             pg.createConnection("").use { conn ->
                 val md = conn.metaData
@@ -69,6 +69,44 @@ class FlywayMigrationSmokeTest {
                 // V36: tx_ref 처리 원장 (revoke 후 grant 재전송 멱등) 존재 실증
                 md.getTables(null, null, "entitlement_tx_ledger", arrayOf("TABLE")).use { rs ->
                     assertTrue(rs.next(), "entitlement_tx_ledger 테이블 부재 (V36 미적용)")
+                }
+                // V39 (아프젝 v2): 티어별 배치(active_tier/terrarium_items.tier) + 습관 사이클/페어 요청 + 키우기 사이클 컬럼 + items.purchasable
+                md.getColumns(null, null, "terrariums", "active_tier").use { rs ->
+                    assertTrue(rs.next(), "terrariums.active_tier 부재 (V39 미적용)")
+                }
+                md.getColumns(null, null, "terrarium_items", "tier").use { rs ->
+                    assertTrue(rs.next(), "terrarium_items.tier 부재 (V39 미적용)")
+                }
+                md.getTables(null, null, "habit_cycles", arrayOf("TABLE")).use { rs ->
+                    assertTrue(rs.next(), "habit_cycles 테이블 부재 (V39 미적용)")
+                }
+                md.getTables(null, null, "habit_pair_requests", arrayOf("TABLE")).use { rs ->
+                    assertTrue(rs.next(), "habit_pair_requests 테이블 부재 (V39 미적용)")
+                }
+                md.getColumns(null, null, "growth_instances", "cycle_state").use { rs ->
+                    assertTrue(rs.next(), "growth_instances.cycle_state 부재 (V39 미적용)")
+                }
+                md.getColumns(null, null, "items", "purchasable").use { rs ->
+                    assertTrue(rs.next(), "items.purchasable 부재 (V39 미적용)")
+                }
+                // V39 시드: 3레벨 루비 전용 티어 + 정령 아이템 + 배경 아이템
+                conn.createStatement().use { st ->
+                    st.executeQuery("SELECT ruby_cost, slots, is_active FROM tier_configs WHERE tier = 'GRAND_TANK'").use { rs ->
+                        assertTrue(rs.next())
+                        assertTrue(rs.getLong(1) == 50L && rs.getInt(2) == 40 && rs.getBoolean(3), "GRAND_TANK 재시드 불일치")
+                    }
+                    st.executeQuery("SELECT is_active FROM tier_configs WHERE tier = 'HOUSE_TANK'").use { rs ->
+                        assertTrue(rs.next())
+                        assertFalse(rs.getBoolean(1), "HOUSE_TANK 는 비활성이어야 함")
+                    }
+                    st.executeQuery("SELECT COUNT(*) FROM items WHERE slug IN ('cat-spirit','pigeon-spirit','fish-spirit') AND purchasable = FALSE").use { rs ->
+                        assertTrue(rs.next())
+                        assertTrue(rs.getInt(1) == 3, "정령 아이템 3종 시드 부재")
+                    }
+                    st.executeQuery("SELECT COUNT(*) FROM items WHERE layout = 'BACKGROUND' AND purchasable = TRUE").use { rs ->
+                        assertTrue(rs.next())
+                        assertTrue(rs.getInt(1) >= 3, "배경 아이템 3종 이상 시드 부재")
+                    }
                 }
             }
         }

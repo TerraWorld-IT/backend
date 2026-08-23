@@ -25,8 +25,29 @@ enum class ErrorCode(
     // 응원: 친구 미연동(solo) 습관 — spec 409 NOT_FRIEND_LINKED
     NOT_FRIEND_LINKED(HttpStatus.CONFLICT, "친구와 함께하는 습관에만 응원할 수 있습니다"),
 
-    // 응원: 참여자가 COMPLETED/BROKEN 트래커에 응원 — 존재는 이미 아는 경우
-    HABIT_NOT_ACTIVE(HttpStatus.CONFLICT, "종료된 습관에는 응원할 수 있습니다"),
+    // 습관(아프젝 v2): ACTIVE 가 아닌 트래커에 체크인/응원 — 수락 대기(PENDING)/완주 대기/종료
+    HABIT_NOT_ACTIVE(HttpStatus.CONFLICT, "진행 중인 습관이 아닙니다"),
+
+    // 습관(아프젝 v2): 활성(PENDING/ACTIVE/COMPLETED_UNCLAIMED) 습관은 solo·friend 합산 1개
+    HABIT_LIMIT_EXCEEDED(HttpStatus.CONFLICT, "이미 진행 중인 습관이 있어요. 완료하거나 중단한 뒤 새 습관을 시작해 주세요"),
+
+    // 습관(아프젝 v2): accept/decline/complete/extend 가 현재 상태에서 허용되지 않음
+    HABIT_INVALID_STATE(HttpStatus.CONFLICT, "현재 상태에서는 처리할 수 없는 요청입니다"),
+
+    // 테라리움 티어(아프젝 v2): 미해금 티어를 표시 병으로 지정
+    TIER_LOCKED(HttpStatus.CONFLICT, "아직 해금하지 않은 테라리움이에요"),
+
+    // 키우기(아프젝 v2): 존재하지 않는 종 코드 (revive/revive-dismiss/notify-next — spec 404)
+    GROWTH_SPECIES_NOT_FOUND(HttpStatus.NOT_FOUND, "존재하지 않는 육성 종입니다"),
+
+    // 키우기(아프젝 v2): 기록이 끊긴(LOST) 사이클 — 되살리기 필요
+    GROWTH_LOST(HttpStatus.CONFLICT, "기록이 끊겼어요. 되살리기 후 이어갈 수 있어요"),
+
+    // 키우기(아프젝 v2): revive-dismiss 이후 당일 재시도 불가
+    GROWTH_REVIVE_SNOOZED(HttpStatus.CONFLICT, "오늘은 되살리기를 보류했어요. 내일 새 사이클이 시작돼요"),
+
+    // 상점(아프젝 v2): purchasable=false 아이템(정령 등 지급 전용) 구매 시도
+    ITEM_NOT_PURCHASABLE(HttpStatus.CONFLICT, "상점에서 구매할 수 없는 아이템입니다"),
 
     // Business
     INSUFFICIENT_FUNDS(HttpStatus.BAD_REQUEST, "재화가 부족합니다"),
@@ -70,7 +91,7 @@ enum class ErrorCode(
 
     // apjek social loop (2026-08-18) — 투두 루틴
     TODO_ROUTINE_NOT_FOUND(HttpStatus.NOT_FOUND, "투두 루틴을 찾을 수 없습니다"),
-    TODO_ROUTINE_LIMIT_EXCEEDED(HttpStatus.CONFLICT, "투두 루틴 최대 개수(20개)를 초과했습니다"),
+    TODO_ROUTINE_LIMIT_EXCEEDED(HttpStatus.CONFLICT, "투두 루틴 최대 개수(30개)를 초과했습니다"),
 
     // apjek social loop (2026-08-18) — 테라리움 배경 변경: 보유 아이템이지만 layout 이 BACKGROUND 가 아님 (spec 409)
     NOT_BACKGROUND_LAYOUT(HttpStatus.CONFLICT, "배경으로 설정할 수 없는 아이템입니다"),
