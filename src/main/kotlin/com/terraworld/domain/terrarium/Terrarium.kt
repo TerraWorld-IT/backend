@@ -16,8 +16,13 @@ class Terrarium(
     @JoinColumn(name = "background_id", nullable = false)
     var background: TerrariumBackground,
     // 낙서장 P2: 테라리움 티어 (화폐-게이트). 구 evolution_stage(레벨-게이트) 대체 신 SoT.
+    // 아프젝 v2 (V39): 의미 = 해금 최고 티어(highestUnlockedTier). 해금(unlockTier)만 올린다.
     @Column(name = "tier", nullable = false, length = 32)
     var tier: String = "GLASS_JAR",
+    // 아프젝 v2 (V39): 표시 중인 병(activeTier). 배치/자유배치/배경/방문/공유 응답은 이 티어 스코프.
+    // 해금해도 바뀌지 않으며 PUT /terrarium/active-tier 로만 변경한다 (해금 범위 내).
+    @Column(name = "active_tier", nullable = false, length = 32)
+    var activeTier: String = "GLASS_JAR",
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: LocalDateTime = LocalDateTime.now(),
     @Column(name = "updated_at", nullable = false)
@@ -59,6 +64,9 @@ class TerrariumPlacement(
     val item: com.terraworld.domain.item.Item,
     @Column(name = "slot_id")
     val slotId: Int? = null,
+    // 아프젝 v2 (V39): 이 배치가 속한 병(티어). 유니크 (terrarium_id, tier, slot_id) — 병마다 같은 슬롯 재사용 가능.
+    @Column(name = "tier", nullable = false, length = 32)
+    val tier: String = "GLASS_JAR",
     @Column(name = "pos_x", nullable = false)
     val posX: Float = 0f,
     @Column(name = "pos_y", nullable = false)

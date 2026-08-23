@@ -19,6 +19,8 @@ import kotlin.math.roundToInt
  *
  * 좌표계 (2026-06-02): API/도메인 경계는 0~1 비율(posX/posY). 저장은 기존 free_x/y_pixel(Int)
  * 컬럼을 permille(0~10000) 로 재사용 — 해상도 독립 + 0.01% 정밀도 + migration 불요.
+ *
+ * 아프젝 v2 (§R1): 조회/수정 모두 표시 중 병(terrariums.active_tier) 스코프 — 다른 병의 배치는 보이지도, 편집되지도 않는다.
  */
 @Service
 class PlacementService(
@@ -27,15 +29,16 @@ class PlacementService(
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
-    /** 현재 사용자의 모든 배치 아이템 + 자유 위치 (조회는 entitlement 불요 — preview 허용). */
+    /** 현재 사용자의 표시 중 병 배치 아이템 + 자유 위치 (조회는 entitlement 불요 — preview 허용). */
     @Transactional(readOnly = true)
-    fun listForUser(userId: String): List<FreePlacementItem> = placementRepository.findAllByTerrariumUserIdOrderById(userId).map { it.toFreeItem() }
+    fun listForUser(userId: String): List<FreePlacementItem> = placementRepository.findActiveTierPlacementsByUserId(userId).map { it.toFreeItem() }
 
     /**
      * 자유배치 위치 저장 — J-FREE-001.
      * 1) free_placement entitlement 검증 (없으면 403)
      * 2) 본인 소유 placement 검증 (cross-user 면 403)
-     * 3) 위치 저장 (API 는 0~1 비율, 저장은 permille 0~10000)
+     * 3) 표시 중 병(activeTier) 의 배치인지 검증 (다른 병의 배치는 존재 숨김 404 — 스코프 밖)
+     * 4) 위치 저장 (API 는 0~1 비율, 저장은 permille 0~10000)
      */
     @Transactional
     fun updateFreePosition(
@@ -59,6 +62,10 @@ class PlacementService(
         if (placement.terrarium.user.id != userId) {
             log.warn("placement.free.cross-user user={} placement.user={}", userId, placement.terrarium.user.id)
             throw BusinessException(ErrorCode.FORBIDDEN)
+        }
+        if (placement.tier != placement.terrarium.activeTier) {
+            // 아프젝 v2: 표시 중이 아닌 병의 배치 — 스코프 밖(존재 숨김)
+            throw BusinessException(ErrorCode.PLACEMENT_NOT_FOUND)
         }
 
         placement.freeXPixel = ratioToStore(posX)

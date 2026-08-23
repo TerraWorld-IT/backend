@@ -4,6 +4,7 @@ import com.terraworld.security.SecurityUtil
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.tags.Tag
 import io.terraworld.api.api.TerrariumApi
+import io.terraworld.api.model.ActiveTierRequest
 import io.terraworld.api.model.HeartResponse
 import io.terraworld.api.model.PlacementRequest
 import io.terraworld.api.model.PlacementResponse
@@ -76,11 +77,16 @@ class TerrariumController(
         return ResponseEntity.ok(response)
     }
 
-    @Operation(summary = "티어 카탈로그 조회", description = "낙서장 P2: 4단계 티어 해금 비용/슬롯/정령 + 현재 티어")
+    @Operation(summary = "티어 카탈로그 조회", description = "아프젝 v2: 3레벨 루비 전용 티어 해금 비용/슬롯/정령 + 표시 중 병(activeTier) + 해금 최고 티어")
     override fun getTierCatalog(): ResponseEntity<TierCatalogResponse> = ResponseEntity.ok(tierService.getCatalog(SecurityUtil.getCurrentUserId()))
 
-    @Operation(summary = "티어 해금", description = "낙서장 P2: 반짝이/루비 순차 해금 + 티어 정령 지급")
+    @Operation(summary = "티어 해금", description = "아프젝 v2: 루비 순차 해금 + 티어 정령 지급 (표시 중 병은 변경하지 않음)")
     override fun unlockTier(
         @Valid tierUnlockRequest: TierUnlockRequest,
     ): ResponseEntity<TierUnlockResponse> = ResponseEntity.ok(tierService.unlockTier(SecurityUtil.getCurrentUserId(), tierUnlockRequest.targetTier))
+
+    @Operation(summary = "표시 중 병(티어) 변경", description = "아프젝 v2: 해금된 티어만 지정 가능 — 미해금 409 TIER_LOCKED, 미존재/비활성 400. 멱등.")
+    override fun setActiveTier(
+        @Valid activeTierRequest: ActiveTierRequest,
+    ): ResponseEntity<TerrariumResponse> = ResponseEntity.ok(terrariumService.setActiveTier(SecurityUtil.getCurrentUserId(), activeTierRequest.tier))
 }
