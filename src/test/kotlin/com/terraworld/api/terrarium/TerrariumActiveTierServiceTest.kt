@@ -4,6 +4,7 @@ import com.terraworld.api.entitlement.EntitlementService
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
 import com.terraworld.domain.item.Item
+import com.terraworld.domain.item.ItemLayout
 import com.terraworld.domain.item.ItemRepository
 import com.terraworld.domain.item.PriceType
 import com.terraworld.domain.item.UserItemRepository
@@ -15,6 +16,8 @@ import com.terraworld.domain.terrarium.TerrariumPlacement
 import com.terraworld.domain.terrarium.TerrariumPlacementHistoryRepository
 import com.terraworld.domain.terrarium.TerrariumPlacementRepository
 import com.terraworld.domain.terrarium.TerrariumRepository
+import com.terraworld.domain.terrarium.TerrariumTierBackground
+import com.terraworld.domain.terrarium.TerrariumTierBackgroundRepository
 import com.terraworld.domain.terrarium.TierConfig
 import com.terraworld.domain.terrarium.TierConfigRepository
 import com.terraworld.domain.user.User
@@ -28,6 +31,7 @@ import org.junit.jupiter.api.assertThrows
 import org.mockito.Mockito.mock
 import org.mockito.kotlin.any
 import org.mockito.kotlin.whenever
+import java.time.LocalDateTime
 import java.util.Optional
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -38,11 +42,15 @@ import kotlin.test.assertTrue
  * - 응답: tier = activeTier, highestUnlockedTier, maxSlots = active 티어 슬롯, placedItems 는 active 티어 분만
  * - updatePlacements: active 티어 배치만 교체, 다른 병의 배치는 보존
  * - PlacementService.listForUser / updateFreePosition 도 active 티어 스코프
+ * - 배경(V40): 병마다 따로 — GLASS 배경 A → LARGE 배경 B → GLASS 복귀 시 A. 행 없는 병은 terrariums.background 폴백
+ * - HOUSE_TANK(비활성): 이미 도달한 계정은 전환·슬롯 해석이 동작, 미도달 계정은 INVALID_INPUT
  */
 class TerrariumActiveTierServiceTest {
     private lateinit var terrariumRepo: FakeTerrariumRepository
     private lateinit var placementRepo: FakeTerrariumPlacementRepository
     private lateinit var tierConfigRepo: FakeTierConfigRepository
+    private lateinit var tierBackgroundRepo: FakeTierBackgroundRepository
+    private lateinit var backgroundRepo: TerrariumBackgroundRepository
     private lateinit var userItemRepository: UserItemRepository
     private lateinit var itemRepository: ItemRepository
     private lateinit var service: TerrariumService
@@ -52,6 +60,8 @@ class TerrariumActiveTierServiceTest {
     private val background = TerrariumBackground(id = 1L, name = "기본 배경", assetUrl = "https://cdn/bg.png")
     private val itemA = Item(id = 10L, slug = "a", name = "A", priceType = PriceType.BASIC, priceAmount = 1, assetUrl = "a.png")
     private val itemB = Item(id = 11L, slug = "b", name = "B", priceType = PriceType.BASIC, priceAmount = 1, assetUrl = "b.png")
+    private val bgItemA = Item(id = 20L, slug = "bg-a", name = "배경A", priceType = PriceType.BASIC, priceAmount = 1, assetUrl = "bg-a.png", layout = ItemLayout.BACKGROUND)
+    private val bgItemB = Item(id = 21L, slug = "bg-b", name = "배경B", priceType = PriceType.BASIC, priceAmount = 1, assetUrl = "bg-b.png", layout = ItemLayout.BACKGROUND)
     private lateinit var terrarium: Terrarium
 
     @BeforeEach
@@ -59,8 +69,16 @@ class TerrariumActiveTierServiceTest {
         terrariumRepo = FakeTerrariumRepository()
         placementRepo = FakeTerrariumPlacementRepository()
         tierConfigRepo = FakeTierConfigRepository()
+        tierBackgroundRepo = FakeTierBackgroundRepository()
+        backgroundRepo = mock(TerrariumBackgroundRepository::class.java)
         userItemRepository = mock(UserItemRepository::class.java)
         itemRepository = mock(ItemRepository::class.java)
+        // 배경 아이템: 보유 + 배경 행 find-or-create 는 asset_url 로 결정적 매핑
+        whenever(itemRepository.findById(20L)).thenReturn(Optional.of(bgItemA))
+        whenever(itemRepository.findById(21L)).thenReturn(Optional.of(bgItemB))
+        whenever(userItemRepository.existsByUserIdAndItemId(any(), any())).thenReturn(true)
+        whenever(backgroundRepo.findFirstByAssetUrlOrderByIdAsc("bg-a.png")).thenReturn(TerrariumBackground(id = 2L, name = "배경A", assetUrl = "bg-a.png"))
+        whenever(backgroundRepo.findFirstByAssetUrlOrderByIdAsc("bg-b.png")).thenReturn(TerrariumBackground(id = 3L, name = "배경B", assetUrl = "bg-b.png"))
         val recordRepository = mock(RecordRepository::class.java)
         val entitlementService = mock(EntitlementService::class.java)
         whenever(entitlementService.hasEntitlement(any(), any())).thenReturn(true)
@@ -75,11 +93,12 @@ class TerrariumActiveTierServiceTest {
                 mock(UserRepository::class.java),
                 userItemRepository,
                 itemRepository,
-                mock(TerrariumBackgroundRepository::class.java),
+                backgroundRepo,
                 tierConfigRepo,
                 recordRepository,
                 mock(TerrariumPlacementHistoryRepository::class.java),
                 entitlementService,
+                tierBackgroundRepo,
             )
         placementService = PlacementService(placementRepo, entitlementService)
 
@@ -169,7 +188,91 @@ class TerrariumActiveTierServiceTest {
         assertEquals(0.1, placementService.updateFreePosition("user-1", 101L, 0.1, 0.2).posX)
     }
 
+    // ─── 배경 (V40 티어별) ───
+
+    @Test
+    fun `setBackground — GLASS 배경 A, LARGE 배경 B 설정 후 GLASS 복귀 시 A (병마다 따로 저장)`() {
+        // GLASS(표시 중) 배경 A
+        val r1 = service.setBackground("user-1", 20L)
+        assertEquals(2L, r1.background.id)
+        // LARGE 로 전환 — 아직 설정 안 한 병은 terrariums.background(기본) 폴백
+        assertEquals(1L, service.setActiveTier("user-1", "LARGE_JAR").background.id)
+        // LARGE 배경 B
+        val r2 = service.setBackground("user-1", 21L)
+        assertEquals(3L, r2.background.id)
+        // GLASS 복귀 → A, LARGE 재전환 → B
+        assertEquals(2L, service.setActiveTier("user-1", "GLASS_JAR").background.id)
+        assertEquals(2L, service.getTerrarium("user-1").background.id)
+        assertEquals(3L, service.setActiveTier("user-1", "LARGE_JAR").background.id)
+        // terrariums.background 컬럼은 폴백 값 그대로 (갱신하지 않는다)
+        assertEquals(
+            1L,
+            terrariumRepo
+                .findById(1L)
+                .get()
+                .background.id,
+        )
+        assertEquals(2, tierBackgroundRepo.all().size)
+    }
+
+    @Test
+    fun `setBackground — 같은 병에 다시 설정하면 행 upsert (행 수 1 유지, 배경 교체)`() {
+        service.setBackground("user-1", 20L)
+        service.setBackground("user-1", 21L)
+        assertEquals(1, tierBackgroundRepo.all().size)
+        assertEquals(3L, service.getTerrarium("user-1").background.id)
+    }
+
+    // ─── HOUSE_TANK(비활성) 기존 도달 계정 ───
+
+    @Test
+    fun `HOUSE_TANK 에 이미 도달한 계정 — 전환 허용 + maxSlots 24, 다른 병으로 갔다가 복귀 가능`() {
+        val houseUser = User(id = "user-h", nickname = "하우스")
+        terrariumRepo.save(Terrarium(id = 2L, user = houseUser, background = background, tier = "HOUSE_TANK", activeTier = "HOUSE_TANK"))
+        val r = service.getTerrarium("user-h")
+        assertEquals("HOUSE_TANK", r.activeTier)
+        assertEquals(24, r.maxSlots)
+        assertEquals("GLASS_JAR", service.setActiveTier("user-h", "GLASS_JAR").activeTier)
+        val back = service.setActiveTier("user-h", "HOUSE_TANK")
+        assertEquals("HOUSE_TANK", back.activeTier)
+        assertEquals(24, back.maxSlots)
+        // 비활성 병에도 배치 저장 가능 (슬롯 24 범위)
+        val placed = service.updatePlacements("user-h", PlacementRequest(placedItems = listOf(PlacementItem(itemId = 10L, slotId = 23))))
+        assertEquals(listOf(10L), placed.placedItems.map { it.itemId })
+    }
+
     // ─── 페이크 ─────────────────────────────────────────────────
+
+    private class FakeTierBackgroundRepository :
+        FakeJpaRepository<TerrariumTierBackground, Long>(),
+        TerrariumTierBackgroundRepository {
+        private var seq = 1L
+
+        override fun extractId(entity: TerrariumTierBackground): Long = entity.id
+
+        override fun findByTerrariumIdAndTier(
+            terrariumId: Long,
+            tier: String,
+        ): TerrariumTierBackground? = store.values.firstOrNull { it.terrariumId == terrariumId && it.tier == tier }
+
+        override fun upsert(
+            terrariumId: Long,
+            tier: String,
+            backgroundId: Long,
+            updatedAt: LocalDateTime,
+        ): Int {
+            val bg = TerrariumBackground(id = backgroundId, name = "bg-$backgroundId", assetUrl = "bg-$backgroundId.png")
+            val existing = findByTerrariumIdAndTier(terrariumId, tier)
+            if (existing != null) {
+                existing.background = bg
+                existing.updatedAt = updatedAt
+            } else {
+                store[seq] = TerrariumTierBackground(id = seq, terrariumId = terrariumId, tier = tier, background = bg, updatedAt = updatedAt)
+                seq++
+            }
+            return 1
+        }
+    }
 
     private class FakeTerrariumRepository :
         FakeJpaRepository<Terrarium, Long>(),

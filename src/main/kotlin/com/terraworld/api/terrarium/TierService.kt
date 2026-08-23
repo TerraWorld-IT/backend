@@ -23,7 +23,8 @@ import java.time.LocalDateTime
  * - unlockTier 원자 순서: terrarium 조회 → 순차(target==highest+1, 활성 티어) 검증 → RUBY 차감(rubyCost 만) →
  *   조건부 CAS 티어 상승(casTier, WHERE tier=current) → 티어 정령(GrantService — items SoT ITEM + 레거시 SPIRIT) → 응답.
  *   CAS rows==0(동시 요청 선점) 은 CONCURRENT_MODIFICATION. 해금해도 active_tier 는 **변경하지 않는다**.
- * - 카탈로그는 활성 티어만(HOUSE_TANK 비활성 제외). unlocked = tierOrder <= highest order, active = tier == activeTier.
+ * - 카탈로그는 활성 티어 + 이미 해금한 비활성 티어(HOUSE_TANK 도달 계정만). unlocked = tierOrder <= highest order,
+ *   active = tier == activeTier. is_active=false 는 해금 가능 여부만 제한하고, 이미 도달한 계정의 표시·전환은 막지 않는다.
  */
 @Service
 class TierService(
@@ -43,10 +44,11 @@ class TierService(
             terrariumRepository
                 .findByUserId(userId)
                 .orElseThrow { BusinessException(ErrorCode.TERRARIUM_NOT_FOUND) }
-        val configs = tierConfigRepository.findAllByIsActiveTrueOrderByTierOrderAsc()
+        val all = tierConfigRepository.findAllByOrderByTierOrderAsc()
         // 리뷰 Q#12: unknown tier 는 silent fallback(?:1) 대신 fail-fast (unlockTier 와 일관 — 데이터 오염 은폐 방지).
-        // 비활성 티어(HOUSE_TANK)에 이미 도달한 계정은 전체 카탈로그에서 order 를 읽는다.
-        val highestOrder = orderOf(terrarium.tier, configs)
+        val highestOrder = orderOf(terrarium.tier, all)
+        // 비활성 티어(HOUSE_TANK)는 해금 대상에서 빠지지만, 이미 도달한 계정에는 카탈로그에 남겨 FE 가 그 병을 그릴 수 있게 한다.
+        val configs = all.filter { it.isActive || it.tierOrder <= highestOrder }
         return TierCatalogResponse(
             currentTier = terrarium.tier,
             activeTier = terrarium.activeTier,
@@ -73,9 +75,9 @@ class TierService(
 
     private fun orderOf(
         tier: String,
-        activeConfigs: List<com.terraworld.domain.terrarium.TierConfig>,
+        configs: List<com.terraworld.domain.terrarium.TierConfig>,
     ): Int =
-        activeConfigs.firstOrNull { it.tier == tier }?.tierOrder
+        configs.firstOrNull { it.tier == tier }?.tierOrder
             ?: tierConfigRepository.findById(tier).map { it.tierOrder }.orElse(null)
             ?: throw BusinessException(ErrorCode.INVALID_INPUT, "알 수 없는 티어: $tier")
 

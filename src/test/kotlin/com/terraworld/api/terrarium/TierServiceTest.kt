@@ -33,6 +33,7 @@ import kotlin.test.assertTrue
  * - happy GLASS→LARGE (RUBY 30), LARGE→GRAND (RUBY 50 + 비둘기 정령 ITEM/SPIRIT 지급) — active_tier 는 불변
  * - 비순차 해금 INVALID_INPUT (차감 없음) / 비활성(HOUSE_TANK) INVALID_INPUT / INSUFFICIENT_FUNDS 전파
  * - 카탈로그: 활성 3종만, level/descriptionKo/unlocked/active, activeTier·highestUnlockedTier 분리
+ * - 카탈로그: HOUSE_TANK(비활성)에 이미 도달한 계정에는 HOUSE_TANK 가 포함된다 (FE 가 그 병을 그릴 수 있게)
  */
 class TierServiceTest {
     private val terrariumRepo = mock(TerrariumRepository::class.java)
@@ -64,6 +65,7 @@ class TierServiceTest {
         whenever(tierConfigRepo.findById("GRAND_TANK")).thenReturn(Optional.of(grand))
         whenever(tierConfigRepo.findById("HOUSE_TANK")).thenReturn(Optional.of(house))
         whenever(tierConfigRepo.findAllByIsActiveTrueOrderByTierOrderAsc()).thenReturn(listOf(glass, large, grand))
+        whenever(tierConfigRepo.findAllByOrderByTierOrderAsc()).thenReturn(listOf(glass, large, grand, house))
         whenever(grantService.grant(any(), any(), any(), any(), any(), any())).thenReturn(true)
     }
 
@@ -158,5 +160,23 @@ class TierServiceTest {
         assertEquals(40, c.tiers[2].slots)
         assertTrue(c.tiers.none { it.tier == "HOUSE_TANK" })
         assertFalse(c.tiers[2].active)
+    }
+
+    @Test
+    fun `카탈로그 — HOUSE_TANK 에 이미 도달한 계정은 비활성 HOUSE_TANK 도 포함(unlocked, active)`() {
+        whenever(terrariumRepo.findByUserId("u")).thenReturn(Optional.of(terrarium("HOUSE_TANK", activeTier = "HOUSE_TANK")))
+        val c = service.getCatalog("u")
+        assertEquals("HOUSE_TANK", c.highestUnlockedTier)
+        assertEquals(listOf("GLASS_JAR", "LARGE_JAR", "GRAND_TANK", "HOUSE_TANK"), c.tiers.map { it.tier })
+        assertEquals(listOf(true, true, true, true), c.tiers.map { it.unlocked })
+        assertTrue(c.tiers[3].active)
+        assertEquals(24, c.tiers[3].slots)
+    }
+
+    @Test
+    fun `카탈로그 — GRAND_TANK 계정에는 HOUSE_TANK 가 여전히 노출되지 않는다`() {
+        whenever(terrariumRepo.findByUserId("u")).thenReturn(Optional.of(terrarium("GRAND_TANK")))
+        val c = service.getCatalog("u")
+        assertEquals(listOf("GLASS_JAR", "LARGE_JAR", "GRAND_TANK"), c.tiers.map { it.tier })
     }
 }

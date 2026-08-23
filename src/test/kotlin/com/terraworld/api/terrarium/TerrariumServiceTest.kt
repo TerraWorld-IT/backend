@@ -79,6 +79,8 @@ class TerrariumServiceTest {
                 recordRepo,
                 placementHistoryRepository,
                 entitlementService,
+                // 티어별 배경(V40): mock → 행 없음 → terrariums.background 폴백 경로
+                org.mockito.Mockito.mock(com.terraworld.domain.terrarium.TerrariumTierBackgroundRepository::class.java),
             )
 
         user = User(id = "user-1", nickname = "테스터")

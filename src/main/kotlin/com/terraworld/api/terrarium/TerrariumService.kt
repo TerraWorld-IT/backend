@@ -14,6 +14,7 @@ import com.terraworld.domain.terrarium.TerrariumPlacementHistory
 import com.terraworld.domain.terrarium.TerrariumPlacementHistoryRepository
 import com.terraworld.domain.terrarium.TerrariumPlacementRepository
 import com.terraworld.domain.terrarium.TerrariumRepository
+import com.terraworld.domain.terrarium.TerrariumTierBackgroundRepository
 import com.terraworld.domain.user.UserRepository
 import io.terraworld.api.model.BackgroundInfo
 import io.terraworld.api.model.HeartResponse
@@ -47,6 +48,8 @@ private data class FreeEditState(
  * 낙서장 P1/P2: 레벨/EXP 제거 + evolution → tier(화폐-게이트). maxSlots 는 tier_configs.slots 기준.
  * 아프젝 v2 (§R1): 배치는 병(티어)마다 따로 저장 — 조회/재저장/배경/하트/친구 방문/공유 응답은 모두 `terrariums.active_tier`
  * 스코프. `TerrariumResponse.tier` 는 activeTier 와 동일값(호환), `highestUnlockedTier` = `terrariums.tier`.
+ * 배경도 병마다 따로(V40 `terrarium_tier_backgrounds`) — 행이 없는 병은 `terrariums.background`(기본/V40 이전 값) 폴백.
+ * 하트(heartClick)는 병과 무관한 사용자 단위 보상이라 티어 스코프를 두지 않는다 — 원장 refKey 에 표시 중 병을 덧붙여 흔적만 남긴다.
  */
 @Service
 class TerrariumService(
@@ -64,6 +67,8 @@ class TerrariumService(
     private val recordRepository: RecordRepository,
     private val placementHistoryRepository: TerrariumPlacementHistoryRepository,
     private val entitlementService: com.terraworld.api.entitlement.EntitlementService,
+    // 아프젝 v2 후속(V40): 티어별 배경 — 표시 중 병의 배경 행 조회/upsert
+    private val tierBackgroundRepository: TerrariumTierBackgroundRepository,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -88,7 +93,8 @@ class TerrariumService(
 
     /**
      * 아프젝 v2: 표시 중 병(activeTier) 변경 — PUT /terrarium/active-tier.
-     * 해금 범위(tierOrder <= highest order) 밖이면 409 TIER_LOCKED, 미존재/비활성 티어 코드는 400 INVALID_INPUT.
+     * 해금 범위(tierOrder <= highest order) 밖이면 409 TIER_LOCKED, 미존재 티어 코드 / 미해금 비활성 티어는 400 INVALID_INPUT.
+     * 비활성 티어(HOUSE_TANK)라도 이미 해금한 계정(terrariums.tier 가 그 이상)은 전환할 수 있다 — is_active 는 해금 가능 여부만 제한.
      * 이미 표시 중인 티어면 변경 없이 200(멱등). 배치는 티어별로 저장돼 있으므로 전환 후 응답이 그 병의 배치를 담는다.
      */
     @Transactional
@@ -102,12 +108,15 @@ class TerrariumService(
                 .orElseThrow { BusinessException(ErrorCode.TERRARIUM_NOT_FOUND) }
         val target =
             tierConfigRepository.findById(tier).orElseThrow { BusinessException(ErrorCode.INVALID_INPUT, "알 수 없는 티어: $tier") }
-        if (!target.isActive) throw BusinessException(ErrorCode.INVALID_INPUT, "사용할 수 없는 티어: $tier")
         val highestOrder =
             tierConfigRepository.findById(terrarium.tier).map { it.tierOrder }.orElseThrow {
                 BusinessException(ErrorCode.INVALID_INPUT, "알 수 없는 티어: ${terrarium.tier}")
             }
-        if (target.tierOrder > highestOrder) throw BusinessException(ErrorCode.TIER_LOCKED)
+        if (target.tierOrder > highestOrder) {
+            // 비활성 티어(HOUSE_TANK)는 해금 대상이 아니므로 "잠김"이 아니라 "사용 불가" — 이미 해금한 계정만 아래로 통과한다.
+            if (!target.isActive) throw BusinessException(ErrorCode.INVALID_INPUT, "사용할 수 없는 티어: $tier")
+            throw BusinessException(ErrorCode.TIER_LOCKED)
+        }
 
         if (terrarium.activeTier != tier) {
             terrarium.activeTier = tier
@@ -136,14 +145,16 @@ class TerrariumService(
 
         // 기존 fetch join 1쿼리를 placedItems / freePlacements 양쪽 조립에 공유 (추가 쿼리 없음).
         val placements = terrariumPlacementRepository.findActiveTierPlacementsByUserId(userId)
+        // V40: 배경은 표시 중 병의 행 — 없으면(한 번도 설정 안 한 병) terrariums.background 폴백.
+        val background = backgroundOf(terrarium)
 
         return TerrariumResponse(
             terrariumId = terrarium.id,
             background =
                 BackgroundInfo(
-                    id = terrarium.background.id,
-                    name = terrarium.background.name,
-                    assetUrl = terrarium.background.assetUrl,
+                    id = background.id,
+                    name = background.name,
+                    assetUrl = background.assetUrl,
                 ),
             placedItems =
                 placements.map { p ->
@@ -198,10 +209,13 @@ class TerrariumService(
      * 두 경우 모두 동일 ITEM_NOT_FOUND 응답으로 존재 여부를 드러내지 않는다), 보유했지만
      * layout != BACKGROUND → 409 NOT_BACKGROUND_LAYOUT.
      *
-     * terrariums.background_id 는 terrarium_backgrounds FK (substrate 재사용 — 스키마 변경 없음).
-     * 아이템에서 파생한 배경 행을 asset_url 기준 find-or-create 로 확보해 연결한다.
+     * 배경 행(terrarium_backgrounds)은 아이템에서 파생해 asset_url 기준 find-or-create 로 확보한다.
      * 유니크 제약이 없어 동시 최초 설정 시 중복 행이 생길 수 있으나 둘 다 유효한 FK 대상이라 무해
      * (조회는 최소 id 선택으로 결정적).
+     *
+     * V40: 배경은 병(티어)마다 따로 — 표시 중 병(active_tier)의 `terrarium_tier_backgrounds` 행만 upsert 한다.
+     * `terrariums.background_id` 는 갱신하지 않는다(행이 없는 병의 폴백 = 기본 배경/V40 이전 값 으로만 쓰인다).
+     * 다른 병으로 전환하면 그 병의 배경이, 돌아오면 이 병의 배경이 그대로 보인다.
      */
     @Transactional
     fun setBackground(
@@ -236,12 +250,16 @@ class TerrariumService(
                         unlockValue = 0,
                     ),
                 )
-        terrarium.background = background
-        terrarium.updatedAt = LocalDateTime.now()
+        val now = LocalDateTime.now()
+        tierBackgroundRepository.upsert(terrarium.id, terrarium.activeTier, background.id, now)
+        terrarium.updatedAt = now
         terrariumRepository.save(terrarium)
 
         return buildTerrariumResponse(userId, terrarium)
     }
+
+    /** 표시 중 병의 배경 — 티어 행이 있으면 그 배경, 없으면 terrariums.background(기본/V40 이전 값). */
+    private fun backgroundOf(terrarium: com.terraworld.domain.terrarium.Terrarium): TerrariumBackground = tierBackgroundRepository.findByTerrariumIdAndTier(terrarium.id, terrarium.activeTier)?.background ?: terrarium.background
 
     /**
      * P-WILT-001 + J-WILT-001 (UltraPlan v3, 2026-05-18):
@@ -393,6 +411,10 @@ class TerrariumService(
         userRepository
             .findById(userId)
             .orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) } // 존재 검증
+        // 아프젝 v2 후속: 하트 보상 자체는 병(티어)과 무관한 사용자 단위 보상 — 스코프는 두지 않고,
+        // 원장 refKey 에 표시 중 병을 덧붙여 "어느 병을 보며 눌렀는가" 흔적만 남긴다 (테라리움 부재 시 userId 만).
+        val activeTier = terrariumRepository.findByUserId(userId).map { it.activeTier }.orElse(null)
+        val refKey = if (activeTier != null) "$userId:$activeTier" else userId
         // /analyze 2026-05-18 발견 (Codex C-1): 기존 코드 `basicCoin += 1` ↔ `reward = 0.1`
         // 10× mismatch — response 가 실제 DB 누적과 불일치. autonomous default (Phase 4 pre-launch):
         //   - DB schema 유지 (BIGINT)
@@ -407,7 +429,7 @@ class TerrariumService(
                 rewardCoins,
                 com.terraworld.api.wallet.WalletTransactionService.REASON_RECORD_REWARD,
                 "HEART",
-                userId,
+                refKey,
             )
         return HeartResponse(
             reward = rewardCoins.toDouble(),
