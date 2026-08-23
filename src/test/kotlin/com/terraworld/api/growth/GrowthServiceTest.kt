@@ -152,6 +152,30 @@ class GrowthServiceTest {
     }
 
     @Test
+    fun `getGrowth — 판정 read 이후 커밋된 D+1 23시59분 기록은 LOST CAS 에 덮어써지지 않는다 (stale read → ACTIVE 유지)`() {
+        // D 기록 → D+2 00:00 조회 시점에는 LOST 판정이 참이지만, 조회 read 와 UPDATE 사이에 D+1 23:59 기록 tx 가 커밋된다.
+        inst(streak = 5, lastProgress = today.minusDays(2).atTime(9, 0))
+        instanceRepo.beforeMarkLost = { g ->
+            g.naturalStreak = 6
+            g.lastProgressAt = today.minusDays(1).atTime(23, 59)
+            g.version += 1
+        }
+        val item = cat()
+        assertEquals(GrowthItem.CycleState.ACTIVE, item.cycleState)
+        assertFalse(item.dormant)
+        assertNull(item.lostAt)
+        assertEquals(6, item.stampCount)
+        val stored = instanceRepo.findById(1L).get()
+        assertEquals(GrowthCycleState.ACTIVE, stored.cycleState)
+        assertNull(stored.lostAt)
+        assertEquals(today.minusDays(1).atTime(23, 59), stored.lastProgressAt)
+        // 훅 제거 후 같은 관측값이면 정상 전환 — CAS 조건이 항상 0 을 돌려주는 고장이 아님을 대조
+        instanceRepo.beforeMarkLost = null
+        stored.lastProgressAt = today.minusDays(2).atTime(9, 0)
+        assertEquals(GrowthItem.CycleState.LOST, cat().cycleState)
+    }
+
+    @Test
     fun `getGrowth — 개체 미생성 종은 진행 0 ACTIVE + stages 3단계 + goal 30 + reviveRubyCost 10`() {
         val item = cat()
         assertEquals(0, item.stampCount)
@@ -380,11 +404,16 @@ class GrowthServiceTest {
             speciesCode: String,
         ): GrowthInstance? = store.values.firstOrNull { it.userId == userId && it.speciesCode == speciesCode }
 
+        /** markLost 직전에 실행되는 훅 — "판정 read 와 CAS 사이에 다른 tx 가 기록을 커밋" 하는 상황을 흉내낸다. */
+        var beforeMarkLost: ((GrowthInstance) -> Unit)? = null
+
         override fun markLost(
             id: Long,
             now: LocalDateTime,
+            observedLastProgressAt: LocalDateTime,
         ): Int {
-            val g = store[id]?.takeIf { it.cycleState == GrowthCycleState.ACTIVE } ?: return 0
+            store[id]?.let { beforeMarkLost?.invoke(it) }
+            val g = store[id]?.takeIf { it.cycleState == GrowthCycleState.ACTIVE && it.lastProgressAt == observedLastProgressAt } ?: return 0
             g.cycleState = GrowthCycleState.LOST
             g.lostAt = now
             g.version += 1

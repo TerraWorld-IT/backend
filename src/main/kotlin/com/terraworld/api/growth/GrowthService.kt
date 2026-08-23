@@ -277,9 +277,13 @@ class GrowthService(
             current = reload(current)
             if (rows == 1) log.info("growth.reset.snoozed user={} species={}", current.userId, species.code)
         }
-        if (current.cycleState == GrowthCycleState.ACTIVE && isLost(current.lastProgressAt, today)) {
-            growthInstanceRepository.markLost(current.id, now)
+        val observedLastProgressAt = current.lastProgressAt
+        if (current.cycleState == GrowthCycleState.ACTIVE && observedLastProgressAt != null && isLost(observedLastProgressAt, today)) {
+            // 관측한 last_progress_at 을 CAS 조건에 포함 — read 이후 커밋된 기록(D+1 23:59)이 있으면 rows==0 이고,
+            // 재조회 결과(갱신된 last_progress_at, ACTIVE 유지)를 그대로 쓴다. 덮어쓰기 없음.
+            val rows = growthInstanceRepository.markLost(current.id, now, observedLastProgressAt)
             current = reload(current)
+            if (rows == 0) log.debug("growth.lost.skipped id={} — 판정 read 이후 진행 갱신(stale read), ACTIVE 유지", current.id)
         }
         return current
     }

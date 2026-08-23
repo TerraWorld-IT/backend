@@ -20,16 +20,22 @@ interface GrowthInstanceRepository : JpaRepository<GrowthInstance, Long> {
      * 아프젝 v2: ACTIVE → LOST 조건부 전환(CAS). 조회 경로(getGrowth)와 mutation 경로가 동시에 판정해도
      * 한쪽만 rows==1 — 엔티티 save 방식이면 GET 끼리 @Version 충돌(409)이 날 수 있어 bulk UPDATE 로 처리한다.
      * version 도 함께 올려 같은 tx 밖의 stale 엔티티 저장을 낙관락이 잡게 한다.
+     *
+     * [observedLastProgressAt] 은 호출자가 LOST 판정에 쓴 last_progress_at 관측값 — WHERE 에 함께 건다.
+     * 없으면 "D+1 23:59 기록(last_progress_at 갱신) 커밋" 이 판정 read 와 UPDATE 사이에 끼어들었을 때
+     * D+2 00:00 의 settle 이 그 기록을 덮어쓰고 LOST 로 만든다. 관측값이 다르면 rows==0 — 호출자는 재조회 후 건너뛴다.
      */
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query(
         "UPDATE GrowthInstance g SET g.cycleState = com.terraworld.domain.growth.GrowthCycleState.LOST, " +
             "g.lostAt = :now, g.version = g.version + 1 " +
-            "WHERE g.id = :id AND g.cycleState = com.terraworld.domain.growth.GrowthCycleState.ACTIVE",
+            "WHERE g.id = :id AND g.cycleState = com.terraworld.domain.growth.GrowthCycleState.ACTIVE " +
+            "AND g.lastProgressAt = :observedLastProgressAt",
     )
     fun markLost(
         @Param("id") id: Long,
         @Param("now") now: LocalDateTime,
+        @Param("observedLastProgressAt") observedLastProgressAt: LocalDateTime,
     ): Int
 
     /**
