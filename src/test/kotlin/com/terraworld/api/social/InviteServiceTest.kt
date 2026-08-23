@@ -126,17 +126,22 @@ class InviteServiceTest {
     }
 
     @Test
-    fun `acceptInvite 해피 패스는 양쪽 사용자에게 RUBY 5개 credit`() {
+    fun `acceptInvite 해피 패스는 수락자 RUBY 10 초대자 RUBY 30 credit (아프젝 v2 기본 설정)`() {
         val created = service.createInvite("inviter-1")
+        // 발급 응답에 공유 카피용 보상값 동봉
+        assertEquals(30, created.inviterRuby)
+        assertEquals(10, created.inviteeRuby)
 
         val response = service.acceptInvite("invitee-1", created.inviteCode)
 
-        assertEquals(InviteService.ACCEPT_REWARD_SPECIAL_COINS, response.reward.specialCoins)
+        assertEquals(10, response.reward.specialCoins)
+        assertEquals(10, response.reward.inviteeRuby)
+        assertEquals(30, response.reward.inviterRuby)
         // 낙서장 P1: 보상 = 양측 RUBY credit (신 substrate)
         org.mockito.kotlin.verify(currencyService).credit(
             org.mockito.kotlin.eq("invitee-1"),
             org.mockito.kotlin.eq("RUBY"),
-            org.mockito.kotlin.eq(InviteService.ACCEPT_REWARD_SPECIAL_COINS.toLong()),
+            org.mockito.kotlin.eq(10L),
             org.mockito.kotlin.any(),
             org.mockito.kotlin.anyOrNull(),
             org.mockito.kotlin.anyOrNull(),
@@ -144,7 +149,7 @@ class InviteServiceTest {
         org.mockito.kotlin.verify(currencyService).credit(
             org.mockito.kotlin.eq("inviter-1"),
             org.mockito.kotlin.eq("RUBY"),
-            org.mockito.kotlin.eq(InviteService.ACCEPT_REWARD_SPECIAL_COINS.toLong()),
+            org.mockito.kotlin.eq(30L),
             org.mockito.kotlin.any(),
             org.mockito.kotlin.anyOrNull(),
             org.mockito.kotlin.anyOrNull(),

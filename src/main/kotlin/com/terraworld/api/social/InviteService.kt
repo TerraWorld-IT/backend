@@ -31,11 +31,12 @@ class InviteService(
     private val terrariumService: com.terraworld.api.terrarium.TerrariumService,
     @Value("\${terraworld.invite.base-url:https://terraworld.app/share}")
     private val inviteBaseUrl: String,
+    // 아프젝 v2 (§3): 초대자 30 / 수락자 10 루비 — 설정(invite.reward.*). 종전 양측 5 상수 대체.
+    private val rewardProperties: InviteRewardProperties = InviteRewardProperties(),
 ) {
     companion object {
         const val CODE_LENGTH = 8
         const val EXPIRY_DAYS = 7L
-        const val ACCEPT_REWARD_SPECIAL_COINS = 5
         private const val CODE_ALPHABET =
             "ABCDEFGHJKLMNPQRSTUVWXYZ23456789" // 1, 0, I, O 제외
         private const val MAX_GENERATION_RETRIES = 5
@@ -63,6 +64,9 @@ class InviteService(
             inviteCode = saved.code,
             inviteLink = URI.create("$inviteBaseUrl/${saved.code}"),
             expiresAt = saved.expiresAt.toInstant(ZoneOffset.UTC).atOffset(ZoneOffset.UTC),
+            // 공유 카피 표시용 — 수락 시 실제 지급액과 같은 설정값
+            inviterRuby = rewardProperties.inviterRuby,
+            inviteeRuby = rewardProperties.inviteeRuby,
         )
     }
 
@@ -108,9 +112,16 @@ class InviteService(
         if (claimed == 0) throw BusinessException(ErrorCode.INVITE_ALREADY_ACCEPTED)
 
         // 낙서장 P1: 초대 수락 보상 = 양측 RUBY credit 단일 SoT (credit 이 잔액+원장 원자 처리)
+        // 아프젝 v2: 초대자 inviterRuby(기본 30) / 수락자 inviteeRuby(기본 10) — 설정값.
         val inviteRubyReason = com.terraworld.api.wallet.WalletTransactionService.REASON_INVITE_ACCEPT
-        currencyService.credit(inviteeUserId, com.terraworld.domain.currency.CurrencyCode.RUBY, ACCEPT_REWARD_SPECIAL_COINS.toLong(), inviteRubyReason, "INVITE", inviteId.toString())
-        currencyService.credit(inviterUserId, com.terraworld.domain.currency.CurrencyCode.RUBY, ACCEPT_REWARD_SPECIAL_COINS.toLong(), inviteRubyReason, "INVITE", inviteId.toString())
+        val inviteeRuby = rewardProperties.inviteeRuby
+        val inviterRuby = rewardProperties.inviterRuby
+        if (inviteeRuby > 0) {
+            currencyService.credit(inviteeUserId, com.terraworld.domain.currency.CurrencyCode.RUBY, inviteeRuby.toLong(), inviteRubyReason, "INVITE", inviteId.toString())
+        }
+        if (inviterRuby > 0) {
+            currencyService.credit(inviterUserId, com.terraworld.domain.currency.CurrencyCode.RUBY, inviterRuby.toLong(), inviteRubyReason, "INVITE", inviteId.toString())
+        }
 
         // N8: 초대자에게 FCM 알림 — invitee 가 초대를 수락했음
         eventPublisher.publishEvent(
@@ -123,8 +134,14 @@ class InviteService(
         )
 
         return InviteAcceptResponse(
-            message = "초대 수락 완료: 초대자와 함께 스페셜 코인 ${ACCEPT_REWARD_SPECIAL_COINS}개씩 지급되었습니다.",
-            reward = InviteAcceptResponseReward(specialCoins = ACCEPT_REWARD_SPECIAL_COINS),
+            message = "초대 수락 완료: 루비 ${inviteeRuby}개를 받았어요 (초대한 친구에게는 ${inviterRuby}개).",
+            // specialCoins 는 하위호환 — 수락자 지급분과 동일값
+            reward =
+                InviteAcceptResponseReward(
+                    specialCoins = inviteeRuby,
+                    inviterRuby = inviterRuby,
+                    inviteeRuby = inviteeRuby,
+                ),
         )
     }
 
