@@ -60,6 +60,11 @@ class PurchaseService(
             throw BusinessException(ErrorCode.ITEM_NOT_FOUND, "판매 중지된 아이템입니다")
         }
 
+        // 아프젝 v2 (V39): purchasable=false 아이템(정령 등 지급 전용)은 목록에는 보이지만 구매 불가 — 409.
+        if (!item.purchasable) {
+            throw BusinessException(ErrorCode.ITEM_NOT_PURCHASABLE)
+        }
+
         if (userItemRepository.existsByUserIdAndItemId(userId, item.id)) {
             throw BusinessException(ErrorCode.ALREADY_OWNED)
         }

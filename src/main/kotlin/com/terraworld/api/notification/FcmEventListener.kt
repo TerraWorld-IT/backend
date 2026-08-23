@@ -90,6 +90,34 @@ class FcmEventListener(
         )
     }
 
+    /** 아프젝 v2: 친구 습관 페어 푸시 (요청/수락/거절·취소/중단/연장). 알림함 append 는 NotificationEventListener 별도 경로. */
+    @Async("fcmExecutor")
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    fun onHabitPair(event: HabitPairEvent) {
+        val tokens = userDeviceRepository.findAllByUserIdAndIsActiveTrue(event.toUserId).map { it.token }
+        if (tokens.isEmpty()) return
+        fcmService.sendToTokens(
+            tokens,
+            event.title,
+            event.body,
+            mapOf("type" to "HABIT", "fromUserId" to event.fromUserId, "route" to event.route),
+        )
+    }
+
+    /** 아프젝 v2: 새 정령 도착(완료 사이클 리셋, notifyNext 신청자) 푸시. */
+    @Async("fcmExecutor")
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    fun onSpiritArrived(event: SpiritArrivedEvent) {
+        val tokens = userDeviceRepository.findAllByUserIdAndIsActiveTrue(event.userId).map { it.token }
+        if (tokens.isEmpty()) return
+        fcmService.sendToTokens(
+            tokens,
+            "✨ 새 정령이 도착했어요",
+            "${event.speciesNameKo} 의 새 사이클이 시작됐어요",
+            mapOf("type" to "SPIRIT_ARRIVED", "route" to event.route),
+        )
+    }
+
     /** 습관 응원 푸시 (apjek social loop) — [FriendActivityEvent] 패턴 복제. 알림함 append 는 NotificationEventListener 별도 경로. */
     @Async("fcmExecutor")
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)

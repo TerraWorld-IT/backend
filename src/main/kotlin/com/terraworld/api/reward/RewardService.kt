@@ -52,6 +52,27 @@ class RewardService(
     }
 
     /**
+     * 아프젝 v2 (§R3): 광고 시청 nonce 검증·소비 primitive — 보상 지급 없음.
+     * 키우기 되살리기(method=AD) 가 재사용한다. claimAdReward 와 같은 형식 검증(16~64자) + inbox ON CONFLICT 소비이며
+     * [purpose] 를 바인딩해 원장에 남긴다(nonce 가 PK 라 용도 간 재사용도 차단). 일일 광고 한도/지급/시들기 복구는 건드리지 않는다.
+     *
+     * @throws BusinessException INVALID_INPUT(누락·형식) / NONCE_ALREADY_CONSUMED(재사용)
+     */
+    @Transactional
+    fun consumeAdNonce(
+        userId: String,
+        nonce: String?,
+        purpose: String,
+    ) {
+        if (nonce.isNullOrBlank() || nonce.length !in 16..64) {
+            throw BusinessException(ErrorCode.INVALID_INPUT, "광고 시청 nonce 가 필요합니다")
+        }
+        val inserted =
+            adRewardNonceInboxRepository.insertIfAbsentWithPurpose(nonce, userId, AdRewardNonceInbox.SOURCE_CLIENT, purpose)
+        if (inserted == 0) throw BusinessException(ErrorCode.NONCE_ALREADY_CONSUMED)
+    }
+
+    /**
      * ARCH-008-phase-5: 반환 타입을 generated [AdRewardResponse] 로 직접. local
      * `AdRewardResponsePayload` / `AdRewardPayload` 삭제. controller mapper 제거.
      *
@@ -74,6 +95,7 @@ class RewardService(
      * 현 완화: (1) 일일 한도로 남용 상한(소액 in-game RUBY, 실 경제 아님) (2) `reward.ad.nonce.required`
      * flag(prod 전환 시 true) (3) SSV callback endpoint 는 이미 존재(현재 audit-only).
      */
+
     @Transactional
     fun claimAdReward(
         userId: String,

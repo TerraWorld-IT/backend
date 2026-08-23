@@ -60,6 +60,7 @@ class AdminController(
                 isAnimated = body.isAnimated ?: false,
                 width = body.width ?: 512,
                 height = body.height ?: 512,
+                purchasable = body.purchasable ?: true,
             )
         return ResponseEntity.status(HttpStatus.CREATED).body(ItemMapper.toApi(item))
     }

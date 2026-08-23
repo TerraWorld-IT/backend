@@ -42,6 +42,9 @@ class Item(
     // N5 (구현 계획서 v4): admin 아이템 활성/비활성 토글 — var (AdminService.setItemActive)
     @Column(name = "is_active", nullable = false)
     var isActive: Boolean = true,
+    // 아프젝 v2 (V39): 상점 비판매 표식 — 정령 아이템 등 지급 전용. 목록 노출은 isActive 가, 구매 가능 여부는 본 플래그가 결정.
+    @Column(nullable = false)
+    val purchasable: Boolean = true,
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: LocalDateTime = LocalDateTime.now(),
 )

@@ -231,6 +231,13 @@ class RewardServiceNonceTest {
             return 1
         }
 
+        override fun insertIfAbsentWithPurpose(
+            nonce: String,
+            userId: String,
+            source: String,
+            purpose: String,
+        ): Int = insertIfAbsent(nonce, userId, source)
+
         override fun insertSsvIfAbsent(
             transactionId: String,
             userId: String,
