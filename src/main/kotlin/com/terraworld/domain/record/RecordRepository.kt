@@ -143,6 +143,25 @@ interface RecordRepository : JpaRepository<ActivityRecord, Long> {
         pageable: Pageable,
     ): List<Array<Any>>
 
+    /** 아프젝 v2 친구 스코프 engagement 랭킹 — 본인 + 수락된 친구 userId 집합 한정. */
+    @Query(
+        """
+        SELECT r.user.id, COUNT(r)
+        FROM ActivityRecord r
+        WHERE r.recordedDate BETWEEN :start AND :end
+          AND r.isDeleted = false
+          AND r.user.id IN :userIds
+        GROUP BY r.user.id
+        ORDER BY COUNT(r) DESC
+    """,
+    )
+    fun findEngagementRankingAmong(
+        @Param("userIds") userIds: Collection<String>,
+        @Param("start") start: LocalDate,
+        @Param("end") end: LocalDate,
+        pageable: Pageable,
+    ): List<Array<Any>>
+
     /**
      * 특정 사용자의 월간 활동 기록 수 (자기 순위 계산용).
      */

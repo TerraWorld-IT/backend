@@ -132,6 +132,8 @@ class TerrariumControllerMvcTest : AbstractMvcTest() {
                     ),
                 ),
             maxSlots = 6,
+            activeTier = "GLASS_JAR",
+            highestUnlockedTier = "GLASS_JAR",
             tier = "GLASS_JAR",
         )
 }

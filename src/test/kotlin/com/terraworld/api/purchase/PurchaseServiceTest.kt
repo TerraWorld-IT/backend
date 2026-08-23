@@ -238,6 +238,27 @@ class PurchaseServiceTest {
             itemId: Long,
         ): Boolean = store.values.any { it.user.id == userId && it.item.id == itemId }
 
+        // 아프젝 v2: GrantService ITEM executor / items 랭킹 — 본 테스트 비대상 (최소 구현)
+        override fun insertIfAbsent(
+            userId: String,
+            itemId: Long,
+        ): Int = if (existsByUserIdAndItemId(userId, itemId)) 0 else 1
+
+        override fun findItemsRanking(pageable: org.springframework.data.domain.Pageable): List<Array<Any>> = emptyList()
+
+        override fun findItemsRankingAmong(
+            userIds: Collection<String>,
+            pageable: org.springframework.data.domain.Pageable,
+        ): List<Array<Any>> = emptyList()
+
+        override fun countDistinctSlugsByUserId(userId: String): Long =
+            store.values
+                .filter { it.user.id == userId }
+                .mapNotNull { it.item.slug }
+                .distinct()
+                .size
+                .toLong()
+
         // BE-03: TerrariumService.updatePlacements 일괄 소유 검증용
         override fun findOwnedItemIds(
             userId: String,

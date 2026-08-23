@@ -1,7 +1,9 @@
 package com.terraworld.domain.item
 
+import org.springframework.data.domain.Pageable
 import org.springframework.data.jpa.repository.EntityGraph
 import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
 import java.util.Optional
@@ -39,4 +41,60 @@ interface UserItemRepository : JpaRepository<UserItem, Long> {
         @Param("userId") userId: String,
         @Param("itemIds") itemIds: Collection<Long>,
     ): Set<Long>
+
+    /**
+     * 아프젝 v2: 원자적 멱등 소유 부여 (ON CONFLICT DO NOTHING) — GrantService ITEM executor.
+     * idx_user_items_unique(user_id, item_id) 충돌 시 0 (이미 보유 → 수량 증가 없음), rollback-only 오염 없음.
+     * @return 1 = 신규 소유 / 0 = 이미 보유
+     */
+    @Modifying
+    @Query(
+        value =
+            """
+            INSERT INTO user_items (user_id, item_id, quantity, acquired_at)
+            VALUES (:userId, :itemId, 1, NOW())
+            ON CONFLICT (user_id, item_id) DO NOTHING
+            """,
+        nativeQuery = true,
+    )
+    fun insertIfAbsent(
+        @Param("userId") userId: String,
+        @Param("itemId") itemId: Long,
+    ): Int
+
+    /**
+     * 아프젝 v2 items 랭킹 — 사용자별 보유 아이템(distinct slug) 수, 월 무관 현재값. 결과: [userId, count] desc.
+     * slug 가 NULL 인 아이템은 distinct 집계에서 제외된다 (계약: `user_items` distinct slug 수).
+     */
+    @Query(
+        """
+        SELECT ui.user.id, COUNT(DISTINCT ui.item.slug)
+        FROM UserItem ui
+        WHERE ui.item.slug IS NOT NULL
+        GROUP BY ui.user.id
+        ORDER BY COUNT(DISTINCT ui.item.slug) DESC, ui.user.id ASC
+        """,
+    )
+    fun findItemsRanking(pageable: Pageable): List<Array<Any>>
+
+    /** 아프젝 v2 items 랭킹 — 친구 스코프(본인 + 수락된 친구 userId 집합) 한정. */
+    @Query(
+        """
+        SELECT ui.user.id, COUNT(DISTINCT ui.item.slug)
+        FROM UserItem ui
+        WHERE ui.item.slug IS NOT NULL AND ui.user.id IN :userIds
+        GROUP BY ui.user.id
+        ORDER BY COUNT(DISTINCT ui.item.slug) DESC, ui.user.id ASC
+        """,
+    )
+    fun findItemsRankingAmong(
+        @Param("userIds") userIds: Collection<String>,
+        pageable: Pageable,
+    ): List<Array<Any>>
+
+    /** 아프젝 v2 items 랭킹 — 특정 사용자의 보유 아이템(distinct slug) 수 (자기 순위 계산용, 0 가능). */
+    @Query("SELECT COUNT(DISTINCT ui.item.slug) FROM UserItem ui WHERE ui.user.id = :userId AND ui.item.slug IS NOT NULL")
+    fun countDistinctSlugsByUserId(
+        @Param("userId") userId: String,
+    ): Long
 }

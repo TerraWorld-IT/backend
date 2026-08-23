@@ -26,4 +26,11 @@ interface AttendanceLogRepository : JpaRepository<AttendanceLog, Long> {
     fun findLongestStreak(
         @Param("userId") userId: String,
     ): Int
+
+    /** 아프젝 v2: 이번 7일 사이클 구간(1일차 ~ 마지막 출석일)의 로그 — 보드 claimed/claimedAt 파생. */
+    fun findAllByUserIdAndCheckInDateBetween(
+        userId: String,
+        start: LocalDate,
+        end: LocalDate,
+    ): List<AttendanceLog>
 }

@@ -43,6 +43,8 @@ class SocialControllerMvcTest : AbstractMvcTest() {
                 inviteCode = "ABCD1234",
                 inviteLink = URI.create("https://terraworld.app/share/ABCD1234"),
                 expiresAt = OffsetDateTime.parse("2026-05-14T00:00:00Z"),
+                inviterRuby = 30,
+                inviteeRuby = 10,
             ),
         )
 
@@ -50,6 +52,7 @@ class SocialControllerMvcTest : AbstractMvcTest() {
             .perform(post("/api/v1/invites"))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.inviteCode").value("ABCD1234"))
+            .andExpect(jsonPath("$.inviterRuby").value(30))
     }
 
     @Test
@@ -57,7 +60,7 @@ class SocialControllerMvcTest : AbstractMvcTest() {
         whenever(inviteService.acceptInvite(eq(TEST_USER_ID), eq("ABCD1234"))).thenReturn(
             InviteAcceptResponse(
                 message = "초대 수락 완료",
-                reward = InviteAcceptResponseReward(specialCoins = 5),
+                reward = InviteAcceptResponseReward(specialCoins = 10, inviterRuby = 30, inviteeRuby = 10),
             ),
         )
 
@@ -65,7 +68,8 @@ class SocialControllerMvcTest : AbstractMvcTest() {
             .perform(post("/api/v1/invites/ABCD1234/accept"))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.message").value("초대 수락 완료"))
-            .andExpect(jsonPath("$.reward.specialCoins").value(5))
+            .andExpect(jsonPath("$.reward.specialCoins").value(10))
+            .andExpect(jsonPath("$.reward.inviterRuby").value(30))
     }
 
     // ── Negative cases ────────────────────────────────────────────────────────────

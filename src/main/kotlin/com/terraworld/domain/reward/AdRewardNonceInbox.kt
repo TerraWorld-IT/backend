@@ -46,6 +46,10 @@ class AdRewardNonceInbox(
     companion object {
         const val SOURCE_CLIENT = "CLIENT"
         const val SOURCE_SSV_CALLBACK = "SSV_CALLBACK"
+
+        /** 용도(V39 purpose 컬럼): 광고 보상 지급 / 키우기 되살리기(보상 지급 없음, nonce 소비만). */
+        const val PURPOSE_AD_REWARD = "AD_REWARD"
+        const val PURPOSE_GROWTH_REVIVE = "GROWTH_REVIVE"
     }
 }
 
@@ -70,6 +74,28 @@ interface AdRewardNonceInboxRepository : JpaRepository<AdRewardNonceInbox, Strin
         @Param("nonce") nonce: String,
         @Param("userId") userId: String,
         @Param("source") source: String,
+    ): Int
+
+    /**
+     * 아프젝 v2: 용도(purpose) 바인딩 소비 — 키우기 되살리기(GROWTH_REVIVE) 등 광고 보상 지급이 없는 경로.
+     * nonce 가 PK 라 AD_REWARD 로 소비된 nonce 를 GROWTH_REVIVE 로 재사용(또는 그 역)하는 것도 0 으로 막힌다.
+     * @return 1 = 신규 소비 / 0 = 이미 사용된 nonce
+     */
+    @Modifying
+    @Query(
+        value =
+            """
+            INSERT INTO ad_reward_nonce_inbox (nonce, user_id, source, purpose, consumed_at)
+            VALUES (:nonce, :userId, :source, :purpose, NOW())
+            ON CONFLICT (nonce) DO NOTHING
+            """,
+        nativeQuery = true,
+    )
+    fun insertIfAbsentWithPurpose(
+        @Param("nonce") nonce: String,
+        @Param("userId") userId: String,
+        @Param("source") source: String,
+        @Param("purpose") purpose: String,
     ): Int
 
     /**

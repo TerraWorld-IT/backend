@@ -63,6 +63,36 @@ class NotificationEventListener(
         }.onFailure { log.warn("notification.append.fail type=PAYMENT to={} — {}", event.userId, it.message) }
     }
 
+    /** 아프젝 v2: 친구 습관 요청 도착/수락/거절·취소/상대 중단/연장 요청 → HABIT (route /record). */
+    @Async("fcmExecutor")
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    fun onHabitPair(event: HabitPairEvent) {
+        runCatching {
+            notificationService.append(
+                userId = event.toUserId,
+                type = NotificationType.HABIT,
+                title = event.title,
+                body = event.body,
+                route = event.route,
+            )
+        }.onFailure { log.warn("notification.append.fail type=HABIT to={} — {}", event.toUserId, it.message) }
+    }
+
+    /** 아프젝 v2: 키우기 완료 사이클 리셋 시 notifyNext 신청 유저에게 1회 → SPIRIT_ARRIVED (route /grow). */
+    @Async("fcmExecutor")
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    fun onSpiritArrived(event: SpiritArrivedEvent) {
+        runCatching {
+            notificationService.append(
+                userId = event.userId,
+                type = NotificationType.SPIRIT_ARRIVED,
+                title = "✨ 새 정령이 도착했어요",
+                body = "${event.speciesNameKo} 의 새 사이클이 시작됐어요. 오늘 기록으로 첫 스탬프를 찍어보세요",
+                route = event.route,
+            )
+        }.onFailure { log.warn("notification.append.fail type=SPIRIT_ARRIVED to={} — {}", event.userId, it.message) }
+    }
+
     @Async("fcmExecutor")
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
     fun onHabitCheer(event: HabitCheerEvent) {
@@ -77,6 +107,28 @@ class NotificationEventListener(
         }.onFailure { log.warn("notification.append.fail type=CHEER to={} — {}", event.toUserId, it.message) }
     }
 }
+
+/**
+ * 아프젝 v2: 친구 습관 페어 이벤트 (요청 도착 / 수락 / 거절·취소 / 상대 중단 / 연장 요청) — HabitService 가 도메인 tx 안에서 publish.
+ * 푸시(FcmEventListener.onHabitPair)와 알림함 append(본 listener, type HABIT) 가 각자 수신한다.
+ */
+data class HabitPairEvent(
+    val fromUserId: String,
+    val toUserId: String,
+    val title: String,
+    val body: String,
+    val route: String = "/record",
+)
+
+/**
+ * 아프젝 v2: 키우기 완료 사이클이 새 사이클로 리셋될 때 notifyNext 신청 유저에게 1회 발행 (GrowthService — rows==1 인 쪽만).
+ * 스케줄러 경로(tx 밖 발행)는 fallbackExecution=true 로 즉시 처리된다.
+ */
+data class SpiritArrivedEvent(
+    val userId: String,
+    val speciesNameKo: String,
+    val route: String = "/grow",
+)
 
 /**
  * 결제 승인 확정 이벤트 — EntitlementService.grant 가 REASON_PURCHASE 로 신규 GRANTED 를

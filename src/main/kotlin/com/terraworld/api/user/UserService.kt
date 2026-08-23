@@ -52,9 +52,10 @@ class UserService(
         // BE-02 (2026-07-15 성능 감사): terrarium.placedItems lazy 컬렉션 + per-row item 로드 N+1 을
         // @EntityGraph(item) 조회로 대체 (TerrariumPlacementRepository 기존 자유배치 로드 패턴 재사용).
         // terrarium 부재 시 빈 목록 — 기존 orElse(emptyList()) semantics 동일.
+        // 아프젝 v2: 표시 중 병(activeTier) 스코프의 배치만 (배치는 티어별 저장).
         val placedItems =
             terrariumPlacementRepository
-                .findAllByTerrariumUserIdOrderById(userId)
+                .findActiveTierPlacementsByUserId(userId)
                 .map { p ->
                     PlacedItemResponse(
                         itemId = p.item.id,

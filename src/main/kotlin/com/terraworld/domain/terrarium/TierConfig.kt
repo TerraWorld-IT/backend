@@ -33,10 +33,22 @@ class TierConfig(
     val slots: Int = 0,
     @Column(name = "spirit_code", length = 32)
     val spiritCode: String? = null,
+    // 아프젝 v2 (V39): 표시용 레벨(= tier_order) / 소개 문구 / 활성 여부 / 미리보기 에셋
+    @Column(name = "level", nullable = false)
+    val level: Int = tierOrder,
+    @Column(name = "description_ko", nullable = false, length = 100)
+    val descriptionKo: String = "",
+    @Column(name = "is_active", nullable = false)
+    val isActive: Boolean = true,
+    @Column(name = "preview_asset_url", length = 500)
+    val previewAssetUrl: String? = null,
 )
 
 interface TierConfigRepository : JpaRepository<TierConfig, String> {
     fun findAllByOrderByTierOrderAsc(): List<TierConfig>
+
+    /** 아프젝 v2: 카탈로그/해금/표시 지정은 활성 티어만 대상 (HOUSE_TANK 비활성). */
+    fun findAllByIsActiveTrueOrderByTierOrderAsc(): List<TierConfig>
 
     /**
      * BE-08: tier → slots 조회 (TerrariumService getTerrarium/updatePlacements hot path).

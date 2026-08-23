@@ -352,6 +352,14 @@ class RecordServiceTest {
 
         override fun acquireRecordDailyLock(key: String): Int = 1
 
+        // 아프젝 v2: 친구 스코프 engagement 랭킹 — 본 테스트 비대상
+        override fun findEngagementRankingAmong(
+            userIds: Collection<String>,
+            start: LocalDate,
+            end: LocalDate,
+            pageable: org.springframework.data.domain.Pageable,
+        ): List<Array<Any>> = emptyList()
+
         override fun countByUserIdAndIsDeletedFalse(userId: String): Long = 0
 
         override fun countByUserIdAndRecordedDateAndIsDeletedFalse(

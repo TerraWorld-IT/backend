@@ -9,6 +9,7 @@ import com.terraworld.security.ratelimit.RateLimitFilter
 import com.terraworld.test.AbstractMvcTest
 import io.terraworld.api.model.AdRewardResponse
 import io.terraworld.api.model.AdRewardResponseReward
+import io.terraworld.api.model.AttendanceBoardDay
 import io.terraworld.api.model.AttendanceCheckInResponse
 import io.terraworld.api.model.AttendanceCheckInResponseReward
 import io.terraworld.api.model.AttendanceResponse
@@ -75,8 +76,14 @@ class RewardControllerMvcTest : AbstractMvcTest() {
                 today = false,
                 streak = 3,
                 longestStreak = 7,
-                rewardBasicCoins = 5,
+                rewardBasicCoins = 40,
+                serverDateKst = java.time.LocalDate.of(2026, 4, 10),
+                cycleDay = 4,
+                board = (1..7).map { AttendanceBoardDay(day = it, rewardBasicCoins = it * 10, claimed = it <= 3) },
+                cycleBonusRuby = 5,
+                cycleBonusClaimed = false,
                 bonusEligible = false,
+                cycleStartDateKst = java.time.LocalDate.of(2026, 4, 7),
             ),
         )
 
@@ -84,21 +91,31 @@ class RewardControllerMvcTest : AbstractMvcTest() {
             .perform(get("/api/v1/rewards/attendance"))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.streak").value(3))
-            .andExpect(jsonPath("$.rewardBasicCoins").value(5))
+            .andExpect(jsonPath("$.rewardBasicCoins").value(40))
+            .andExpect(jsonPath("$.cycleDay").value(4))
+            .andExpect(jsonPath("$.board.length()").value(7))
+            .andExpect(jsonPath("$.board[2].claimed").value(true))
+            .andExpect(jsonPath("$.cycleBonusRuby").value(5))
     }
 
     @Test
     fun `POST _api_v1_rewards_attendance 200`() {
         whenever(attendanceService.checkIn(eq(TEST_USER_ID))).thenReturn(
             AttendanceCheckInResponse(
-                reward = AttendanceCheckInResponseReward(basicCoins = 5, bonus = false),
+                reward = AttendanceCheckInResponseReward(basicCoins = 40, bonus = false, rubyBonus = 0),
                 attendance =
                     AttendanceResponse(
                         today = true,
                         streak = 4,
                         longestStreak = 7,
-                        rewardBasicCoins = 5,
+                        rewardBasicCoins = 40,
+                        serverDateKst = java.time.LocalDate.of(2026, 4, 10),
+                        cycleDay = 4,
+                        board = (1..7).map { AttendanceBoardDay(day = it, rewardBasicCoins = it * 10, claimed = it <= 4) },
+                        cycleBonusRuby = 5,
+                        cycleBonusClaimed = false,
                         bonusEligible = false,
+                        cycleStartDateKst = java.time.LocalDate.of(2026, 4, 7),
                     ),
                 currency = currency(),
             ),
@@ -107,7 +124,8 @@ class RewardControllerMvcTest : AbstractMvcTest() {
         mockMvc
             .perform(post("/api/v1/rewards/attendance"))
             .andExpect(status().isOk)
-            .andExpect(jsonPath("$.reward.basicCoins").value(5))
+            .andExpect(jsonPath("$.reward.basicCoins").value(40))
+            .andExpect(jsonPath("$.reward.rubyBonus").value(0))
             .andExpect(jsonPath("$.attendance.streak").value(4))
     }
 

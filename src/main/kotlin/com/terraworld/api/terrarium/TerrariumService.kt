@@ -14,6 +14,7 @@ import com.terraworld.domain.terrarium.TerrariumPlacementHistory
 import com.terraworld.domain.terrarium.TerrariumPlacementHistoryRepository
 import com.terraworld.domain.terrarium.TerrariumPlacementRepository
 import com.terraworld.domain.terrarium.TerrariumRepository
+import com.terraworld.domain.terrarium.TerrariumTierBackgroundRepository
 import com.terraworld.domain.user.UserRepository
 import io.terraworld.api.model.BackgroundInfo
 import io.terraworld.api.model.HeartResponse
@@ -45,6 +46,10 @@ private data class FreeEditState(
  *  - domain `ItemLayout` → generated `PlacedItemDetail.ItemLayout` (forValue, hardcoded 안전)
  *
  * 낙서장 P1/P2: 레벨/EXP 제거 + evolution → tier(화폐-게이트). maxSlots 는 tier_configs.slots 기준.
+ * 아프젝 v2 (§R1): 배치는 병(티어)마다 따로 저장 — 조회/재저장/배경/하트/친구 방문/공유 응답은 모두 `terrariums.active_tier`
+ * 스코프. `TerrariumResponse.tier` 는 activeTier 와 동일값(호환), `highestUnlockedTier` = `terrariums.tier`.
+ * 배경도 병마다 따로(V40 `terrarium_tier_backgrounds`) — 행이 없는 병은 `terrariums.background`(기본/V40 이전 값) 폴백.
+ * 하트(heartClick)는 병과 무관한 사용자 단위 보상이라 티어 스코프를 두지 않는다 — 원장 refKey 에 표시 중 병을 덧붙여 흔적만 남긴다.
  */
 @Service
 class TerrariumService(
@@ -62,6 +67,8 @@ class TerrariumService(
     private val recordRepository: RecordRepository,
     private val placementHistoryRepository: TerrariumPlacementHistoryRepository,
     private val entitlementService: com.terraworld.api.entitlement.EntitlementService,
+    // 아프젝 v2 후속(V40): 티어별 배경 — 표시 중 병의 배경 행 조회/upsert
+    private val tierBackgroundRepository: TerrariumTierBackgroundRepository,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -70,6 +77,9 @@ class TerrariumService(
         private const val WILT_STAGE_1_DAYS = 3L
         private const val WILT_STAGE_2_DAYS = 7L
         private const val WILT_STAGE_3_DAYS = 14L
+
+        /** 알 수 없는 티어의 슬롯 폴백 (구 level_configs 기본값과 동일) */
+        private const val DEFAULT_SLOTS = 6
     }
 
     @Transactional(readOnly = true)
@@ -82,34 +92,69 @@ class TerrariumService(
     }
 
     /**
+     * 아프젝 v2: 표시 중 병(activeTier) 변경 — PUT /terrarium/active-tier.
+     * 해금 범위(tierOrder <= highest order) 밖이면 409 TIER_LOCKED, 미존재 티어 코드 / 미해금 비활성 티어는 400 INVALID_INPUT.
+     * 비활성 티어(HOUSE_TANK)라도 이미 해금한 계정(terrariums.tier 가 그 이상)은 전환할 수 있다 — is_active 는 해금 가능 여부만 제한.
+     * 이미 표시 중인 티어면 변경 없이 200(멱등). 배치는 티어별로 저장돼 있으므로 전환 후 응답이 그 병의 배치를 담는다.
+     */
+    @Transactional
+    fun setActiveTier(
+        userId: String,
+        tier: String,
+    ): TerrariumResponse {
+        val terrarium =
+            terrariumRepository
+                .findByUserId(userId)
+                .orElseThrow { BusinessException(ErrorCode.TERRARIUM_NOT_FOUND) }
+        val target =
+            tierConfigRepository.findById(tier).orElseThrow { BusinessException(ErrorCode.INVALID_INPUT, "알 수 없는 티어: $tier") }
+        val highestOrder =
+            tierConfigRepository.findById(terrarium.tier).map { it.tierOrder }.orElseThrow {
+                BusinessException(ErrorCode.INVALID_INPUT, "알 수 없는 티어: ${terrarium.tier}")
+            }
+        if (target.tierOrder > highestOrder) {
+            // 비활성 티어(HOUSE_TANK)는 해금 대상이 아니므로 "잠김"이 아니라 "사용 불가" — 이미 해금한 계정만 아래로 통과한다.
+            if (!target.isActive) throw BusinessException(ErrorCode.INVALID_INPUT, "사용할 수 없는 티어: $tier")
+            throw BusinessException(ErrorCode.TIER_LOCKED)
+        }
+
+        if (terrarium.activeTier != tier) {
+            terrarium.activeTier = tier
+            terrarium.updatedAt = LocalDateTime.now()
+            terrariumRepository.save(terrarium)
+            log.info("terrarium.active-tier user={} tier={}", userId, tier)
+        }
+        return buildTerrariumResponse(userId, terrarium)
+    }
+
+    /**
      * BE-03 (2026-07-15 성능 감사): 이미 로드한 terrarium 으로 응답 조립.
      *
-     * - placedItems: 컬렉션 lazy 순회(placement 마다 item 프록시 SELECT — N+1) 대신
-     *   [TerrariumPlacementRepository.findAllByTerrariumUserIdOrderById] 의 @EntityGraph(item)
-     *   fetch join 1쿼리 (free.vue 로드 경로와 동일 패턴). OrderById 라 응답 순서 결정적.
-     * - wilting: computeWiltingState 가 같은 terrarium 을 findByUserId 로 재조회하던
-     *   중복 제거 — 로드된 terrarium 을 인자로 전달.
-     * - updatePlacements 의 응답 재조회도 본 메서드 재사용 — terrarium 재-findByUserId 없이
-     *   placements 1쿼리만 (JPQL 실행 전 auto-flush 로 재INSERT 분 반영 보장).
+     * - placedItems: 표시 중 병 스코프 [TerrariumPlacementRepository.findActiveTierPlacementsByUserId] 의
+     *   item fetch join 1쿼리 (free.vue 로드 경로와 동일 패턴). OrderById 라 응답 순서 결정적.
+     * - wilting: computeWiltingState 가 같은 terrarium 을 findByUserId 로 재조회하던 중복 제거.
+     * - updatePlacements 의 응답 재조회도 본 메서드 재사용 (JPQL 실행 전 auto-flush 로 재INSERT 분 반영 보장).
      */
     private fun buildTerrariumResponse(
         userId: String,
         terrarium: com.terraworld.domain.terrarium.Terrarium,
     ): TerrariumResponse {
-        // 낙서장 P2: 배치 슬롯 = 현재 티어 슬롯 (구 level_configs 대체)
-        // BE-08: findSlotsByTier 는 Caffeine TTL 10분 캐시 (4행 seed config — 매 조회 SELECT 제거)
-        val maxSlots = tierConfigRepository.findSlotsByTier(terrarium.tier) ?: 6
+        // 아프젝 v2: 배치 슬롯 = 표시 중 병(activeTier)의 슬롯.
+        // BE-08: findSlotsByTier 는 Caffeine TTL 10분 캐시 (seed config — 매 조회 SELECT 제거)
+        val maxSlots = tierConfigRepository.findSlotsByTier(terrarium.activeTier) ?: DEFAULT_SLOTS
 
         // 기존 fetch join 1쿼리를 placedItems / freePlacements 양쪽 조립에 공유 (추가 쿼리 없음).
-        val placements = terrariumPlacementRepository.findAllByTerrariumUserIdOrderById(userId)
+        val placements = terrariumPlacementRepository.findActiveTierPlacementsByUserId(userId)
+        // V40: 배경은 표시 중 병의 행 — 없으면(한 번도 설정 안 한 병) terrariums.background 폴백.
+        val background = backgroundOf(terrarium)
 
         return TerrariumResponse(
             terrariumId = terrarium.id,
             background =
                 BackgroundInfo(
-                    id = terrarium.background.id,
-                    name = terrarium.background.name,
-                    assetUrl = terrarium.background.assetUrl,
+                    id = background.id,
+                    name = background.name,
+                    assetUrl = background.assetUrl,
                 ),
             placedItems =
                 placements.map { p ->
@@ -125,7 +170,10 @@ class TerrariumService(
                     )
                 },
             maxSlots = maxSlots,
-            tier = terrarium.tier,
+            activeTier = terrarium.activeTier,
+            highestUnlockedTier = terrarium.tier,
+            // 하위호환: tier = activeTier 와 동일값
+            tier = terrarium.activeTier,
             wilting = computeWiltingState(userId, terrarium),
             // apjek social loop: 자유배치 사용 중(활성 항목 존재)일 때만 전체 배치의 실좌표 목록을 동봉 —
             // 미사용이면 생략(null, spec 계약). 항목 구성은 GET /terrarium/free-placement (PlacementService.
@@ -161,10 +209,13 @@ class TerrariumService(
      * 두 경우 모두 동일 ITEM_NOT_FOUND 응답으로 존재 여부를 드러내지 않는다), 보유했지만
      * layout != BACKGROUND → 409 NOT_BACKGROUND_LAYOUT.
      *
-     * terrariums.background_id 는 terrarium_backgrounds FK (substrate 재사용 — 스키마 변경 없음).
-     * 아이템에서 파생한 배경 행을 asset_url 기준 find-or-create 로 확보해 연결한다.
+     * 배경 행(terrarium_backgrounds)은 아이템에서 파생해 asset_url 기준 find-or-create 로 확보한다.
      * 유니크 제약이 없어 동시 최초 설정 시 중복 행이 생길 수 있으나 둘 다 유효한 FK 대상이라 무해
      * (조회는 최소 id 선택으로 결정적).
+     *
+     * V40: 배경은 병(티어)마다 따로 — 표시 중 병(active_tier)의 `terrarium_tier_backgrounds` 행만 upsert 한다.
+     * `terrariums.background_id` 는 갱신하지 않는다(행이 없는 병의 폴백 = 기본 배경/V40 이전 값 으로만 쓰인다).
+     * 다른 병으로 전환하면 그 병의 배경이, 돌아오면 이 병의 배경이 그대로 보인다.
      */
     @Transactional
     fun setBackground(
@@ -199,12 +250,16 @@ class TerrariumService(
                         unlockValue = 0,
                     ),
                 )
-        terrarium.background = background
-        terrarium.updatedAt = LocalDateTime.now()
+        val now = LocalDateTime.now()
+        tierBackgroundRepository.upsert(terrarium.id, terrarium.activeTier, background.id, now)
+        terrarium.updatedAt = now
         terrariumRepository.save(terrarium)
 
         return buildTerrariumResponse(userId, terrarium)
     }
+
+    /** 표시 중 병의 배경 — 티어 행이 있으면 그 배경, 없으면 terrariums.background(기본/V40 이전 값). */
+    private fun backgroundOf(terrarium: com.terraworld.domain.terrarium.Terrarium): TerrariumBackground = tierBackgroundRepository.findByTerrariumIdAndTier(terrarium.id, terrarium.activeTier)?.background ?: terrarium.background
 
     /**
      * P-WILT-001 + J-WILT-001 (UltraPlan v3, 2026-05-18):
@@ -249,12 +304,14 @@ class TerrariumService(
             terrariumRepository
                 .findByUserId(userId)
                 .orElseThrow { BusinessException(ErrorCode.TERRARIUM_NOT_FOUND) }
+        // 아프젝 v2: 재저장 대상은 표시 중 병(activeTier)의 배치만 — 다른 병의 배치는 건드리지 않는다.
+        val activeTier = terrarium.activeTier
 
-        // 낙서장 P2 (FP-05): 배치 슬롯 수 = 현재 tier 슬롯(GLASS_JAR 6 / LARGE_JAR 10 / GRAND_TANK 16 / HOUSE_TANK 24).
+        // 낙서장 P2 (FP-05): 배치 슬롯 수 = 표시 중 병의 슬롯(GLASS_JAR 10 / LARGE_JAR 20 / GRAND_TANK 40).
         // R4-TIER (2026-07-15 적대적 리뷰): 쓰기 경로 검증은 캐시(findSlotsByTier, TTL 10분)
         // 우회 — admin 이 슬롯을 축소한 직후 stale 캐시 값으로 초과 배치가 영속되는 것을 차단.
         // findById 직접 조회(fresh). 읽기 경로(getTerrarium/buildTerrariumResponse)는 캐시 유지.
-        val maxSlots = tierConfigRepository.findById(terrarium.tier).map { it.slots }.orElse(6)
+        val maxSlots = tierConfigRepository.findById(activeTier).map { it.slots }.orElse(DEFAULT_SLOTS)
 
         // BE-03 (2026-07-15 성능 감사): 검증 루프의 아이템당 findById + existsByUserIdAndItemId
         // (배치 N개당 2N 쿼리) → 루프 전 일괄 로드 2쿼리. 검증 순서/예외 시맨틱은 기존과 동일
@@ -282,13 +339,15 @@ class TerrariumService(
 
             // 낙서장 자유배치: slotId 는 배치 인덱스(0..maxSlots-1). 시각 위치는 free placement(posX/posY)가
             // 결정하므로 구 5-slot grid 모델의 slotId→layout 제약(0,1=BG/2,4=FG/3=FIG)은 폐기.
-            // tier 가 부여한 슬롯 수만큼 배치를 허용한다. (구 제약은 tier≥LARGE_JAR 의 6~번 슬롯 배치를 막았음.)
+            // tier 가 부여한 슬롯 수만큼 배치를 허용한다.
             if (placement.slotId < 0 || placement.slotId >= maxSlots) {
                 throw BusinessException(ErrorCode.INVALID_SLOT)
             }
         }
 
-        val existingItemIds = terrarium.placedItems.map { it.item.id }.toSet()
+        // 아프젝 v2: 이 병의 현재 배치만 로드 (다른 병의 행은 보존) — terrarium.placedItems 컬렉션(전 티어) 대신 repository 스코프 조회.
+        val currentPlacements = terrariumPlacementRepository.findAllByTerrariumIdAndTierOrderById(terrarium.id, activeTier)
+        val existingItemIds = currentPlacements.map { it.item.id }.toSet()
         // J-FREE-001 (2026-06-02): 슬롯 재배치는 delete-recreate 이므로, 그대로 두면
         // PlacementService 가 저장한 자유배치 좌표(free_x/y_pixel + is_free_placement)가
         // 함께 wiped 된다. 재배치되어 살아남는 placement 의 free 좌표를 (itemId, slotId) 기준으로
@@ -296,50 +355,49 @@ class TerrariumService(
         // last-write-wins 로 충돌 — slotId 까지 포함해 placement 단위로 매칭. 슬롯이 바뀌면
         // free 좌표는 의도적으로 리셋.)
         // 슬롯 재저장 시 자유배치 편집 상태(위치 + scale/zIndex/flipped)를 전부 보존한다.
-        // 일부만 보존하면 slot 재저장 후 크기/깊이/반전이 기본값으로 silently 리셋됨 (review MEDIUM).
         val freeBySlot =
-            terrarium.placedItems
+            currentPlacements
                 .filter { it.isFreePlacement || it.freeXPixel != null }
                 .associate {
                     (it.item.id to it.slotId) to
                         FreeEditState(it.freeXPixel, it.freeYPixel, it.isFreePlacement, it.scale, it.zIndex, it.flipped)
                 }
 
-        terrariumPlacementRepository.deleteAllByTerrariumId(terrarium.id)
-        terrarium.placedItems.clear()
+        terrariumPlacementRepository.deleteAllByTerrariumIdAndTier(terrarium.id, activeTier)
         // 사전존재 버그 (2026-06-02 e2e 발견): delete(deferred) + 재INSERT 를 한 트랜잭션에서 하면
         // Hibernate action queue 가 INSERT 를 DELETE 보다 먼저 실행 → 같은 slot_id 재배치 시
-        // ux_terrarium_items_terrarium_slot 유니크 위반 (TERRARIUM_SLOT_CONFLICT 409). 슬롯 재저장이
-        // 항상 실패하던 문제. flush() 로 DELETE 를 재INSERT 전에 강제 실행.
+        // 유니크(terrarium_id, tier, slot_id) 위반 (TERRARIUM_SLOT_CONFLICT 409). flush() 로 DELETE 를 재INSERT 전에 강제 실행.
         terrariumPlacementRepository.flush()
 
-        request.placedItems.forEach { p ->
-            // BE-03: 재삽입 루프의 중복 findById 제거 — 위 일괄 로드 맵 재사용 (검증 통과 = 존재 보장).
-            val item = itemsById.getValue(p.itemId)
-            val free = freeBySlot[item.id to p.slotId]
-            terrarium.placedItems.add(
+        val recreated =
+            request.placedItems.map { p ->
+                // BE-03: 재삽입 루프의 중복 findById 제거 — 위 일괄 로드 맵 재사용 (검증 통과 = 존재 보장).
+                val item = itemsById.getValue(p.itemId)
+                val free = freeBySlot[item.id to p.slotId]
+                if (item.id !in existingItemIds) {
+                    placementHistoryRepository.save(
+                        TerrariumPlacementHistory(
+                            userId = userId,
+                            itemId = item.id,
+                            slotId = p.slotId,
+                        ),
+                    )
+                }
                 TerrariumPlacement(
                     terrarium = terrarium,
                     item = item,
                     slotId = p.slotId,
+                    tier = activeTier,
                     freeXPixel = free?.freeXPixel,
                     freeYPixel = free?.freeYPixel,
                     isFreePlacement = free?.isFreePlacement ?: false,
                     scale = free?.scale ?: 1f,
                     zIndex = free?.zIndex ?: 0,
                     flipped = free?.flipped ?: false,
-                ),
-            )
-            if (item.id !in existingItemIds) {
-                placementHistoryRepository.save(
-                    TerrariumPlacementHistory(
-                        userId = userId,
-                        itemId = item.id,
-                        slotId = p.slotId,
-                    ),
                 )
             }
-        }
+        terrariumPlacementRepository.saveAll(recreated)
+        terrarium.updatedAt = LocalDateTime.now()
         terrariumRepository.save(terrarium)
 
         // BE-03: 응답 재조립 — terrarium 재-findByUserId + wilting 중복 조회 제거.
@@ -353,12 +411,14 @@ class TerrariumService(
         userRepository
             .findById(userId)
             .orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) } // 존재 검증
+        // 아프젝 v2 후속: 하트 보상 자체는 병(티어)과 무관한 사용자 단위 보상 — 스코프는 두지 않고,
+        // 원장 refKey 에 표시 중 병을 덧붙여 "어느 병을 보며 눌렀는가" 흔적만 남긴다 (테라리움 부재 시 userId 만).
+        val activeTier = terrariumRepository.findByUserId(userId).map { it.activeTier }.orElse(null)
+        val refKey = if (activeTier != null) "$userId:$activeTier" else userId
         // /analyze 2026-05-18 발견 (Codex C-1): 기존 코드 `basicCoin += 1` ↔ `reward = 0.1`
-        // 10× mismatch — response 가 실제 DB 누적과 불일치. spec example 도 +0.1 였으나
-        // DB 컬럼 BIGINT 와 fractional 모델 충돌. autonomous default (Phase 4 pre-launch):
+        // 10× mismatch — response 가 실제 DB 누적과 불일치. autonomous default (Phase 4 pre-launch):
         //   - DB schema 유지 (BIGINT)
         //   - response 의 `reward` 와 `updatedBasicCoins` 가 실 DB state 와 정확히 일치
-        //   - spec example 도 1.0 으로 정정 (별 PR)
         // 어뷰징 cooldown 정책은 별 cycle (현재 client side throttle 만 존재).
         val rewardCoins = 1L
         // 낙서장 P1: 하트 보상 = 신 substrate COIN credit 단일 SoT. credit 반환값(신 잔액)을 응답에 사용.
@@ -369,7 +429,7 @@ class TerrariumService(
                 rewardCoins,
                 com.terraworld.api.wallet.WalletTransactionService.REASON_RECORD_REWARD,
                 "HEART",
-                userId,
+                refKey,
             )
         return HeartResponse(
             reward = rewardCoins.toDouble(),

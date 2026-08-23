@@ -3,6 +3,7 @@ package com.terraworld.domain.terrarium
 import org.springframework.data.domain.Pageable
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.data.jpa.repository.Query
+import org.springframework.data.repository.query.Param
 import java.time.LocalDateTime
 
 interface TerrariumPlacementHistoryRepository : JpaRepository<TerrariumPlacementHistory, Long> {
@@ -22,6 +23,24 @@ interface TerrariumPlacementHistoryRepository : JpaRepository<TerrariumPlacement
     fun findDecorationRanking(
         start: LocalDateTime,
         end: LocalDateTime,
+        pageable: Pageable,
+    ): List<Array<Any>>
+
+    /** 아프젝 v2 친구 스코프 decoration 랭킹 — 본인 + 수락된 친구 userId 집합 한정. */
+    @Query(
+        """
+        SELECT h.userId, COUNT(h)
+        FROM TerrariumPlacementHistory h
+        WHERE h.placedAt BETWEEN :start AND :end
+          AND h.userId IN :userIds
+        GROUP BY h.userId
+        ORDER BY COUNT(h) DESC
+    """,
+    )
+    fun findDecorationRankingAmong(
+        @Param("userIds") userIds: Collection<String>,
+        @Param("start") start: LocalDateTime,
+        @Param("end") end: LocalDateTime,
         pageable: Pageable,
     ): List<Array<Any>>
 

@@ -112,6 +112,8 @@ app:
     allowed-schemes: ${APP_PHOTO_URL_SCHEMES:https,data}
     allowed-hosts: ${APP_PHOTO_URL_HOSTS:cdn.terraworld.app,terraworld.app}
     allowed-data-mimes: ${APP_PHOTO_URL_DATA_MIMES:image/jpeg,image/png,image/webp}
+  # N-B7 점검 모드 (아프젝 v2): true 면 MaintenanceFilter 가 /api/** 에 503 {code:"MAINTENANCE"} 를 반환한다 (actuator 제외).
+  maintenance: ${APP_MAINTENANCE:false}
 
 # N9 (구현 계획서 v4, 2026-05-26): 광고 보상 nonce 정책.
 # - 2026-06-23: 기본값 true 전환 (사용자 결정). frontend(useAdMob.generateNonce + onClaimAdReward)는
@@ -122,6 +124,37 @@ reward:
   ad:
     nonce:
       required: ${REWARD_AD_NONCE_REQUIRED:true}
+
+# 아프젝 v2 (2026-08-23) — 출석 보드 / 초대 루비 / 습관 보상 / 키우기 사이클 설정.
+# 계약 SoT: docs/root/plans/2026-08-23-apjek-v2-api-contract.md (rev2). 바인딩 클래스는 각 도메인 패키지의
+# *Properties (AttendanceProperties / InviteRewardProperties / HabitProperties / GrowthProperties).
+attendance:
+  board:
+    # 7일 사이클 일차별 기본 코인 (day 1~7, 정확히 7개)
+    coins: ${ATTENDANCE_BOARD_COINS:10,20,30,40,50,60,70}
+  # 7일차 체크인 시 추가 지급 루비
+  cycle-bonus-ruby: ${ATTENDANCE_CYCLE_BONUS_RUBY:5}
+
+invite:
+  reward:
+    inviter-ruby: ${INVITE_REWARD_INVITER_RUBY:30}
+    invitee-ruby: ${INVITE_REWARD_INVITEE_RUBY:10}
+
+habit:
+  reward:
+    # solo 완주(또는 상대 중단 시) / 친구 습관 완주 시 양측 각각
+    solo-sparkle: ${HABIT_REWARD_SOLO_SPARKLE:100}
+    partner-sparkle: ${HABIT_REWARD_PARTNER_SPARKLE:200}
+  # 친구 시작/연장 요청 만료 일수
+  request-expiry-days: ${HABIT_REQUEST_EXPIRY_DAYS:7}
+
+growth:
+  # LOST 판정 시작 간격: DAYS.between(lastProgressDate, today) >= N (기본 2 = D+2 00:00 KST 부터)
+  lost-after-days: ${GROWTH_LOST_AFTER_DAYS:2}
+  # 루비 되살리기 비용
+  revive-ruby-cost: ${GROWTH_REVIVE_RUBY_COST:10}
+  # 사이클 목표 스탬프 수 (단계 시드 1/10/20 과 별개)
+  goal: ${GROWTH_GOAL:30}
 
 springdoc:
   api-docs:

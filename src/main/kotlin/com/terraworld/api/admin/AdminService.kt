@@ -81,6 +81,8 @@ class AdminService(
         isAnimated: Boolean,
         width: Int,
         height: Int,
+        // 아프젝 v2: 상점 비판매(지급 전용) 아이템 등록 — 기본 true
+        purchasable: Boolean = true,
     ): Item {
         require(name.isNotBlank()) { "name 은 공백 불가" }
         require(assetUrl.isNotBlank()) { "assetUrl 은 공백 불가" }
@@ -129,6 +131,7 @@ class AdminService(
                     width = width,
                     height = height,
                     isActive = true,
+                    purchasable = purchasable,
                 ),
             )
         audit(adminUserId, "ADMIN_CREATE_ITEM", "Item", saved.id.toString())

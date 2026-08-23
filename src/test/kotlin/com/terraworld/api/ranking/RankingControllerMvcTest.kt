@@ -36,10 +36,12 @@ class RankingControllerMvcTest : AbstractMvcTest() {
                 type = eq("engagement"),
                 yearMonth = eq(null),
                 limit = eq(50),
+                scope = eq("all"),
             ),
         ).thenReturn(
             RankingResponse(
                 type = RankingResponse.Type.forValue("engagement"),
+                scope = RankingResponse.Scope.ALL,
                 yearMonth = "2026-04",
                 propertyEntries =
                     listOf(

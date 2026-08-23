@@ -20,8 +20,8 @@ class TodoRoutineService(
     private val todoRoutineRepository: TodoRoutineRepository,
 ) {
     companion object {
-        /** 사용자당 활성(미삭제) 루틴 상한. */
-        const val MAX_ACTIVE_ROUTINES = 20
+        /** 사용자당 활성(미삭제) 루틴 상한 (아프젝 v2: 20 → 30). */
+        const val MAX_ACTIVE_ROUTINES = 30
         const val MAX_LABEL_LENGTH = 50
     }
 
@@ -38,7 +38,7 @@ class TodoRoutineService(
         val normalizedLabel = validateLabel(label)
         val mask = validateDaysOfWeek(repeatType, daysOfWeek)
 
-        // 활성 20개 제한 — count-then-insert 의 TOCTOU 를 per-user advisory lock 으로 직렬화
+        // 활성 30개 제한 — count-then-insert 의 TOCTOU 를 per-user advisory lock 으로 직렬화
         // (RecordRepository.acquireRecordDailyLock 패턴).
         todoRoutineRepository.acquireRoutineLock("todo-routine|$userId")
         if (todoRoutineRepository.countByUserIdAndIsDeletedFalse(userId) >= MAX_ACTIVE_ROUTINES) {

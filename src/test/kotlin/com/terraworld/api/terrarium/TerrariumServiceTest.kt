@@ -79,6 +79,8 @@ class TerrariumServiceTest {
                 recordRepo,
                 placementHistoryRepository,
                 entitlementService,
+                // 티어별 배경(V40): mock → 행 없음 → terrariums.background 폴백 경로
+                org.mockito.Mockito.mock(com.terraworld.domain.terrarium.TerrariumTierBackgroundRepository::class.java),
             )
 
         user = User(id = "user-1", nickname = "테스터")
@@ -278,6 +280,8 @@ class TerrariumServiceTest {
 
         override fun findAllByOrderByTierOrderAsc(): List<TierConfig> = store.values.sortedBy { it.tierOrder }
 
+        override fun findAllByIsActiveTrueOrderByTierOrderAsc(): List<TierConfig> = store.values.filter { it.isActive }.sortedBy { it.tierOrder }
+
         // BE-08: TerrariumService 가 findById 대신 캐시 대상 scalar 조회 사용
         override fun findSlotsByTier(tier: String): Int? = store[tier]?.slots
     }
@@ -327,6 +331,14 @@ class TerrariumServiceTest {
                 .empty()
 
         override fun acquireRecordDailyLock(key: String): Int = 1
+
+        // 아프젝 v2: 친구 스코프 engagement 랭킹 — 본 테스트 비대상
+        override fun findEngagementRankingAmong(
+            userIds: Collection<String>,
+            start: LocalDate,
+            end: LocalDate,
+            pageable: org.springframework.data.domain.Pageable,
+        ): List<Array<Any>> = emptyList()
 
         override fun countByUserIdAndRecordedDateAndCategoryIdAndIsDeletedFalse(
             userId: String,

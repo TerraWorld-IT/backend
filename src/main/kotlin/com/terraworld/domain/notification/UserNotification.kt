@@ -50,8 +50,8 @@ class UserNotification(
     var readAt: LocalDateTime? = null,
 )
 
-/** 알림 타입 — API 스펙 확정안의 enum 과 1:1 (DB CHECK 제약과도 동일 집합). */
-enum class NotificationType { SPIRIT_ARRIVED, PAYMENT, FRIEND_JOINED, CHEER, SYSTEM }
+/** 알림 타입 — API 스펙 확정안의 enum 과 1:1 (DB CHECK 제약과도 동일 집합). HABIT 은 아프젝 v2(V39) 추가. */
+enum class NotificationType { SPIRIT_ARRIVED, PAYMENT, FRIEND_JOINED, CHEER, SYSTEM, HABIT }
 
 interface UserNotificationRepository : JpaRepository<UserNotification, UUID> {
     /** 알림함 목록 — user_id 기준 최신순 페이지 조회 (idx_user_notifications_user_created). */

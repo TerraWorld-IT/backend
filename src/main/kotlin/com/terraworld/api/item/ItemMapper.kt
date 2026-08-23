@@ -34,6 +34,7 @@ internal object ItemMapper {
             layout = mapLayoutOrFailFast(item.id, item.layout.name),
             isAnimated = item.isAnimated,
             isActive = item.isActive,
+            purchasable = item.purchasable,
         )
 
     private fun mapPriceTypeOrFailFast(

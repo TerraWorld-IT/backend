@@ -180,10 +180,19 @@ class PlacementServiceTest {
 
         override fun findAllByTerrariumId(terrariumId: Long): List<TerrariumPlacement> = store.values.filter { it.terrarium.id == terrariumId }
 
-        override fun findAllByTerrariumUserIdOrderById(userId: String): List<TerrariumPlacement> = store.values.filter { it.terrarium.user.id == userId }.sortedBy { it.id }
+        // 아프젝 v2: 표시 중 병(activeTier) 스코프 — 실 JPQL 과 같은 필터
+        override fun findActiveTierPlacementsByUserId(userId: String): List<TerrariumPlacement> = store.values.filter { it.terrarium.user.id == userId && it.tier == it.terrarium.activeTier }.sortedBy { it.id }
 
-        override fun deleteAllByTerrariumId(terrariumId: Long) {
-            store.values.filter { it.terrarium.id == terrariumId }.forEach { store.remove(it.id) }
+        override fun findAllByTerrariumIdAndTierOrderById(
+            terrariumId: Long,
+            tier: String,
+        ): List<TerrariumPlacement> = store.values.filter { it.terrarium.id == terrariumId && it.tier == tier }.sortedBy { it.id }
+
+        override fun deleteAllByTerrariumIdAndTier(
+            terrariumId: Long,
+            tier: String,
+        ) {
+            store.values.filter { it.terrarium.id == terrariumId && it.tier == tier }.forEach { store.remove(it.id) }
         }
     }
 }
