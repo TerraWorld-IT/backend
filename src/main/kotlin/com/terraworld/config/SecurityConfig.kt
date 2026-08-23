@@ -1,5 +1,6 @@
 package com.terraworld.config
 
+import com.terraworld.common.maintenance.MaintenanceFilter
 import com.terraworld.security.JwtAuthenticationFilter
 import com.terraworld.security.ratelimit.RateLimitFilter
 import jakarta.servlet.http.HttpServletResponse
@@ -16,6 +17,7 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 import org.springframework.web.cors.CorsConfiguration
 import org.springframework.web.cors.CorsConfigurationSource
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource
+import org.springframework.web.filter.CorsFilter
 
 /**
  * Spring Security wiring for the TerraWorld backend.
@@ -32,6 +34,7 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource
  *   호출하므로 공개가 정상이며, 호출자가 스스로를 인증한다.
  *   `/api/v1/internal/` 의 네트워크 레벨 심층방어(외부 트래픽 차단)는 리버스 프록시 몫이다.
  * - Swagger / API docs: public in non-prod, locked down in prod.
+ * - 점검 모드([MaintenanceFilter]): 체인 안 CorsFilter 바로 뒤 — 503 에도 CORS 헤더가 붙고 프리플라이트는 CorsFilter 가 응답한다.
  */
 @Configuration
 @EnableWebSecurity
@@ -40,6 +43,7 @@ class SecurityConfig(
     private val rateLimitFilter: RateLimitFilter,
     private val environment: Environment,
     @Value("\${cors.allowed-origins}") private val allowedOrigins: List<String>,
+    @Value("\${app.maintenance:false}") private val maintenance: Boolean,
 ) {
     private val isProd: Boolean
         get() = environment.activeProfiles.any { it.equals("prod", ignoreCase = true) }
@@ -114,7 +118,10 @@ class SecurityConfig(
                 ex.accessDeniedHandler { _, response, _ ->
                     writeJsonError(response, HttpServletResponse.SC_FORBIDDEN, "FORBIDDEN", "접근 권한이 없습니다")
                 }
-            }.addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter::class.java)
+            }
+            // 점검 모드: CorsFilter 뒤·인증 앞. 빈이 아니라 여기서 직접 생성해 서블릿 레벨 자동 등록(CORS 앞 503)을 피한다.
+            .addFilterAfter(MaintenanceFilter(maintenance), CorsFilter::class.java)
+            .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter::class.java)
             // RateLimitFilter sits AFTER JWT extraction so authenticated subjects
             // are bucketed by userId rather than IP. On Redis outage it fails open.
             .addFilterAfter(rateLimitFilter, JwtAuthenticationFilter::class.java)

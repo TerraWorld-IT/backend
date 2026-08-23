@@ -9,6 +9,7 @@ import kotlin.test.assertTrue
 
 /**
  * MaintenanceFilter (N-B7): app.maintenance=true 면 /api/ 하위 503 MAINTENANCE JSON, actuator 는 통과, false 면 전부 통과.
+ * 체인 배선(CorsFilter 뒤 — 503 에 CORS 헤더)은 [MaintenanceCorsMvcTest] 가 Security 체인 전체로 검증한다.
  */
 class MaintenanceFilterTest {
     @Test
