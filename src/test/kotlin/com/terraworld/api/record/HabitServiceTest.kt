@@ -470,6 +470,33 @@ class HabitServiceTest {
         assertEquals(100L, views[3L]?.rewardSparkle)
     }
 
+    @Test
+    fun `resolveView partnerCheckedToday — 상대가 오늘 체크인하면 true, 어제·미체크·solo 는 false`() {
+        val (mine, partner) = pair()
+        val solo = tracker(3L, userId = "u2")
+        // 상대 미체크인
+        assertFalse(service.resolveView("u", listOf(mine))[mine.id]!!.partnerCheckedToday)
+        // 상대 어제 체크인
+        partner.lastCheckedDate = today.minusDays(1)
+        assertFalse(service.resolveView("u", listOf(mine))[mine.id]!!.partnerCheckedToday)
+        // 상대 오늘 체크인 → true (내 시점), 상대 시점에서는 내가 미체크라 false
+        partner.lastCheckedDate = today
+        assertTrue(service.resolveView("u", listOf(mine))[mine.id]!!.partnerCheckedToday)
+        assertFalse(service.resolveView("friend", listOf(partner))[partner.id]!!.partnerCheckedToday)
+        // solo 는 항상 false
+        assertFalse(service.resolveView("u2", listOf(solo))[solo.id]!!.partnerCheckedToday)
+    }
+
+    @Test
+    fun `resolveView partnerCheckedToday — 상대가 중단(BROKEN, PARTNER_STOPPED)했으면 오늘 체크했어도 false`() {
+        val (mine, partner) = pair()
+        partner.lastCheckedDate = today
+        service.stop("friend", partner.id)
+        val view = service.resolveView("u", listOf(mine))[mine.id]!!
+        assertEquals(HabitTrackerResponse.PartnerStatus.PARTNER_STOPPED, view.partnerStatus)
+        assertFalse(view.partnerCheckedToday)
+    }
+
     private fun invite(id: Long) = Invite(id = id, code = "CODE$id", inviterUserId = "u", inviteeUserId = "friend", expiresAt = LocalDateTime.now().plusDays(1))
 
     // ─── 페이크 ───

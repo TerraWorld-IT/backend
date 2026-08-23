@@ -444,6 +444,7 @@ class HabitService(
         trackers: List<HabitTracker>,
     ): Map<Long, HabitView> {
         if (trackers.isEmpty()) return emptyMap()
+        val today = KstTime.today()
         val ids = trackers.map { it.id }
         val partnerIds = trackers.mapNotNull { it.partnerTrackerId }.distinct()
         val partnersById =
@@ -501,6 +502,8 @@ class HabitService(
                     partnerStatus = partnerStatus,
                     extendStatus = extendStatus,
                     rewardSparkle = rewardFor(partner),
+                    // 상대가 오늘(KST) 체크인했는가 — 페어가 살아 있을 때만(solo / 상대 중단 BROKEN 은 false).
+                    partnerCheckedToday = partner != null && partner.status != HabitStatus.BROKEN && partner.lastCheckedDate == today,
                 )
         }
     }
@@ -651,13 +654,14 @@ class HabitService(
     )
 }
 
-/** 응답용 페어 뷰 (상대 userId/닉네임 + partnerStatus/extendStatus/rewardSparkle). */
+/** 응답용 페어 뷰 (상대 userId/닉네임 + partnerStatus/extendStatus/rewardSparkle + 상대 오늘 체크인 여부). */
 data class HabitView(
     val friendUserId: String?,
     val friendNickname: String?,
     val partnerStatus: HabitTrackerResponse.PartnerStatus,
     val extendStatus: HabitTrackerResponse.ExtendStatus,
     val rewardSparkle: Long,
+    val partnerCheckedToday: Boolean = false,
 )
 
 data class HabitCheckInResult(

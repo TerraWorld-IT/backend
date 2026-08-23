@@ -136,6 +136,8 @@ class HabitController(
             completedCycles = t.completedCycles,
             status = HabitTrackerResponse.Status.forValue(t.status.name),
             partnerStatus = partnerStatus,
+            // 상대의 오늘(KST) 체크인 여부 — 페어가 없거나(solo) 상대가 중단했으면 false.
+            partnerCheckedToday = view?.partnerCheckedToday ?: false,
             extendStatus = view?.extendStatus ?: HabitTrackerResponse.ExtendStatus.NONE,
             rewardSparkle = view?.rewardSparkle ?: 0,
             lastCheckedDate = t.lastCheckedDate,
