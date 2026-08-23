@@ -178,6 +178,9 @@ class GrowthService(
                     currencyService.debit(userId, CurrencyCode.RUBY, properties.reviveRubyCost, REASON_GROW_REVIVE, REF_TYPE, speciesCode)
                 }
             GrowthReviveRequest.Method.AD ->
+                // 알려진 한계: nonce 소비는 replay 만 막고 실제 광고 시청을 증명하지 않는다(SSV 는 audit-only —
+                // RewardService.consumeAdNonce 주석 참조). 즉 AD 되살리기는 "광고를 본 척" 으로도 통과하며,
+                // 그 대가가 루비 차감 없는 진행 유지(실 경제 아님)라 수용한다. SSV-authoritative 전환 시 이 경로도 함께 게이트된다.
                 rewardService.consumeAdNonce(userId, adNonce, AdRewardNonceInbox.PURPOSE_GROWTH_REVIVE)
         }
 

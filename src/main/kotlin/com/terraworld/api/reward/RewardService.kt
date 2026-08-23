@@ -64,6 +64,13 @@ class RewardService(
         nonce: String?,
         purpose: String,
     ) {
+        // ── 알려진 한계 (claimAdReward 의 code-review R1 H5 와 동일 축, 아프젝 v2 적대 검토 재확인) ──
+        // 이 nonce 소비는 "같은 nonce 재사용(replay)" 만 차단한다. 클라이언트 발급 nonce 경로에서는 서버가
+        // **실제 광고 시청을 증명하지 못한다** — 매번 새 nonce 로 호출하면 광고 없이도 통과한다.
+        // SSV 콜백(/rewards/ad/ssv-callback)은 현재 audit-only 라 이 경로를 게이트하지 않는다.
+        // 완전 차단은 SSV-authoritative(서버 발급 pending nonce + 서명 검증 완료 시에만 소비 성공)로 전환해야 하며
+        // AdMob 프로덕션 키/콘솔 설정이 필요해 이연돼 있다. 호출부(GrowthService.revive AD)는 이 한계를 전제로
+        // 보상 없는 되살리기(진행 유지)에만 쓰고, 일일 한도가 있는 RUBY 지급(claimAdReward)과 분리돼 있다.
         if (nonce.isNullOrBlank() || nonce.length !in 16..64) {
             throw BusinessException(ErrorCode.INVALID_INPUT, "광고 시청 nonce 가 필요합니다")
         }
