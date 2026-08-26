@@ -13,11 +13,20 @@
 --   - 정령 아이템(cat-spirit)은 디자이너 정령 일러스트로 asset_url 교체, 판매 여부는 그대로(purchasable = FALSE).
 --   - slug UNIQUE + ON CONFLICT DO NOTHING 으로 멱등.
 
+-- V22 프로토타입 40종을 slug 로 특정해 내린다 (asset_url 모양으로 고르면 admin 이 등록한 상대경로·대문자 스킴
+-- 자산까지 판매 중단되므로 목록을 고정). 이미 admin 이 다른 값으로 바꾼 행도 slug 기준으로 함께 내려간다.
 UPDATE items
 SET is_active = FALSE
-WHERE purchasable = TRUE
-  AND asset_url NOT LIKE '/%'
-  AND asset_url NOT LIKE 'http%';
+WHERE slug IN (
+    'plant-1', 'plant-2', 'plant-3', 'plant-4', 'book-1',
+    'book-2', 'book-3', 'book-4', 'run-1', 'run-2',
+    'run-3', 'run-4', 'draw-1', 'draw-2', 'draw-3',
+    'draw-4', 'rock-1', 'lamp-1', 'coin-flower', 'coin-mushroom',
+    'coin-crystal', 'coin-feather', 'coin-shell', 'coin-butterfly', 'figure-dog',
+    'figure-cat', 'figure-rabbit', 'figure-deer', 'figure-owl', 'figure-penguin',
+    'figure-fox', 'figure-unicorn', 'figure-horse', 'figure-tiger', 'figure-lion',
+    'figure-dragon', 'figure-bear', 'figure-panda', 'figure-koala', 'figure-phoenix'
+);
 
 UPDATE items SET asset_url = '/spirits/stage2.png' WHERE slug = 'cat-spirit';
 
@@ -46,13 +55,27 @@ FROM (
 JOIN categories c ON c.name = v.cat_name AND c.is_custom = FALSE
 ON CONFLICT (slug) DO NOTHING;
 
--- 방어 가드: 카테고리 이름 JOIN 이 실패하면 INSERT 가 에러 없이 0 row 가 되어 상점이 비어 버린다.
+-- 방어 가드: 카테고리 이름 JOIN 이 실패하면 INSERT 가 에러 없이 0 row 가 되어 상점이 비어 버리고,
+-- slug 가 선점돼 ON CONFLICT 로 건너뛴 행은 가격·카테고리·자산 경로가 다를 수 있다 — 13종 전부가
+-- 목표 상태(TOKEN 가격·활성·규약 경로·시스템 카테고리)인지 센다.
 DO $$
 DECLARE
     n INTEGER;
 BEGIN
-    SELECT COUNT(*) INTO n FROM items WHERE slug IN ('tillandsia-ionantha', 'humata-fern', 'nandina', 'pilea-peperomioides');
-    IF n < 4 THEN
-        RAISE EXCEPTION 'V41 seed: 식물 아이템 누락(%/4) — categories(산책/독서/러닝/낙서) 이름 JOIN 실패 가능성', n;
+    SELECT COUNT(*) INTO n
+    FROM items i
+    JOIN categories c ON c.id = i.category_id AND c.is_custom = FALSE
+    WHERE i.slug IN (
+        'tillandsia-ionantha', 'round-leaf-acacia', 'wind-orchid', 'weed',
+        'humata-fern', 'scindapsus', 'jeju-creeping-fig',
+        'pilea-peperomioides', 'dischidia', 'red-star',
+        'nandina', 'pteris', 'stephania'
+    )
+      AND i.price_type = 'TOKEN'
+      AND i.is_active = TRUE
+      AND i.purchasable = TRUE
+      AND i.asset_url = '/items/' || i.slug || '.png';
+    IF n <> 13 THEN
+        RAISE EXCEPTION 'V41 seed: 식물 아이템이 목표 상태가 아님(%/13) — categories 이름 JOIN 실패 또는 slug 선점 행 불일치', n;
     END IF;
 END $$;
