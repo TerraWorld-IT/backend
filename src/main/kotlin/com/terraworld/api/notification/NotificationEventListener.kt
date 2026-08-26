@@ -42,7 +42,7 @@ class NotificationEventListener(
                 userId = event.toUserId,
                 type = NotificationType.FRIEND_JOINED,
                 // FcmEventListener.onFriendActivity 의 푸시 title/body 와 동일 카피 — 알림함과 푸시 일치.
-                title = "👯 친구가 활동했어요",
+                title = "친구가 활동했어요",
                 body = event.message,
                 route = event.route,
             )

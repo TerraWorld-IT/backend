@@ -119,7 +119,7 @@ class HabitService(
         notify(
             fromUserId = userId,
             toUserId = friendUserId,
-            title = "🤝 함께 습관 요청이 도착했어요",
+            title = "함께 습관 요청이 도착했어요",
             body = "${nicknameOf(userId)} 님이 「$trimmedTitle」 습관을 함께 하자고 요청했어요. 기록하기에서 수락해 보세요",
         )
         return saved
@@ -241,7 +241,7 @@ class HabitService(
             } else {
                 "${nicknameOf(userId)} 님이 「${mine.title}」 습관 연장을 수락했어요. 새 7일이 시작됐어요"
             }
-        notify(userId, requester.userId, "✅ 습관 요청이 수락됐어요", body)
+        notify(userId, requester.userId, "습관 요청이 수락됐어요", body)
         return saved
     }
 
@@ -391,7 +391,7 @@ class HabitService(
                 habitPairRequestRepository.save(incoming)
                 habitTrackerRepository.save(requester)
                 val saved = habitTrackerRepository.save(tracker)
-                notify(userId, requester.userId, "✅ 습관 연장이 수락됐어요", "${nicknameOf(userId)} 님도 「${tracker.title}」 습관을 연장했어요. 새 7일이 시작됐어요")
+                notify(userId, requester.userId, "습관 연장이 수락됐어요", "${nicknameOf(userId)} 님도 「${tracker.title}」 습관을 연장했어요. 새 7일이 시작됐어요")
                 return HabitRewardResult(saved, claim.granted, claim.alreadyClaimed)
             }
         }

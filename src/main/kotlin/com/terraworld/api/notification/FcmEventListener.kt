@@ -83,7 +83,7 @@ class FcmEventListener(
         if (tokens.isEmpty()) return
         fcmService.sendToTokens(
             tokens,
-            "👯 친구가 활동했어요",
+            "친구가 활동했어요",
             event.message,
             // route: 클라 capacitor.client.ts 의 pushNotificationActionPerformed 가 탭 시 이동.
             mapOf("type" to "FRIEND", "fromUserId" to event.fromUserId, "route" to event.route),
