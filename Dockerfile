@@ -11,7 +11,8 @@ COPY --chown=app:app build/libs/*.jar app.jar
 # - MaxMetaspaceSize: metaspace 무한 성장 차단 (비-heap OOM 의 조기 가시화)
 # - ExitOnOutOfMemoryError: OOM 후 half-dead 상태로 살아있는 대신 즉시 종료 → 오케스트레이터 재기동
 # compose/k8s 에서 memory limit 설정 후 MaxRAMPercentage 전환 검토.
-ENV JAVA_OPTS="-Xms256m -Xmx512m -XX:MaxMetaspaceSize=256m -XX:+ExitOnOutOfMemoryError"
+# -Duser.timezone=UTC: 무인자 now() 를 UTC 로 간주하는 저장·응답 계약을 JVM 시작부터 명시(코드의 JvmTimeZone.pinUtc 와 같은 값).
+ENV JAVA_OPTS="-Xms256m -Xmx512m -XX:MaxMetaspaceSize=256m -XX:+ExitOnOutOfMemoryError -Duser.timezone=UTC"
 EXPOSE 8080
 USER app
 # HEALTHCHECK 는 여기 두지 않는다. deploy/docker-compose.yml 이 backend 서비스에

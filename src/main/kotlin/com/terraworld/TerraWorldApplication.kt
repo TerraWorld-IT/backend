@@ -1,11 +1,11 @@
 package com.terraworld
 
+import com.terraworld.common.time.JvmTimeZone
 import org.springframework.boot.autoconfigure.SpringBootApplication
 import org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
 import org.springframework.boot.context.properties.ConfigurationPropertiesScan
 import org.springframework.boot.runApplication
 import org.springframework.scheduling.annotation.EnableScheduling
-import java.util.TimeZone
 
 @SpringBootApplication(
     // We own authentication via JwtAuthenticationFilter + better-auth JWKS.
@@ -19,9 +19,7 @@ import java.util.TimeZone
 class TerraWorldApplication
 
 fun main(args: Array<String>) {
-    // 저장·응답 시각은 LocalDateTime.now() 를 UTC 로 간주해 내려간다(RecordService.atOffset(UTC) 등).
-    // JVM 기본 시간대가 KST 인 환경(로컬 개발 PC)에서는 그 값이 +9h 밀리므로 운영 컨테이너와 같은 UTC 로 고정한다.
-    // 한국 날짜 경계(출석·습관·키우기)는 각자 Asia/Seoul 을 명시해 쓰므로 영향 없다.
-    TimeZone.setDefault(TimeZone.getTimeZone("UTC"))
+    // 무인자 now() 를 UTC 로 간주하는 저장·응답 계약을 환경과 무관하게 지킨다 (JvmTimeZone 참조).
+    JvmTimeZone.pinUtc()
     runApplication<TerraWorldApplication>(*args)
 }
