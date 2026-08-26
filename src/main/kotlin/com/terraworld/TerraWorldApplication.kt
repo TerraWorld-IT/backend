@@ -1,5 +1,6 @@
 package com.terraworld
 
+import com.terraworld.common.time.JvmTimeZone
 import org.springframework.boot.autoconfigure.SpringBootApplication
 import org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
 import org.springframework.boot.context.properties.ConfigurationPropertiesScan
@@ -18,5 +19,7 @@ import org.springframework.scheduling.annotation.EnableScheduling
 class TerraWorldApplication
 
 fun main(args: Array<String>) {
+    // 무인자 now() 를 UTC 로 간주하는 저장·응답 계약을 환경과 무관하게 지킨다 (JvmTimeZone 참조).
+    JvmTimeZone.pinUtc()
     runApplication<TerraWorldApplication>(*args)
 }
