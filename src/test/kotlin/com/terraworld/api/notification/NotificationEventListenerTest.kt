@@ -30,7 +30,7 @@ class NotificationEventListenerTest {
         verify(notificationService).append(
             userId = eq("b"),
             type = eq(NotificationType.FRIEND_JOINED),
-            title = eq("👯 친구가 활동했어요"),
+            title = eq("친구가 활동했어요"),
             body = eq("친구가 초대를 수락했어요"),
             route = eq("/friends"),
         )
@@ -68,7 +68,7 @@ class NotificationEventListenerTest {
             notificationService.append(
                 userId = eq("b"),
                 type = eq(NotificationType.FRIEND_JOINED),
-                title = eq("👯 친구가 활동했어요"),
+                title = eq("친구가 활동했어요"),
                 body = eq("msg"),
                 route = eq("/record"),
             ),
