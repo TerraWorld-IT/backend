@@ -8,6 +8,7 @@ import com.terraworld.domain.item.ItemRepository
 import com.terraworld.domain.item.UserItemRepository
 import com.terraworld.domain.record.ActivityRecord
 import com.terraworld.domain.record.RecordRepository
+import com.terraworld.domain.terrarium.HeartRewardRepository
 import com.terraworld.domain.terrarium.Terrarium
 import com.terraworld.domain.terrarium.TerrariumBackground
 import com.terraworld.domain.terrarium.TerrariumPlacementHistoryRepository
@@ -18,12 +19,19 @@ import com.terraworld.domain.terrarium.TierConfigRepository
 import com.terraworld.domain.terrarium.WiltScanProjection
 import com.terraworld.domain.user.User
 import com.terraworld.domain.user.UserRepository
+import com.terraworld.domain.wallet.UserCurrencyBalance
 import com.terraworld.test.FakeJpaRepository
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
+import org.mockito.kotlin.any
+import org.mockito.kotlin.anyOrNull
+import org.mockito.kotlin.never
+import org.mockito.kotlin.verify
+import org.mockito.kotlin.whenever
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.ZoneOffset
 import java.util.Optional
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -41,6 +49,8 @@ class TerrariumServiceTest {
     private lateinit var userRepo: FakeUserRepository
     private lateinit var tierConfigRepo: FakeTierConfigRepository
     private lateinit var recordRepo: FakeRecordRepository
+    private lateinit var heartRewardRepo: FakeHeartRewardRepository
+    private lateinit var currencyService: com.terraworld.api.currency.CurrencyService
     private lateinit var service: TerrariumService
 
     private lateinit var user: User
@@ -52,6 +62,7 @@ class TerrariumServiceTest {
         userRepo = FakeUserRepository()
         tierConfigRepo = FakeTierConfigRepository()
         recordRepo = FakeRecordRepository()
+        heartRewardRepo = FakeHeartRewardRepository()
 
         // getTerrarium 경로에서만 쓰이지만 데이터 제어가 필요 없는 의존성은 mock.
         val terrariumPlacementRepository = org.mockito.Mockito.mock(TerrariumPlacementRepository::class.java)
@@ -60,7 +71,7 @@ class TerrariumServiceTest {
         val terrariumBackgroundRepository = org.mockito.Mockito.mock(com.terraworld.domain.terrarium.TerrariumBackgroundRepository::class.java)
         val placementHistoryRepository = org.mockito.Mockito.mock(TerrariumPlacementHistoryRepository::class.java)
         val entitlementService = org.mockito.Mockito.mock(EntitlementService::class.java)
-        val currencyService = org.mockito.Mockito.mock(com.terraworld.api.currency.CurrencyService::class.java)
+        currencyService = org.mockito.Mockito.mock(com.terraworld.api.currency.CurrencyService::class.java)
         // 낙서장 P1: 하트 보상은 CurrencyService.credit(신 substrate). credit 반환값(신 COIN 잔액)을 응답에 사용.
         org.mockito.kotlin
             .whenever(currencyService.credit(org.mockito.kotlin.any(), org.mockito.kotlin.any(), org.mockito.kotlin.any(), org.mockito.kotlin.any(), org.mockito.kotlin.anyOrNull(), org.mockito.kotlin.anyOrNull()))
@@ -81,6 +92,8 @@ class TerrariumServiceTest {
                 entitlementService,
                 // 티어별 배경(V40): mock → 행 없음 → terrariums.background 폴백 경로
                 org.mockito.Mockito.mock(com.terraworld.domain.terrarium.TerrariumTierBackgroundRepository::class.java),
+                heartRewardRepo,
+                TerrariumProperties(),
             )
 
         user = User(id = "user-1", nickname = "테스터")
@@ -121,6 +134,34 @@ class TerrariumServiceTest {
                 service.heartClick("ghost")
             }
         assertEquals(ErrorCode.USER_NOT_FOUND, ex.errorCode)
+    }
+
+    @Test
+    fun `heartClick 같은 KST 날짜의 11번째 하트 — reward 0이고 코인을 지급하지 않는다`() {
+        val firstHalfHourKst =
+            KstTime
+                .today()
+                .atTime(0, 30)
+                .atZone(KstTime.ZONE)
+                .withZoneSameInstant(ZoneOffset.UTC)
+                .toLocalDateTime()
+        repeat(10) { heartRewardRepo.grantedAt += firstHalfHourKst }
+        whenever(currencyService.balances("user-1"))
+            .thenReturn(listOf(UserCurrencyBalance("user-1", "COIN", amount = 110L)))
+
+        val response = service.heartClick("user-1")
+
+        assertEquals(0.0, response.reward)
+        assertEquals(110.0, response.updatedBasicCoins)
+        verify(currencyService, never())
+            .credit(
+                any(),
+                any(),
+                any(),
+                any(),
+                anyOrNull(),
+                anyOrNull(),
+            )
     }
 
     // ─── getTerrarium ──────────────────────────────────────────
@@ -235,6 +276,18 @@ class TerrariumServiceTest {
     }
 
     // ─── Fakes ─────────────────────────────────────────────────
+
+    private class FakeHeartRewardRepository : HeartRewardRepository {
+        val grantedAt = mutableListOf<LocalDateTime>()
+
+        override fun countGrantedRewards(
+            userId: String,
+            dayStartUtc: LocalDateTime,
+            nextDayStartUtc: LocalDateTime,
+        ): Long = grantedAt.count { !it.isBefore(dayStartUtc) && it.isBefore(nextDayStartUtc) }.toLong()
+
+        override fun acquireDailyLock(key: String): Int = 1
+    }
 
     private class FakeTerrariumRepository :
         FakeJpaRepository<Terrarium, Long>(),

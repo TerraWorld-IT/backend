@@ -17,6 +17,7 @@ import org.springframework.transaction.event.TransactionalEventListener
  *  1) [FriendActivityEvent]: 친구 신규 기록 / invite 수락 / 습관 함께 시작·체크인 → FRIEND_JOINED
  *  2) [PaymentCompletedEvent]: IAP verify / RTDN webhook 의 결제 승인 확정(grant) → PAYMENT
  *  3) [HabitCheerEvent]: 습관 응원 수신 → CHEER
+ *  4) [AttendanceCycleCompletedEvent]: 7일 출석 사이클 완주 → SYSTEM
  *
  * 본 listener 는 FcmEventListener 와 동일하게 `@Async` + `@TransactionalEventListener(AFTER_COMMIT,
  * fallbackExecution=true)` — 알림함 저장 실패가 도메인 tx rollback 을 유발하지 않고, **커밋 확정
@@ -61,6 +62,21 @@ class NotificationEventListener(
                 route = null,
             )
         }.onFailure { log.warn("notification.append.fail type=PAYMENT to={} — {}", event.userId, it.message) }
+    }
+
+    /** 7일 출석 사이클 완주 보너스 지급 확정 → SYSTEM 알림함 적재. */
+    @Async("fcmExecutor")
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
+    fun onAttendanceCycleCompleted(event: AttendanceCycleCompletedEvent) {
+        runCatching {
+            notificationService.append(
+                userId = event.userId,
+                type = NotificationType.SYSTEM,
+                title = "7일 출석 완주!",
+                body = "보너스 루비를 받았어요",
+                route = null,
+            )
+        }.onFailure { log.warn("notification.append.fail type=SYSTEM to={} — {}", event.userId, it.message) }
     }
 
     /** 아프젝 v2: 친구 습관 요청 도착/수락/거절·취소/상대 중단/연장 요청 → HABIT (route /record). */
@@ -139,4 +155,9 @@ data class PaymentCompletedEvent(
     val userId: String,
     /** 부여된 entitlement key — 알림 본문에는 노출하지 않고 로깅/후속 확장용. */
     val entitlementKey: String,
+)
+
+/** 7일 출석 사이클의 마지막 보상 지급 트랜잭션에서 한 번 발행한다. */
+data class AttendanceCycleCompletedEvent(
+    val userId: String,
 )

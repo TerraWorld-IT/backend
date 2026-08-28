@@ -99,6 +99,8 @@ class TerrariumActiveTierServiceTest {
                 mock(TerrariumPlacementHistoryRepository::class.java),
                 entitlementService,
                 tierBackgroundRepo,
+                mock(com.terraworld.domain.terrarium.HeartRewardRepository::class.java),
+                TerrariumProperties(),
             )
         placementService = PlacementService(placementRepo, entitlementService)
 

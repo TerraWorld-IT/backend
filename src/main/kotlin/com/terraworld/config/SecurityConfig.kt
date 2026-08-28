@@ -25,8 +25,8 @@ import org.springframework.web.filter.CorsFilter
  * - Authentication: stateless; JWTs are validated by [JwtAuthenticationFilter].
  * - CSRF: disabled (no session cookies) — relies on Bearer tokens.
  * - CORS: profile-scoped allow-list. Production does NOT trust localhost.
- * - permitAll 경로(의도된 설계): `/api/v1/internal/...`, `/api/v1/webhooks/...`,
- *   `/api/v1/rewards/ad/ssv-callback` 은 Spring 레이어에서 인증을 요구하지 않는다.
+ * - permitAll 경로(의도된 설계): `/api/v1/health`, `/api/v1/internal/...`,
+ *   `/api/v1/webhooks/...`, `/api/v1/rewards/ad/ssv-callback` 은 Spring 레이어에서 인증을 요구하지 않는다.
  *   각 경로의 실 인증 게이트는 컨트롤러 안에 있다 —
  *   internal 은 X-Internal-Token 공유 시크릿(constant-time 비교), webhooks 는 공유 토큰,
  *   SSV 콜백은 ECDSA 서명검증.
@@ -56,6 +56,9 @@ class SecurityConfig(
             .sessionManagement { it.sessionCreationPolicy(SessionCreationPolicy.STATELESS) }
             .authorizeHttpRequests { auth ->
                 auth
+                    // OpenAPI 공개 계약: 서비스 상태 확인은 인증 토큰 없이 호출할 수 있어야 한다.
+                    .requestMatchers(HttpMethod.GET, "/api/v1/health")
+                    .permitAll()
                     // ARCH-02 (2026-07-29 주석 정정): 아래 permitAll 은 **의도된 설계**이며
                     // Spring Security 는 이 경로를 전혀 차단하지 않는다 (이전 주석의
                     // "Block unauthenticated access here" 서술은 코드와 반대였음).

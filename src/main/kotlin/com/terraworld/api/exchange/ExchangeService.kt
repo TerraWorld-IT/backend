@@ -1,9 +1,15 @@
 package com.terraworld.api.exchange
 
+import com.terraworld.domain.exchange.ExchangeRateRepository
+import io.terraworld.api.model.ExchangeRateListResponse
+import io.terraworld.api.model.ExchangeRateResponse
 import io.terraworld.api.model.ExchangeResult
 import org.springframework.dao.DataIntegrityViolationException
 import org.springframework.orm.ObjectOptimisticLockingFailureException
 import org.springframework.stereotype.Service
+import org.springframework.transaction.annotation.Transactional
+import java.math.BigDecimal
+import java.math.RoundingMode
 
 /**
  * 재화 교환 진입점 (낙서장 P1, 7화폐 directed exchange).
@@ -14,6 +20,7 @@ import org.springframework.stereotype.Service
 @Service
 class ExchangeService(
     private val executor: ExchangeExecutor,
+    private val exchangeRateRepository: ExchangeRateRepository,
 ) {
     companion object {
         const val MAX_RETRY = 3
@@ -37,4 +44,33 @@ class ExchangeService(
             }
         }
     }
+
+    /** 허용된 환전 pair 를 고정된 코드 순서로 반환해 클라이언트 표시를 안정화한다. */
+    @Transactional(readOnly = true)
+    fun getExchangeRates(): ExchangeRateListResponse =
+        ExchangeRateListResponse(
+            rates =
+                exchangeRateRepository
+                    .findAll()
+                    .sortedWith(compareBy({ it.fromCode }, { it.toCode }))
+                    .map { rate ->
+                        ExchangeRateResponse(
+                            from = rate.fromCode,
+                            to = rate.toCode,
+                            rate = rate.rate,
+                            rateLabel = exchangeRateLabel(rate.rate),
+                            feeBps = rate.feeBps,
+                            dailyCap = rate.dailyCap,
+                        )
+                    },
+        )
 }
+
+/** DB 의 출발 재화 1개당 비율을 ExchangeResult 와 사전 환율표가 공유하는 "N:M" 표기로 변환한다. */
+internal fun exchangeRateLabel(rate: BigDecimal): String =
+    if (rate.compareTo(BigDecimal.ONE) < 0) {
+        val inverse = BigDecimal.ONE.divide(rate, 0, RoundingMode.HALF_UP).toLong()
+        "$inverse:1"
+    } else {
+        "1:${rate.setScale(0, RoundingMode.HALF_UP).toLong()}"
+    }

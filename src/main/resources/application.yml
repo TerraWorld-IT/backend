@@ -125,6 +125,11 @@ reward:
     nonce:
       required: ${REWARD_AD_NONCE_REQUIRED:true}
 
+# 하트 코인 보상은 사용자별 KST 하루 지급 횟수만 제한한다. 클릭 응답 자체는 200 + reward 0 을 유지한다.
+terrarium:
+  heart:
+    daily-cap: ${TERRARIUM_HEART_DAILY_CAP:10}
+
 # 아프젝 v2 (2026-08-23) — 출석 보드 / 초대 루비 / 습관 보상 / 키우기 사이클 설정.
 # 계약 SoT: docs/root/plans/2026-08-23-apjek-v2-api-contract.md (rev2). 바인딩 클래스는 각 도메인 패키지의
 # *Properties (AttendanceProperties / InviteRewardProperties / HabitProperties / GrowthProperties).
@@ -202,3 +207,8 @@ reward:
   ad:
     nonce:
       required: ${REWARD_AD_NONCE_REQUIRED:true}
+
+# 운영도 개발과 같은 기본 상한을 사용하며 환경변수로 명시 조정할 수 있다.
+terrarium:
+  heart:
+    daily-cap: ${TERRARIUM_HEART_DAILY_CAP:10}

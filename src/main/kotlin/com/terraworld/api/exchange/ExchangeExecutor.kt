@@ -112,17 +112,8 @@ class ExchangeExecutor(
             grossToAmount = gross,
             feeAmount = fee,
             toAmount = net,
-            rate = rateLabel(rate.rate),
+            rate = exchangeRateLabel(rate.rate),
             updatedCurrency = currencyService.currencyResponse(userId),
         )
     }
-
-    /** rate(BigDecimal) → "N:M" 표기. 예 0.1 → "10:1", 50 → "1:50". */
-    private fun rateLabel(rate: BigDecimal): String =
-        if (rate.compareTo(BigDecimal.ONE) < 0) {
-            val inv = BigDecimal.ONE.divide(rate, 0, RoundingMode.HALF_UP).toLong()
-            "$inv:1"
-        } else {
-            "1:${rate.setScale(0, RoundingMode.HALF_UP).toLong()}"
-        }
 }

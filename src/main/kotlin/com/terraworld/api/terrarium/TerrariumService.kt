@@ -7,6 +7,7 @@ import com.terraworld.domain.item.ItemLayout
 import com.terraworld.domain.item.ItemRepository
 import com.terraworld.domain.item.UserItemRepository
 import com.terraworld.domain.record.RecordRepository
+import com.terraworld.domain.terrarium.HeartRewardRepository
 import com.terraworld.domain.terrarium.TerrariumBackground
 import com.terraworld.domain.terrarium.TerrariumBackgroundRepository
 import com.terraworld.domain.terrarium.TerrariumPlacement
@@ -26,6 +27,7 @@ import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.LocalDateTime
+import java.time.ZoneOffset
 import java.time.temporal.ChronoUnit
 import io.terraworld.api.model.FreePlacementItem as ApiFreePlacementItem
 
@@ -69,6 +71,8 @@ class TerrariumService(
     private val entitlementService: com.terraworld.api.entitlement.EntitlementService,
     // 아프젝 v2 후속(V40): 티어별 배경 — 표시 중 병의 배경 행 조회/upsert
     private val tierBackgroundRepository: TerrariumTierBackgroundRepository,
+    private val heartRewardRepository: HeartRewardRepository,
+    private val properties: TerrariumProperties,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
@@ -80,6 +84,10 @@ class TerrariumService(
 
         /** 알 수 없는 티어의 슬롯 폴백 (구 level_configs 기본값과 동일) */
         private const val DEFAULT_SLOTS = 6
+
+        private const val HEART_REWARD_COINS = 1L
+        private const val HEART_REWARD_REF_TYPE = "HEART"
+        private const val HEART_REWARD_LOCK_PREFIX = "heart-reward"
     }
 
     @Transactional(readOnly = true)
@@ -411,6 +419,32 @@ class TerrariumService(
         userRepository
             .findById(userId)
             .orElseThrow { BusinessException(ErrorCode.USER_NOT_FOUND) } // 존재 검증
+
+        val today = KstTime.today()
+        heartRewardRepository.acquireDailyLock("$HEART_REWARD_LOCK_PREFIX|$userId|$today")
+        // wallet_transactions.created_at 은 UTC wall-clock 으로 저장되므로 KST 하루 경계를 UTC 로 변환해 조회한다.
+        val dayStartUtc =
+            today
+                .atStartOfDay(KstTime.ZONE)
+                .withZoneSameInstant(ZoneOffset.UTC)
+                .toLocalDateTime()
+        val nextDayStartUtc =
+            today
+                .plusDays(1)
+                .atStartOfDay(KstTime.ZONE)
+                .withZoneSameInstant(ZoneOffset.UTC)
+                .toLocalDateTime()
+        val grantedToday = heartRewardRepository.countGrantedRewards(userId, dayStartUtc, nextDayStartUtc)
+
+        if (grantedToday >= properties.heart.dailyCap) {
+            val currentCoinBalance =
+                currencyService
+                    .balances(userId)
+                    .firstOrNull { it.currencyCode == com.terraworld.domain.currency.CurrencyCode.COIN }
+                    ?.amount ?: 0L
+            return HeartResponse(reward = 0.0, updatedBasicCoins = currentCoinBalance.toDouble())
+        }
+
         // 아프젝 v2 후속: 하트 보상 자체는 병(티어)과 무관한 사용자 단위 보상 — 스코프는 두지 않고,
         // 원장 refKey 에 표시 중 병을 덧붙여 "어느 병을 보며 눌렀는가" 흔적만 남긴다 (테라리움 부재 시 userId 만).
         val activeTier = terrariumRepository.findByUserId(userId).map { it.activeTier }.orElse(null)
@@ -420,19 +454,18 @@ class TerrariumService(
         //   - DB schema 유지 (BIGINT)
         //   - response 의 `reward` 와 `updatedBasicCoins` 가 실 DB state 와 정확히 일치
         // 어뷰징 cooldown 정책은 별 cycle (현재 client side throttle 만 존재).
-        val rewardCoins = 1L
         // 낙서장 P1: 하트 보상 = 신 substrate COIN credit 단일 SoT. credit 반환값(신 잔액)을 응답에 사용.
         val newCoinBalance =
             currencyService.credit(
                 userId,
                 com.terraworld.domain.currency.CurrencyCode.COIN,
-                rewardCoins,
+                HEART_REWARD_COINS,
                 com.terraworld.api.wallet.WalletTransactionService.REASON_RECORD_REWARD,
-                "HEART",
+                HEART_REWARD_REF_TYPE,
                 refKey,
             )
         return HeartResponse(
-            reward = rewardCoins.toDouble(),
+            reward = HEART_REWARD_COINS.toDouble(),
             updatedBasicCoins = newCoinBalance.toDouble(),
         )
     }

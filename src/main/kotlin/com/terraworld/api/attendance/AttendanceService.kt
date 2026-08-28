@@ -1,5 +1,6 @@
 package com.terraworld.api.attendance
 
+import com.terraworld.api.notification.AttendanceCycleCompletedEvent
 import com.terraworld.api.user.WalletBuilder
 import com.terraworld.common.audit.AuditService
 import com.terraworld.common.exception.BusinessException
@@ -12,6 +13,7 @@ import io.terraworld.api.model.AttendanceBoardDay
 import io.terraworld.api.model.AttendanceCheckInResponse
 import io.terraworld.api.model.AttendanceCheckInResponseReward
 import io.terraworld.api.model.AttendanceResponse
+import org.springframework.context.ApplicationEventPublisher
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.time.LocalDate
@@ -38,6 +40,7 @@ class AttendanceService(
     private val auditService: AuditService,
     // N2 (구현 계획서 v4): 출석 보상 시 wallet_transactions 원장 기록
     private val walletTransactionService: com.terraworld.api.wallet.WalletTransactionService,
+    private val eventPublisher: ApplicationEventPublisher,
     private val properties: AttendanceProperties,
 ) {
     companion object {
@@ -117,6 +120,11 @@ class AttendanceService(
                     "rubyBonus" to rubyBonus,
                 ),
         )
+
+        // 7일차 지급이 포함된 트랜잭션이 커밋된 뒤 알림함에 SYSTEM 알림을 한 번만 적재한다.
+        if (bonus) {
+            eventPublisher.publishEvent(AttendanceCycleCompletedEvent(userId))
+        }
 
         return AttendanceCheckInResponse(
             reward = AttendanceCheckInResponseReward(basicCoins = reward, bonus = bonus, rubyBonus = rubyBonus),

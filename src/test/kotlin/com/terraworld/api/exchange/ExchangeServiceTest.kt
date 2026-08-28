@@ -1,5 +1,9 @@
 package com.terraworld.api.exchange
 
+import com.terraworld.domain.exchange.ExchangeRate
+import com.terraworld.domain.exchange.ExchangeRateId
+import com.terraworld.domain.exchange.ExchangeRateRepository
+import com.terraworld.test.FakeJpaRepository
 import io.terraworld.api.model.CurrencyResponse
 import io.terraworld.api.model.ExchangeResult
 import org.junit.jupiter.api.Test
@@ -10,6 +14,7 @@ import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 import org.springframework.orm.ObjectOptimisticLockingFailureException
+import java.math.BigDecimal
 import kotlin.test.assertEquals
 
 /**
@@ -18,7 +23,8 @@ import kotlin.test.assertEquals
  */
 class ExchangeServiceTest {
     private val executor = mock(ExchangeExecutor::class.java)
-    private val service = ExchangeService(executor)
+    private val rateRepository = FakeExchangeRateRepository()
+    private val service = ExchangeService(executor, rateRepository)
 
     private val sample =
         ExchangeResult(
@@ -54,5 +60,32 @@ class ExchangeServiceTest {
             service.exchange("u", "DEW", "COIN", 100)
         }
         verify(executor, times(3)).execute(any(), any(), any(), any())
+    }
+
+    @Test
+    fun `허용 환율표는 pair 순서와 환율 수수료 일일 한도를 모두 반환`() {
+        rateRepository.save(ExchangeRate("RUBY", "COIN", BigDecimal("50.000000"), 0, 100))
+        rateRepository.save(ExchangeRate("DEW", "COIN", BigDecimal("0.100000"), 1000, 500))
+
+        val rates = service.getExchangeRates().rates
+
+        assertEquals(listOf("DEW->COIN", "RUBY->COIN"), rates.map { "${it.from}->${it.to}" })
+        assertEquals(BigDecimal("0.100000"), rates[0].rate)
+        assertEquals("10:1", rates[0].rateLabel)
+        assertEquals(1000, rates[0].feeBps)
+        assertEquals(500, rates[0].dailyCap)
+        assertEquals("1:50", rates[1].rateLabel)
+    }
+
+    /** 실제 JPA 저장소와 같은 findAll 계약을 쓰는 인메모리 환율 저장소. */
+    private class FakeExchangeRateRepository :
+        FakeJpaRepository<ExchangeRate, ExchangeRateId>(),
+        ExchangeRateRepository {
+        override fun extractId(entity: ExchangeRate): ExchangeRateId = ExchangeRateId(entity.fromCode, entity.toCode)
+
+        override fun findByFromCodeAndToCode(
+            fromCode: String,
+            toCode: String,
+        ): ExchangeRate? = store.values.firstOrNull { it.fromCode == fromCode && it.toCode == toCode }
     }
 }

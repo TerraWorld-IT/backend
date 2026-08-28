@@ -1,6 +1,7 @@
 package com.terraworld.api.attendance
 
 import com.terraworld.api.currency.CurrencyService
+import com.terraworld.api.notification.AttendanceCycleCompletedEvent
 import com.terraworld.api.user.WalletBuilder
 import com.terraworld.common.audit.AuditService
 import com.terraworld.common.exception.BusinessException
@@ -22,6 +23,7 @@ import org.mockito.kotlin.eq
 import org.mockito.kotlin.never
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
+import org.springframework.context.ApplicationEventPublisher
 import java.time.LocalDate
 import java.util.Optional
 import kotlin.test.assertEquals
@@ -41,6 +43,7 @@ class AttendanceServiceTest {
     private lateinit var userRepo: FakeUserRepository
     private lateinit var attendanceRepo: FakeAttendanceLogRepository
     private lateinit var currencyService: CurrencyService
+    private lateinit var eventPublisher: ApplicationEventPublisher
     private lateinit var service: AttendanceService
 
     private val today: LocalDate = KstTime.today()
@@ -56,6 +59,7 @@ class AttendanceServiceTest {
         val walletBuilder = WalletBuilder(currencyService)
         val auditService = mock(AuditService::class.java)
         val walletTransactionService = mock(com.terraworld.api.wallet.WalletTransactionService::class.java)
+        eventPublisher = mock(ApplicationEventPublisher::class.java)
 
         service =
             AttendanceService(
@@ -65,6 +69,7 @@ class AttendanceServiceTest {
                 walletBuilder,
                 auditService,
                 walletTransactionService,
+                eventPublisher,
                 AttendanceProperties(),
             )
 
@@ -124,6 +129,7 @@ class AttendanceServiceTest {
         assertTrue(r.attendance.board.all { it.claimed })
         verify(currencyService).credit(eq("user-1"), eq("COIN"), eq(70L), any(), anyOrNull(), anyOrNull())
         verify(currencyService).credit(eq("user-1"), eq("RUBY"), eq(5L), any(), anyOrNull(), anyOrNull())
+        verify(eventPublisher).publishEvent(AttendanceCycleCompletedEvent("user-1"))
     }
 
     @Test

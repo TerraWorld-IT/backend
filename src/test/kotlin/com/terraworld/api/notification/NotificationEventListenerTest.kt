@@ -49,6 +49,18 @@ class NotificationEventListenerTest {
     }
 
     @Test
+    fun `AttendanceCycleCompletedEvent — 7일차 완주 사용자에게 SYSTEM 보너스 알림`() {
+        listener.onAttendanceCycleCompleted(AttendanceCycleCompletedEvent(userId = "user-1"))
+        verify(notificationService).append(
+            userId = eq("user-1"),
+            type = eq(NotificationType.SYSTEM),
+            title = eq("7일 출석 완주!"),
+            body = eq("보너스 루비를 받았어요"),
+            route = eq(null),
+        )
+    }
+
+    @Test
     fun `HabitCheerEvent — 수신자에게 CHEER + 발신 닉네임 title`() {
         listener.onHabitCheer(
             HabitCheerEvent(fromUserId = "a", toUserId = "b", fromNickname = "태겸", message = "화이팅!"),
