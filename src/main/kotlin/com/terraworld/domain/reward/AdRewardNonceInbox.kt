@@ -11,18 +11,11 @@ import org.springframework.data.repository.query.Param
 import java.time.LocalDateTime
 
 /**
- * N9 (구현 계획서 v4, 2026-05-26): AdMob reward nonce 중복 사용 dedup inbox.
+ * 광고 보상 nonce 수명주기 inbox.
  *
- * Codex audit (Q2/Q5) 반영:
- *   - WebhookInbox (N11) 와 도메인 분리: reward 정책이 billing webhook 과 결합되면
- *     향후 AdMob 외 광고 SDK 추가 시 webhook_inbox 컬럼이 더러워짐
- *   - lifecycle 분리 (created_at / expires_at / consumed_at) — server-issued pending
- *     nonce 도입 시 TTL 검증 가능
- *   - transaction_id 별도 unique partial index — AdMob SSV callback 매핑
- *
- * 외부 AdMob SSV public key 활성화 전에도 client-issued nonce (UUID v4) 의 one-time-use
- * guarantee 만으로 단순 replay attack 차단. SSV signature 검증 (ECDSA P-256 SHA-256) 은
- * 별도 endpoint `/rewards/ad/ssv-callback` 의 raw query string layer — 본 inbox 는 dedup 만.
+ * legacy/shadow 에서는 기존 CLIENT nonce 를 즉시 소비할 수 있다. authoritative 에서는 서버가
+ * 발급한 SERVER nonce 만 PENDING -> VERIFIED(서명 검증 SSV) -> CONSUMED 순서로 전이한다.
+ * transaction_id unique 제약과 nonce PK가 SSV 및 client 재시도를 각각 한 번으로 제한한다.
  */
 @Entity
 @Table(name = "ad_reward_nonce_inbox")
@@ -36,93 +29,211 @@ class AdRewardNonceInbox(
     val source: String = SOURCE_CLIENT,
     @Column(name = "transaction_id", length = 128)
     val transactionId: String? = null,
+    @Column(name = "purpose", nullable = false, length = 32)
+    val purpose: String = PURPOSE_AD_REWARD,
+    @Column(name = "status", nullable = false, length = 16)
+    val status: String = STATUS_CONSUMED,
     @Column(name = "created_at", nullable = false, updatable = false)
     val createdAt: LocalDateTime = LocalDateTime.now(),
     @Column(name = "expires_at")
     val expiresAt: LocalDateTime? = null,
-    @Column(name = "consumed_at", nullable = false, updatable = false)
-    val consumedAt: LocalDateTime = LocalDateTime.now(),
+    @Column(name = "verified_at")
+    val verifiedAt: LocalDateTime? = null,
+    @Column(name = "consumed_at")
+    val consumedAt: LocalDateTime? = LocalDateTime.now(),
 ) {
     companion object {
         const val SOURCE_CLIENT = "CLIENT"
         const val SOURCE_SSV_CALLBACK = "SSV_CALLBACK"
+        const val SOURCE_SERVER = "SERVER"
 
-        /** 용도(V39 purpose 컬럼): 광고 보상 지급 / 키우기 되살리기(보상 지급 없음, nonce 소비만). */
         const val PURPOSE_AD_REWARD = "AD_REWARD"
         const val PURPOSE_GROWTH_REVIVE = "GROWTH_REVIVE"
+
+        const val STATUS_PENDING = "PENDING"
+        const val STATUS_VERIFIED = "VERIFIED"
+        const val STATUS_CONSUMED = "CONSUMED"
+        const val STATUS_EXPIRED = "EXPIRED"
     }
 }
 
 interface AdRewardNonceInboxRepository : JpaRepository<AdRewardNonceInbox, String> {
-    /**
-     * N11 WebhookInbox 와 동일 패턴 — 원자적 insert. 같은 nonce 동시 도착 시 한 쪽만
-     * 1 (inserted), 다른 쪽 0 (conflict) 반환. check-then-insert race 회피.
-     *
-     * @return 1 = 신규 nonce / 0 = 이미 사용된 nonce (중복 → NONCE_ALREADY_CONSUMED throw)
-     */
-    @Modifying
+    /** 같은 사용자·용도의 nonce 발급을 직렬화한다. */
     @Query(
-        value =
-            """
-            INSERT INTO ad_reward_nonce_inbox (nonce, user_id, source, consumed_at)
-            VALUES (:nonce, :userId, :source, NOW())
-            ON CONFLICT (nonce) DO NOTHING
-            """,
+        value = "SELECT 1 FROM (SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))) AS _lock",
         nativeQuery = true,
     )
-    fun insertIfAbsent(
-        @Param("nonce") nonce: String,
-        @Param("userId") userId: String,
-        @Param("source") source: String,
+    fun acquireIssueLock(
+        @Param("key") key: String,
     ): Int
 
-    /**
-     * 아프젝 v2: 용도(purpose) 바인딩 소비 — 키우기 되살리기(GROWTH_REVIVE) 등 광고 보상 지급이 없는 경로.
-     * nonce 가 PK 라 AD_REWARD 로 소비된 nonce 를 GROWTH_REVIVE 로 재사용(또는 그 역)하는 것도 0 으로 막힌다.
-     * @return 1 = 신규 소비 / 0 = 이미 사용된 nonce
-     */
+    /** 같은 SSV transaction 처리와 transaction_id unique 확인을 직렬화한다. */
+    @Query(
+        value = "SELECT 1 FROM (SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))) AS _lock",
+        nativeQuery = true,
+    )
+    fun acquireSsvTransactionLock(
+        @Param("key") key: String,
+    ): Int
+
     @Modifying
     @Query(
         value =
             """
-            INSERT INTO ad_reward_nonce_inbox (nonce, user_id, source, purpose, consumed_at)
-            VALUES (:nonce, :userId, :source, :purpose, NOW())
+            UPDATE ad_reward_nonce_inbox
+               SET status = 'EXPIRED'
+             WHERE user_id = :userId
+               AND purpose = :purpose
+               AND source = 'SERVER'
+               AND status IN ('PENDING', 'VERIFIED')
+               AND expires_at < :now
+            """,
+        nativeQuery = true,
+    )
+    fun expireIssued(
+        @Param("userId") userId: String,
+        @Param("purpose") purpose: String,
+        @Param("now") now: LocalDateTime,
+    ): Int
+
+    @Query(
+        """
+        SELECT nonce
+          FROM AdRewardNonceInbox nonce
+         WHERE nonce.userId = :userId
+           AND nonce.purpose = :purpose
+           AND nonce.source = 'SERVER'
+           AND nonce.status IN ('PENDING', 'VERIFIED')
+           AND nonce.expiresAt >= :now
+         ORDER BY nonce.createdAt DESC
+        """,
+    )
+    fun findActiveIssued(
+        @Param("userId") userId: String,
+        @Param("purpose") purpose: String,
+        @Param("now") now: LocalDateTime,
+    ): List<AdRewardNonceInbox>
+
+    /** legacy/shadow 클라이언트 nonce 를 원자적으로 즉시 소비한다. */
+    @Modifying
+    @Query(
+        value =
+            """
+            INSERT INTO ad_reward_nonce_inbox
+                (nonce, user_id, source, purpose, status, consumed_at)
+            VALUES
+                (:nonce, :userId, :source, :purpose, 'CONSUMED', NOW())
             ON CONFLICT (nonce) DO NOTHING
             """,
         nativeQuery = true,
     )
-    fun insertIfAbsentWithPurpose(
+    fun insertLegacyIfAbsent(
         @Param("nonce") nonce: String,
         @Param("userId") userId: String,
         @Param("source") source: String,
         @Param("purpose") purpose: String,
     ): Int
 
+    /** legacy/shadow 에서 서버 발급 nonce 를 SSV보다 먼저 사용할 수 있게 한다. */
+    @Modifying
+    @Query(
+        value =
+            """
+            UPDATE ad_reward_nonce_inbox
+               SET status = 'CONSUMED', consumed_at = :now
+             WHERE nonce = :nonce
+               AND user_id = :userId
+               AND purpose = :purpose
+               AND source = 'SERVER'
+               AND status IN ('PENDING', 'VERIFIED')
+               AND consumed_at IS NULL
+               AND expires_at >= :now
+            """,
+        nativeQuery = true,
+    )
+    fun consumeIssuedWithoutVerification(
+        @Param("nonce") nonce: String,
+        @Param("userId") userId: String,
+        @Param("purpose") purpose: String,
+        @Param("now") now: LocalDateTime,
+    ): Int
+
+    /** authoritative 에서 SSV 검증 완료 nonce 만 소비한다. */
+    @Modifying
+    @Query(
+        value =
+            """
+            UPDATE ad_reward_nonce_inbox
+               SET status = 'CONSUMED', consumed_at = :now
+             WHERE nonce = :nonce
+               AND user_id = :userId
+               AND purpose = :purpose
+               AND source = 'SERVER'
+               AND status = 'VERIFIED'
+               AND verified_at IS NOT NULL
+               AND transaction_id IS NOT NULL
+               AND consumed_at IS NULL
+               AND expires_at >= :now
+            """,
+        nativeQuery = true,
+    )
+    fun consumeVerifiedIssued(
+        @Param("nonce") nonce: String,
+        @Param("userId") userId: String,
+        @Param("purpose") purpose: String,
+        @Param("now") now: LocalDateTime,
+    ): Int
+
     /**
-     * SSV callback 전용 insert — `transaction_id` 컬럼을 실제로 바인딩한다.
-     *
-     * 기존 insertIfAbsent 로 SSV 를 기록하면 transactionId 가 nonce 슬롯에만 들어가고
-     * transaction_id 는 NULL → V21 `chk_ad_reward_nonce_ssv_tx` CHECK 위반으로 정상 콜백마다
-     * 실패했다(2026-07-20 audit B2-1, SSV 활성 시 발현). 또한 nonce PK 를 raw transactionId 로
-     * 선점하면 향후 client 가 같은 값을 nonce 로 claim 할 때 NONCE_ALREADY_CONSUMED 오충돌이
-     * 생기므로 nonce 슬롯은 `ssv:` prefix 로 네임스페이스를 분리한다.
-     *
-     * ON CONFLICT 무타깃 — nonce PK replay 뿐 아니라 uq_ad_reward_nonce_tx_id(부분 unique)
-     * 충돌(예: CLIENT 행이 이미 같은 transaction_id 와 매핑된 경우)도 0 으로 흡수한다.
-     *
-     * @return 1 = 신규 기록 / 0 = replay 또는 기존 매핑 존재
+     * 서명 검증을 통과한 SSV transaction 을 서버 발급 nonce 에 결합한다.
+     * shadow 에서 이미 소비된 SERVER nonce 는 상태를 되돌리지 않고 검증 시각만 기록한다.
      */
     @Modifying
     @Query(
         value =
             """
-            INSERT INTO ad_reward_nonce_inbox (nonce, user_id, source, transaction_id, consumed_at)
-            VALUES (CONCAT('ssv:', :transactionId), :userId, 'SSV_CALLBACK', :transactionId, NOW())
+            UPDATE ad_reward_nonce_inbox
+               SET transaction_id = :transactionId,
+                   verified_at = COALESCE(verified_at, :now),
+                   status = CASE WHEN status = 'PENDING' THEN 'VERIFIED' ELSE status END
+             WHERE nonce = :nonce
+               AND user_id = :userId
+               AND source = 'SERVER'
+               AND (
+                    (transaction_id = :transactionId AND verified_at IS NOT NULL)
+                    OR (
+                        transaction_id IS NULL
+                        AND expires_at >= :now
+                        AND status IN ('PENDING', 'CONSUMED')
+                    )
+               )
+            """,
+        nativeQuery = true,
+    )
+    fun verifyIssued(
+        @Param("nonce") nonce: String,
+        @Param("userId") userId: String,
+        @Param("transactionId") transactionId: String,
+        @Param("now") now: LocalDateTime,
+    ): Int
+
+    fun findByTransactionId(transactionId: String): AdRewardNonceInbox?
+
+    /** 서버 발급 nonce 와 결합되지 않은 정상 SSV도 transaction dedup 감사 행으로 남긴다. */
+    @Modifying
+    @Query(
+        value =
+            """
+            INSERT INTO ad_reward_nonce_inbox
+                (nonce, user_id, source, transaction_id, purpose, status, verified_at, consumed_at)
+            VALUES
+                (:syntheticNonce, :userId, 'SSV_CALLBACK', :transactionId, 'AD_REWARD', 'CONSUMED', NOW(), NOW())
             ON CONFLICT DO NOTHING
             """,
         nativeQuery = true,
     )
-    fun insertSsvIfAbsent(
+    fun insertDetachedSsvIfAbsent(
+        @Param("syntheticNonce") syntheticNonce: String,
         @Param("transactionId") transactionId: String,
         @Param("userId") userId: String,
     ): Int

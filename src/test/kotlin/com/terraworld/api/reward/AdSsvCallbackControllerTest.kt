@@ -1,7 +1,6 @@
 package com.terraworld.api.reward
 
 import com.terraworld.common.audit.AuditService
-import com.terraworld.domain.reward.AdRewardNonceInboxRepository
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
@@ -13,104 +12,198 @@ import org.mockito.kotlin.whenever
 import org.springframework.mock.web.MockHttpServletRequest
 import kotlin.test.assertEquals
 
-/**
- * P1-1 (출시 BLOCKING): AdMob SSV 콜백 적대적 단위 테스트 (공개·무인증 endpoint).
- *
- * 위조 SSV 방어 순서: malformed → missing-params → timestamp 신선도 → ad_unit allowlist →
- *   ECDSA 서명 → transaction_id 길이/ dedup. 각 거부 분기를 검증.
- */
 class AdSsvCallbackControllerTest {
     private val verifier: AdSsvSignatureVerifier = mock()
-    private val nonceInboxRepository: AdRewardNonceInboxRepository = mock()
+    private val nonceService: AdRewardNonceService = mock()
     private val auditService: AuditService = mock()
 
     private fun controller(
+        mode: String = "legacy",
         toleranceMs: Long = 300_000,
         allowlistCsv: String = "",
-    ) = AdSsvCallbackController(verifier, nonceInboxRepository, auditService, toleranceMs, allowlistCsv)
+    ) = AdSsvCallbackController(
+        verifier,
+        nonceService,
+        auditService,
+        AdRewardPolicy(mode),
+        toleranceMs,
+        allowlistCsv,
+    )
 
     private fun request(
         signature: String? = "SIG",
         keyId: String? = "1",
         transactionId: String? = "tx-1",
         userId: String? = "user-1",
-        timestamp: String? = null,
-        adUnit: String? = null,
+        timestamp: String? = System.currentTimeMillis().toString(),
+        adUnit: String? = "ca-app/allowed",
+        customData: String? = VALID_NONCE,
         includeSignatureInQuery: Boolean = true,
+        unsignedSuffix: String? = null,
     ): MockHttpServletRequest {
-        val req = MockHttpServletRequest()
-        val qs = StringBuilder("transaction_id=${transactionId ?: ""}&user_id=${userId ?: ""}")
-        if (includeSignatureInQuery) qs.append("&signature=${signature ?: ""}")
-        req.queryString = qs.toString()
-        signature?.let { req.setParameter("signature", it) }
-        keyId?.let { req.setParameter("key_id", it) }
-        transactionId?.let { req.setParameter("transaction_id", it) }
-        userId?.let { req.setParameter("user_id", it) }
-        timestamp?.let { req.setParameter("timestamp", it) }
-        adUnit?.let { req.setParameter("ad_unit", it) }
-        return req
+        val request = MockHttpServletRequest()
+        val signedParts = mutableListOf("transaction_id=${transactionId ?: ""}", "user_id=${userId ?: ""}")
+        timestamp?.let { signedParts += "timestamp=$it" }
+        customData?.let { signedParts += "custom_data=$it" }
+        adUnit?.let { signedParts += "ad_unit=$it" }
+        val query = StringBuilder(signedParts.joinToString("&"))
+        if (includeSignatureInQuery) {
+            query.append("&signature=${signature ?: ""}&key_id=${keyId ?: ""}")
+        }
+        unsignedSuffix?.let { query.append("&$it") }
+        request.queryString = query.toString()
+
+        signature?.let { request.setParameter("signature", it) }
+        keyId?.let { request.setParameter("key_id", it) }
+        transactionId?.let { request.setParameter("transaction_id", it) }
+        userId?.let { request.setParameter("user_id", it) }
+        timestamp?.let { request.setParameter("timestamp", it) }
+        adUnit?.let { request.setParameter("ad_unit", it) }
+        customData?.let { request.setParameter("custom_data", it) }
+        return request
     }
 
     @Test
-    fun `signature param 없는 query 는 400 (malformed)`() {
-        val res = controller().handleSsv(request(includeSignatureInQuery = false))
-        assertEquals(400, res.statusCode.value())
+    fun `signature param 없는 query 는 400`() {
+        val response = controller().handleSsv(request(includeSignatureInQuery = false))
+        assertEquals(400, response.statusCode.value())
     }
 
     @Test
-    fun `필수 param(user_id) 누락은 400`() {
-        val res = controller().handleSsv(request(userId = null))
-        assertEquals(400, res.statusCode.value())
-    }
-
-    @Test
-    fun `오래된 timestamp(skew tolerance 초과)는 403`() {
-        // timestamp=0 (1970) → skew 막대 → tolerance(300s) 초과
-        val res = controller(toleranceMs = 300_000).handleSsv(request(timestamp = "0"))
-        assertEquals(403, res.statusCode.value())
-        // 서명 검증까지 도달하지 않음
+    fun `key_id 뒤 unsigned query param 이 붙으면 400`() {
+        val response = controller().handleSsv(request(unsignedSuffix = "user_id=attacker"))
+        assertEquals(400, response.statusCode.value())
         verify(verifier, never()).verify(any(), any(), any())
     }
 
     @Test
-    fun `ad_unit allowlist 외 값은 403`() {
-        val res = controller(allowlistCsv = "ca-app/allowed").handleSsv(request(adUnit = "ca-app/evil"))
-        assertEquals(403, res.statusCode.value())
+    fun `필수 timestamp 누락은 400`() {
+        val response = controller().handleSsv(request(timestamp = null))
+        assertEquals(400, response.statusCode.value())
     }
 
     @Test
-    fun `서명 불일치는 403 + INVALID audit`() {
+    fun `오래된 timestamp 는 403 이며 서명을 검증하지 않는다`() {
+        val response = controller().handleSsv(request(timestamp = "0"))
+        assertEquals(403, response.statusCode.value())
+        verify(verifier, never()).verify(any(), any(), any())
+    }
+
+    @Test
+    fun `authoritative 에서 ad unit allowlist 미설정은 503 fail closed`() {
+        val response = controller(mode = "authoritative").handleSsv(request())
+        assertEquals(503, response.statusCode.value())
+        verify(verifier, never()).verify(any(), any(), any())
+    }
+
+    @Test
+    fun `allowlist 에 없는 ad unit 은 403`() {
+        val response = controller(allowlistCsv = "ca-app/allowed").handleSsv(request(adUnit = "ca-app/other"))
+        assertEquals(403, response.statusCode.value())
+    }
+
+    @Test
+    fun `서명 불일치는 403 과 INVALID audit 으로 관측된다`() {
         whenever(verifier.verify(any(), any(), any())).thenReturn(false)
-        val res = controller().handleSsv(request())
-        assertEquals(403, res.statusCode.value())
-        verify(auditService).publish(eq("user-1"), eq("REWARD_AD_SSV_INVALID"), anyOrNull(), anyOrNull(), anyOrNull())
-        verify(nonceInboxRepository, never()).insertSsvIfAbsent(any(), any())
+
+        val response = controller(mode = "shadow").handleSsv(request())
+
+        assertEquals(403, response.statusCode.value())
+        verify(auditService).publish(
+            eq("user-1"),
+            eq("REWARD_AD_SSV_INVALID"),
+            anyOrNull(),
+            anyOrNull(),
+            anyOrNull(),
+        )
+        verify(nonceService, never()).recordVerifiedSsv(any(), any(), anyOrNull())
     }
 
     @Test
-    fun `transaction_id 60자 초과는 400 (ssv- prefix 포함 inbox 컬럼 truncation 방지)`() {
+    fun `서명 대상은 signature 직전까지의 raw query 순서를 그대로 보존한다`() {
         whenever(verifier.verify(any(), any(), any())).thenReturn(true)
-        val res = controller().handleSsv(request(transactionId = "a".repeat(61)))
-        assertEquals(400, res.statusCode.value())
-        verify(nonceInboxRepository, never()).insertSsvIfAbsent(any(), any())
+        whenever(nonceService.recordVerifiedSsv(any(), any(), anyOrNull())).thenReturn(
+            SsvNonceOutcome(SsvNonceResult.RECORDED),
+        )
+        val timestamp = System.currentTimeMillis().toString()
+
+        val response = controller().handleSsv(request(timestamp = timestamp))
+
+        assertEquals(200, response.statusCode.value())
+        verify(verifier).verify(
+            "transaction_id=tx-1&user_id=user-1&timestamp=$timestamp&custom_data=$VALID_NONCE&ad_unit=ca-app/allowed",
+            "SIG",
+            1L,
+        )
     }
 
     @Test
-    fun `이미 처리된 transaction(insertSsvIfAbsent=0)은 200 dedup (replay 차단)`() {
+    fun `shadow 의 미결합 custom_data 는 지급을 막지 않고 UNMATCHED audit 을 남긴다`() {
         whenever(verifier.verify(any(), any(), any())).thenReturn(true)
-        whenever(nonceInboxRepository.insertSsvIfAbsent(any(), any())).thenReturn(0)
-        val res = controller().handleSsv(request())
-        assertEquals(200, res.statusCode.value())
+        whenever(nonceService.recordVerifiedSsv(any(), any(), anyOrNull())).thenReturn(
+            SsvNonceOutcome(SsvNonceResult.UNMATCHED),
+        )
+
+        val response = controller(mode = "shadow").handleSsv(request())
+
+        assertEquals(200, response.statusCode.value())
+        verify(auditService).publish(
+            eq("user-1"),
+            eq("REWARD_AD_SSV_UNMATCHED"),
+            anyOrNull(),
+            anyOrNull(),
+            anyOrNull(),
+        )
     }
 
     @Test
-    fun `정상 SSV 는 200 + VERIFIED audit + transaction_id 바인딩 insert`() {
+    fun `authoritative 의 미결합 custom_data 는 403 fail closed`() {
         whenever(verifier.verify(any(), any(), any())).thenReturn(true)
-        whenever(nonceInboxRepository.insertSsvIfAbsent(any(), any())).thenReturn(1)
-        val res = controller().handleSsv(request())
-        assertEquals(200, res.statusCode.value())
-        // audit B2-1 회귀 가드: SSV 는 transaction_id 를 실제 바인딩하는 전용 insert 를 쓴다.
-        verify(nonceInboxRepository).insertSsvIfAbsent(eq("tx-1"), eq("user-1"))
-        verify(auditService).publish(eq("user-1"), eq("REWARD_AD_SSV_VERIFIED"), anyOrNull(), anyOrNull(), anyOrNull())
+        whenever(nonceService.recordVerifiedSsv(any(), any(), anyOrNull())).thenReturn(
+            SsvNonceOutcome(SsvNonceResult.UNMATCHED),
+        )
+
+        val response =
+            controller(mode = "authoritative", allowlistCsv = "ca-app/allowed")
+                .handleSsv(request())
+
+        assertEquals(403, response.statusCode.value())
+    }
+
+    @Test
+    fun `authoritative 의 서버 nonce 결합 성공은 200 과 VERIFIED audit`() {
+        whenever(verifier.verify(any(), any(), any())).thenReturn(true)
+        whenever(nonceService.recordVerifiedSsv(any(), any(), anyOrNull())).thenReturn(
+            SsvNonceOutcome(SsvNonceResult.VERIFIED, "AD_REWARD"),
+        )
+
+        val response =
+            controller(mode = "authoritative", allowlistCsv = "ca-app/allowed")
+                .handleSsv(request())
+
+        assertEquals(200, response.statusCode.value())
+        verify(auditService).publish(
+            eq("user-1"),
+            eq("REWARD_AD_SSV_VERIFIED"),
+            anyOrNull(),
+            anyOrNull(),
+            anyOrNull(),
+        )
+    }
+
+    @Test
+    fun `이미 처리한 transaction callback 은 200 멱등 응답`() {
+        whenever(verifier.verify(any(), any(), any())).thenReturn(true)
+        whenever(nonceService.recordVerifiedSsv(any(), any(), anyOrNull())).thenReturn(
+            SsvNonceOutcome(SsvNonceResult.DUPLICATE, "AD_REWARD"),
+        )
+
+        val response = controller().handleSsv(request())
+
+        assertEquals(200, response.statusCode.value())
+    }
+
+    companion object {
+        private const val VALID_NONCE = "550e8400-e29b-41d4-a716-446655440000"
     }
 }

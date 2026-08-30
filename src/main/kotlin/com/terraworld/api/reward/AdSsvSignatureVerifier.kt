@@ -19,7 +19,7 @@ import java.util.Base64
  * AdMob SSV(Server-Side Verification) 서명검증기. (fullstack-ultraplan WP-3, 2026-06-04 신설)
  *
  * Google AdMob rewarded ad 의 SSV callback 은 GET query string 에 ECDSA P-256 SHA-256 서명을
- * 포함한다. 본 verifier 는 `ADMOB_SSV_PUBLIC_KEY_URL` 의 공개키 set 을 24h 캐시하고 key_id 매칭
+ * 포함한다. 본 verifier 는 `reward.ad.ssv.public-key-url` 의 공개키 set 을 24h 캐시하고 key_id 매칭
  * 후 서명을 검증한다 — 신규 의존성 없이 JDK `java.security` + `java.net.http` 만 사용.
  *
  * 검증 대상(content) = query string 에서 "&signature=" 직전까지의 raw 문자열
@@ -31,7 +31,7 @@ import java.util.Base64
  */
 @Component
 class AdSsvSignatureVerifier(
-    @Value("\${admob.ssv.public-key-url:https://gstatic.com/admob/reward/verifier-keys.json}")
+    @Value("\${reward.ad.ssv.public-key-url:https://gstatic.com/admob/reward/verifier-keys.json}")
     private val publicKeyUrl: String,
     private val objectMapper: ObjectMapper,
 ) {
@@ -57,6 +57,16 @@ class AdSsvSignatureVerifier(
 
     private val cacheTtlMs = Duration.ofHours(24).toMillis()
     private val missRefreshWindowMs = Duration.ofSeconds(60).toMillis()
+
+    /** 공개키 JSON 파싱부터 실제 ECDSA 검증까지 네트워크 없이 검증하는 테스트 전용 생성자. */
+    internal constructor(
+        objectMapper: ObjectMapper,
+        keySetJson: String,
+    ) : this("https://test.invalid/admob-keys.json", objectMapper) {
+        cache = parseKeys(keySetJson)
+        cacheLoadedAtMs = System.currentTimeMillis()
+        lastMissRefreshAtMs = cacheLoadedAtMs
+    }
 
     /**
      * @return true = 서명 유효. key set fetch 실패 / key_id 미발견 / 서명 불일치 시 false.
@@ -86,21 +96,22 @@ class AdSsvSignatureVerifier(
     private fun resolveKey(keyId: Long): ECPublicKey? {
         val now = System.currentTimeMillis()
         if (cache.isEmpty() || now - cacheLoadedAtMs > cacheTtlMs) {
-            refreshKeys()
+            // TTL 만료 뒤 갱신 실패 시 과거 키를 계속 신뢰하지 않고 fail closed 한다.
+            if (!refreshKeys()) return null
         }
         cache[keyId]?.let { return it }
         // key_id 미스 — 키 rotation 대응 refresh, 단 negative-cache 윈도우(60s)로 DoS 완화.
         // 무인증 endpoint 라 임의 key_id 폭주 시에도 원격 fetch 가 분당 1회로 제한됨.
         if (now - lastMissRefreshAtMs > missRefreshWindowMs) {
             lastMissRefreshAtMs = now
-            refreshKeys()
+            if (!refreshKeys()) return null
             return cache[keyId]
         }
         return null
     }
 
     @Synchronized
-    private fun refreshKeys() {
+    private fun refreshKeys(): Boolean =
         try {
             val req =
                 HttpRequest
@@ -112,17 +123,21 @@ class AdSsvSignatureVerifier(
             val res = httpClient.send(req, HttpResponse.BodyHandlers.ofString())
             if (res.statusCode() != 200) {
                 log.warn("ad.ssv.keys-fetch status={}", res.statusCode())
-                return
-            }
-            val parsed = parseKeys(res.body())
-            if (parsed.isNotEmpty()) {
-                cache = parsed
-                cacheLoadedAtMs = System.currentTimeMillis()
+                false
+            } else {
+                val parsed = parseKeys(res.body())
+                if (parsed.isEmpty()) {
+                    false
+                } else {
+                    cache = parsed
+                    cacheLoadedAtMs = System.currentTimeMillis()
+                    true
+                }
             }
         } catch (e: Exception) {
             log.warn("ad.ssv.keys-fetch-error msg={}", e.message)
+            false
         }
-    }
 
     private fun parseKeys(json: String): Map<Long, ECPublicKey> {
         val root = objectMapper.readTree(json)

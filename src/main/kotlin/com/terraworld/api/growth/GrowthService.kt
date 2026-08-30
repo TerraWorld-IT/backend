@@ -151,8 +151,8 @@ class GrowthService(
     // ─── 되살리기 / 보류 / 알림 신청 ─────────────────────────────
 
     /**
-     * LOST 사이클 되살리기 — 진행(stampCount) 유지 + ACTIVE 복귀. RUBY 는 reviveRubyCost 차감, AD 는 nonce 검증·소비
-     * primitive 만(purpose GROWTH_REVIVE, 광고 보상 지급 없음). LOST 가 아니면 차감 없이 현재 상태 반환(멱등).
+     * LOST 사이클 되살리기 — 진행(stampCount) 유지 + ACTIVE 복귀. RUBY 는 reviveRubyCost 차감, AD 는 광고 보상과
+     * 동일한 단계 정책으로 nonce 를 소비한다(authoritative 에서는 SSV 검증 완료 SERVER nonce 만 허용).
      * revive-dismiss 로 보류된 당일(reviveSnoozedUntil > today)은 409 GROWTH_REVIVE_SNOOZED.
      * 오늘 이미 일상 기록이 있으면 그 기록을 스탬프로 반영(streak+1), 없으면 오늘 기록이 이어지도록 기준일을 어제로 둔다.
      */
@@ -178,9 +178,7 @@ class GrowthService(
                     currencyService.debit(userId, CurrencyCode.RUBY, properties.reviveRubyCost, REASON_GROW_REVIVE, REF_TYPE, speciesCode)
                 }
             GrowthReviveRequest.Method.AD ->
-                // 알려진 한계: nonce 소비는 replay 만 막고 실제 광고 시청을 증명하지 않는다(SSV 는 audit-only —
-                // RewardService.consumeAdNonce 주석 참조). 즉 AD 되살리기는 "광고를 본 척" 으로도 통과하며,
-                // 그 대가가 루비 차감 없는 진행 유지(실 경제 아님)라 수용한다. SSV-authoritative 전환 시 이 경로도 함께 게이트된다.
+                // 광고 보상과 같은 gate 를 사용해 authoritative 전환 시 client 생성 nonce 를 함께 차단한다.
                 rewardService.consumeAdNonce(userId, adNonce, AdRewardNonceInbox.PURPOSE_GROWTH_REVIVE)
         }
 

@@ -42,8 +42,8 @@ class FlywayMigrationSmokeTest {
                     .load()
 
             val result = flyway.migrate()
-            // 최소 40개 마이그레이션(V1~V40) 적용
-            assertTrue(result.migrationsExecuted >= 40, "적용된 마이그레이션 수=${result.migrationsExecuted} (>=40 기대)")
+            // V1부터 V42까지 전부 적용
+            assertTrue(result.migrationsExecuted >= 42, "적용된 마이그레이션 수=${result.migrationsExecuted} (>=42 기대)")
 
             pg.createConnection("").use { conn ->
                 val md = conn.metaData
@@ -69,6 +69,13 @@ class FlywayMigrationSmokeTest {
                 // V36: tx_ref 처리 원장 (revoke 후 grant 재전송 멱등) 존재 실증
                 md.getTables(null, null, "entitlement_tx_ledger", arrayOf("TABLE")).use { rs ->
                     assertTrue(rs.next(), "entitlement_tx_ledger 테이블 부재 (V36 미적용)")
+                }
+                // V42: 서버 nonce 수명주기 컬럼 존재 실증
+                md.getColumns(null, null, "ad_reward_nonce_inbox", "status").use { rs ->
+                    assertTrue(rs.next(), "ad_reward_nonce_inbox.status 부재 (V42 미적용)")
+                }
+                md.getColumns(null, null, "ad_reward_nonce_inbox", "verified_at").use { rs ->
+                    assertTrue(rs.next(), "ad_reward_nonce_inbox.verified_at 부재 (V42 미적용)")
                 }
                 // V39 (아프젝 v2): 티어별 배치(active_tier/terrarium_items.tier) + 습관 사이클/페어 요청 + 키우기 사이클 컬럼 + items.purchasable
                 md.getColumns(null, null, "terrariums", "active_tier").use { rs ->

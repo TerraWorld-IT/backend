@@ -307,6 +307,30 @@ class GrowthServiceTest {
     }
 
     @Test
+    fun `revive AD — 공통 SSV gate 거절 시 LOST 상태를 유지한다`() {
+        inst(streak = 3, lastProgress = today.minusDays(2).atStartOfDay())
+        whenever(
+            rewardService.consumeAdNonce(
+                "u",
+                "550e8400-e29b-41d4-a716-446655440000",
+                AdRewardNonceInbox.PURPOSE_GROWTH_REVIVE,
+            ),
+        ).thenThrow(BusinessException(ErrorCode.INVALID_INPUT, "SSV 검증 필요"))
+
+        assertThrows<BusinessException> {
+            service.revive(
+                "u",
+                "cat",
+                GrowthReviveRequest.Method.AD,
+                "550e8400-e29b-41d4-a716-446655440000",
+            )
+        }
+
+        assertEquals(GrowthCycleState.LOST, instanceRepo.findById(1L).get().cycleState)
+        verify(currencyService, never()).debit(any(), any(), any(), any(), anyOrNull(), anyOrNull())
+    }
+
+    @Test
     fun `revive — LOST 가 아니면 차감 없이 현재 상태 반환 (멱등)`() {
         inst(streak = 3, lastProgress = today.atStartOfDay())
         val item = service.revive("u", "cat", GrowthReviveRequest.Method.RUBY, null)
