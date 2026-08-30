@@ -29,6 +29,7 @@ import org.springframework.http.MediaType
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.header
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 
@@ -42,9 +43,30 @@ class RewardControllerMvcTest : AbstractMvcTest() {
 
     @MockBean private lateinit var attendanceService: AttendanceService
 
+    @MockBean private lateinit var adRewardNonceService: AdRewardNonceService
+
     @MockBean private lateinit var jwtAuthenticationFilter: JwtAuthenticationFilter
 
     @MockBean private lateinit var rateLimitFilter: RateLimitFilter
+
+    @Test
+    fun `GET _api_v1_rewards_ad 는 서버 nonce 와 no-store 를 반환한다`() {
+        whenever(adRewardNonceService.issue(TEST_USER_ID, "GROWTH_REVIVE")).thenReturn(
+            IssuedAdRewardNonce(
+                nonce = "550e8400-e29b-41d4-a716-446655440000",
+                purpose = "GROWTH_REVIVE",
+                status = "PENDING",
+                expiresAt = java.time.LocalDateTime.of(2026, 8, 31, 12, 0),
+            ),
+        )
+
+        mockMvc
+            .perform(get("/api/v1/rewards/ad").param("purpose", "GROWTH_REVIVE"))
+            .andExpect(status().isOk)
+            .andExpect(header().string("Cache-Control", "no-store"))
+            .andExpect(jsonPath("$.purpose").value("GROWTH_REVIVE"))
+            .andExpect(jsonPath("$.status").value("PENDING"))
+    }
 
     @Test
     fun `POST _api_v1_rewards_ad 200`() {

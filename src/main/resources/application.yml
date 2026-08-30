@@ -115,15 +115,18 @@ app:
   # N-B7 점검 모드 (아프젝 v2): true 면 MaintenanceFilter 가 /api/** 에 503 {code:"MAINTENANCE"} 를 반환한다 (actuator 제외).
   maintenance: ${APP_MAINTENANCE:false}
 
-# N9 (구현 계획서 v4, 2026-05-26): 광고 보상 nonce 정책.
-# - 2026-06-23: 기본값 true 전환 (사용자 결정). frontend(useAdMob.generateNonce + onClaimAdReward)는
-#   광고 시청 직전 nonce 를 발급해 항상 전송하므로 정상 흐름 무영향. nonce 미제공 호출은 위조 의심으로 차단.
-# - true 이면 RewardService.claimAdReward 가 nonce 미제공 시 400 INVALID_INPUT 차단(위조 replay 방어).
-# - 레거시 nonce-less 경로가 꼭 필요하면 REWARD_AD_NONCE_REQUIRED=false 로 명시 override.
+# 광고 보상 SSV 단계 전환. 기본 legacy 는 기존 앱과 로컬 환경의 지급 흐름을 유지한다.
+# shadow 는 SSV와 서버 nonce 결합을 관측하되 지급을 막지 않고, authoritative 만 검증 완료 nonce 를 강제한다.
 reward:
   ad:
+    mode: ${REWARD_AD_MODE:legacy}
     nonce:
       required: ${REWARD_AD_NONCE_REQUIRED:true}
+    ssv:
+      public-key-url: ${ADMOB_SSV_PUBLIC_KEY_URL:https://gstatic.com/admob/reward/verifier-keys.json}
+      timestamp-tolerance-ms: ${REWARD_AD_SSV_TIMESTAMP_TOLERANCE_MS:300000}
+      # authoritative 전환 전 운영 AdMob ad unit ID를 쉼표로 구분해 반드시 주입한다.
+      ad-unit-allowlist: ${REWARD_AD_SSV_AD_UNIT_ALLOWLIST:}
 
 # 하트 코인 보상은 사용자별 KST 하루 지급 횟수만 제한한다. 클릭 응답 자체는 200 + reward 0 을 유지한다.
 terrarium:
@@ -201,12 +204,16 @@ terraworld:
   # PlayBillingWebhookController.@PostConstruct 가 빈 문자열 감지 시 부팅 abort.
   internal-api-token: ${INTERNAL_API_TOKEN}
 
-# N9: prod 광고 보상 nonce 강제 (2026-06-23 기본값 true). 미설정 시 default true.
-# 레거시 nonce-less 경로가 필요하면 REWARD_AD_NONCE_REQUIRED=false 로 명시 override.
+# 운영도 명시 전환 전에는 legacy 를 유지한다. authoritative 는 외부 AdMob 설정 검증 후에만 선택한다.
 reward:
   ad:
+    mode: ${REWARD_AD_MODE:legacy}
     nonce:
       required: ${REWARD_AD_NONCE_REQUIRED:true}
+    ssv:
+      public-key-url: ${ADMOB_SSV_PUBLIC_KEY_URL:https://gstatic.com/admob/reward/verifier-keys.json}
+      timestamp-tolerance-ms: ${REWARD_AD_SSV_TIMESTAMP_TOLERANCE_MS:300000}
+      ad-unit-allowlist: ${REWARD_AD_SSV_AD_UNIT_ALLOWLIST:}
 
 # 운영도 개발과 같은 기본 상한을 사용하며 환경변수로 명시 조정할 수 있다.
 terrarium:

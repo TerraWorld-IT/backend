@@ -1,58 +1,54 @@
 package com.terraworld.api.reward
 
 import com.terraworld.common.audit.AuditService
-import com.terraworld.domain.reward.AdRewardNonceInboxRepository
 import io.swagger.v3.oas.annotations.Hidden
 import jakarta.servlet.http.HttpServletRequest
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.http.ResponseEntity
-import org.springframework.transaction.annotation.Transactional
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RestController
-import kotlin.math.abs
 
 /**
- * AdMob SSV(Server-Side Verification) callback. (fullstack-ultraplan WP-3, 2026-06-04 신설)
+ * AdMob rewarded ad SSV 공개 GET callback.
  *
- * Google AdMob 서버가 rewarded ad 시청 완료 시 본 endpoint 를 GET 호출(공개·무인증).
- * 본 컨트롤러는 (1) ECDSA 서명검증 (2) timestamp 신선도 (3) ad_unit allowlist(선택)
- * (4) transaction_id dedup 을 수행한다.
- *
- * ⚠️ 보상 미지급(이중지급 회피): 실 보상은 client `POST /rewards/ad`(nonce) 경로 1곳에서만.
- * 본 SSV 는 서버측 위조검증/감사 레이어 — 위조 SSV 는 403 차단, 정상 SSV 는 transaction_id 를
- * nonce inbox 에 기록(replay 차단)하고 감사 로그만 남긴다.
- * (향후 `reward.ad.nonce.required=true` 전환 후 SSV 를 authoritative grant 로 승격 가능 —
- * 그때 client 경로는 UX-only 로 전환.)
- *
- * @Hidden — OpenAPI spec 제외(외부 Google 호출). SecurityConfig 에서 본 경로만 permitAll
- * (`POST /rewards/ad` client 경로는 인증 유지).
+ * raw query 순서를 보존한 ECDSA 검증 뒤 transaction_id 를 dedup한다. shadow/authoritative 에서는
+ * 서명된 custom_data 를 서버 발급 nonce 와 결합하고, 실제 보상·AD revive 는 인증된 client 요청이
+ * VERIFIED nonce 를 소비할 때 수행한다.
  */
 @RestController
 @RequestMapping("/api/v1/rewards/ad")
 @Hidden
 class AdSsvCallbackController(
     private val verifier: AdSsvSignatureVerifier,
-    private val nonceInboxRepository: AdRewardNonceInboxRepository,
+    private val nonceService: AdRewardNonceService,
     private val auditService: AuditService,
-    @Value("\${admob.ssv.timestamp-tolerance-ms:300000}")
+    private val policy: AdRewardPolicy,
+    @Value("\${reward.ad.ssv.timestamp-tolerance-ms:300000}")
     private val timestampToleranceMs: Long,
-    @Value("\${admob.ssv.ad-unit-allowlist:}")
-    private val adUnitAllowlistCsv: String,
+    @Value("\${reward.ad.ssv.ad-unit-allowlist:}")
+    adUnitAllowlistCsv: String,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
+    private val adUnitAllowlist =
+        adUnitAllowlistCsv
+            .split(',')
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .toSet()
+
+    init {
+        require(timestampToleranceMs > 0) { "reward.ad.ssv.timestamp-tolerance-ms 는 양수여야 합니다" }
+    }
 
     @GetMapping("/ssv-callback")
-    @Transactional
     fun handleSsv(request: HttpServletRequest): ResponseEntity<Void> {
-        val query = request.queryString
-        if (query.isNullOrBlank() || !query.contains("&signature=")) {
-            log.warn("ad.ssv.malformed — signature param 없음")
+        val content = signedContent(request.queryString)
+        if (content == null) {
+            log.warn("event=ad.ssv.malformed reason=raw-query-layout mode={}", policy.mode.configValue)
             return ResponseEntity.badRequest().build()
         }
-        // 검증 대상 = signature param 직전까지의 raw query string(Google 공식 spec).
-        val content = query.substringBefore("&signature=")
 
         val signature = request.getParameter("signature")
         val keyId = request.getParameter("key_id")?.toLongOrNull()
@@ -60,62 +56,125 @@ class AdSsvCallbackController(
         val userId = request.getParameter("user_id")
         val timestamp = request.getParameter("timestamp")?.toLongOrNull()
         val adUnit = request.getParameter("ad_unit")
+        val customData = request.getParameter("custom_data")
 
-        if (signature.isNullOrBlank() || keyId == null || transactionId.isNullOrBlank() || userId.isNullOrBlank()) {
-            log.warn("ad.ssv.missing-params")
+        if (
+            signature.isNullOrBlank() ||
+            signature.length > MAX_SIGNATURE_LENGTH ||
+            keyId == null ||
+            transactionId.isNullOrBlank() ||
+            transactionId.length > MAX_TRANSACTION_ID_LENGTH ||
+            userId.isNullOrBlank() ||
+            userId.length > MAX_USER_ID_LENGTH ||
+            timestamp == null
+        ) {
+            log.warn("event=ad.ssv.malformed reason=missing-or-invalid-param mode={}", policy.mode.configValue)
             return ResponseEntity.badRequest().build()
         }
 
-        // (2) timestamp 신선도(±tolerance, ms epoch). 제공 시 검증.
-        if (timestamp != null) {
-            val skew = abs(System.currentTimeMillis() - timestamp)
-            if (skew > timestampToleranceMs) {
-                log.warn("ad.ssv.stale-timestamp skewMs={}", skew)
-                return ResponseEntity.status(403).build()
-            }
+        val now = System.currentTimeMillis()
+        if (timestamp < now - timestampToleranceMs || timestamp > now + timestampToleranceMs) {
+            log.warn("event=ad.ssv.stale-timestamp mode={} timestamp={}", policy.mode.configValue, timestamp)
+            return ResponseEntity.status(403).build()
         }
 
-        // (3) ad_unit allowlist(설정 시에만)
-        if (adUnitAllowlistCsv.isNotBlank() && adUnit != null) {
-            val allow = adUnitAllowlistCsv.split(",").map { it.trim() }.filter { it.isNotEmpty() }
-            if (adUnit !in allow) {
-                log.warn("ad.ssv.ad-unit-not-allowed adUnit={}", adUnit)
-                return ResponseEntity.status(403).build()
-            }
+        if (policy.mode == AdRewardMode.AUTHORITATIVE && adUnitAllowlist.isEmpty()) {
+            log.error("event=ad.ssv.configuration-error field=adUnitAllowlist mode=authoritative")
+            return ResponseEntity.status(503).build()
+        }
+        if (adUnitAllowlist.isNotEmpty() && (adUnit == null || adUnit !in adUnitAllowlist)) {
+            log.warn("event=ad.ssv.ad-unit-not-allowed mode={} adUnit={}", policy.mode.configValue, adUnit)
+            return ResponseEntity.status(403).build()
         }
 
-        // (1) ECDSA 서명검증
         if (!verifier.verify(content, signature, keyId)) {
-            log.warn("ad.ssv.invalid-signature userId={} keyId={}", userId, keyId)
+            log.warn(
+                "event=ad.ssv.invalid-signature mode={} userId={} keyId={} adUnit={}",
+                policy.mode.configValue,
+                userId,
+                keyId,
+                adUnit,
+            )
             auditService.publish(
                 userId = userId,
                 action = "REWARD_AD_SSV_INVALID",
                 resourceType = "Reward",
-                payload = mapOf("keyId" to keyId, "adUnit" to (adUnit ?: "")),
+                resourceId = transactionId,
+                payload =
+                    mapOf(
+                        "mode" to policy.mode.configValue,
+                        "keyId" to keyId,
+                        "adUnit" to (adUnit ?: ""),
+                    ),
             )
             return ResponseEntity.status(403).build()
         }
 
-        // (4) transaction_id dedup — SSV replay 차단.
-        // nonce 슬롯은 'ssv:' prefix(4자) 포함 VARCHAR(64) — 초과는 truncate(dedup 충돌 의미
-        // 변질) 대신 거부. transaction_id 컬럼 자체는 VARCHAR(128).
-        if (transactionId.length > 60) {
-            log.warn("ad.ssv.transaction-id-too-long len={}", transactionId.length)
-            return ResponseEntity.status(400).build()
-        }
-        val inserted = nonceInboxRepository.insertSsvIfAbsent(transactionId, userId)
-        if (inserted == 0) {
-            log.info("ad.ssv.duplicate transactionId={}", transactionId)
+        val outcome = nonceService.recordVerifiedSsv(userId, transactionId, customData)
+        if (outcome.result == SsvNonceResult.DUPLICATE) {
+            log.info(
+                "event=ad.ssv.duplicate mode={} transactionId={} purpose={}",
+                policy.mode.configValue,
+                transactionId,
+                outcome.purpose,
+            )
             return ResponseEntity.ok().build()
         }
 
+        val matched = outcome.result == SsvNonceResult.VERIFIED
+        val action = if (outcome.result == SsvNonceResult.UNMATCHED) "REWARD_AD_SSV_UNMATCHED" else "REWARD_AD_SSV_VERIFIED"
         auditService.publish(
             userId = userId,
-            action = "REWARD_AD_SSV_VERIFIED",
+            action = action,
             resourceType = "Reward",
-            payload = mapOf("adUnit" to (adUnit ?: ""), "rewardItem" to (request.getParameter("reward_item") ?: "")),
+            resourceId = transactionId,
+            payload =
+                mapOf(
+                    "mode" to policy.mode.configValue,
+                    "result" to outcome.result.name,
+                    "serverNonceMatched" to matched,
+                    "purpose" to (outcome.purpose ?: ""),
+                    "adUnit" to (adUnit ?: ""),
+                    "adUnitAllowlistConfigured" to adUnitAllowlist.isNotEmpty(),
+                    "rewardItem" to (request.getParameter("reward_item") ?: ""),
+                ),
         )
-        log.info("ad.ssv.verified userId={} adUnit={}", userId, adUnit)
+        log.info(
+            "event=ad.ssv.processed mode={} result={} userId={} adUnit={} purpose={}",
+            policy.mode.configValue,
+            outcome.result,
+            userId,
+            adUnit,
+            outcome.purpose,
+        )
+
+        if (policy.mode == AdRewardMode.AUTHORITATIVE && !matched) {
+            return ResponseEntity.status(403).build()
+        }
         return ResponseEntity.ok().build()
+    }
+
+    /** signature 와 key_id 이외의 unsigned suffix 를 허용하지 않고 서명 대상 raw prefix 를 반환한다. */
+    private fun signedContent(query: String?): String? {
+        if (query.isNullOrBlank()) return null
+        val marker = "&signature="
+        val signatureIndex = query.indexOf(marker)
+        if (signatureIndex <= 0 || query.indexOf(marker, signatureIndex + marker.length) >= 0) return null
+
+        val unsignedParts = query.substring(signatureIndex + 1).split('&')
+        if (
+            unsignedParts.size != 2 ||
+            !unsignedParts[0].startsWith("signature=") ||
+            !unsignedParts[1].startsWith("key_id=")
+        ) {
+            return null
+        }
+        return query.substring(0, signatureIndex)
+    }
+
+    companion object {
+        private const val MAX_SIGNATURE_LENGTH = 512
+        private const val MAX_TRANSACTION_ID_LENGTH = 128
+        private const val MAX_USER_ID_LENGTH = 64
     }
 }

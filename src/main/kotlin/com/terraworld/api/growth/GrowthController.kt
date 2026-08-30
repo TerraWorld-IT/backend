@@ -27,7 +27,10 @@ class GrowthController(
     @Operation(summary = "육성 반짝이 부스터", description = "반짝이 100 소비 → 해당 종 +10회. LOST 사이클은 409 GROWTH_LOST")
     override fun buyGrowthBooster(speciesCode: String): ResponseEntity<GrowthItem> = ResponseEntity.ok(growthService.buyBooster(SecurityUtil.getCurrentUserId(), speciesCode))
 
-    @Operation(summary = "되살리기", description = "LOST 사이클을 진행 유지한 채 ACTIVE 로 — RUBY 10 차감 또는 광고 nonce 소비(purpose GROWTH_REVIVE)")
+    @Operation(
+        summary = "되살리기",
+        description = "LOST 사이클을 진행 유지한 채 ACTIVE 로 — RUBY 10 차감 또는 단계 정책을 통과한 광고 nonce 소비",
+    )
     override fun reviveGrowth(
         speciesCode: String,
         @Valid growthReviveRequest: GrowthReviveRequest,

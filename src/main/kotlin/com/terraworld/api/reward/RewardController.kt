@@ -10,9 +10,21 @@ import io.terraworld.api.model.AdRewardRequest
 import io.terraworld.api.model.AdRewardResponse
 import io.terraworld.api.model.AttendanceCheckInResponse
 import io.terraworld.api.model.AttendanceResponse
+import org.springframework.http.CacheControl
 import org.springframework.http.ResponseEntity
+import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.RequestMapping
+import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
+import java.time.OffsetDateTime
+import java.time.ZoneOffset
+
+data class AdRewardNonceResponse(
+    val nonce: String,
+    val purpose: String,
+    val status: String,
+    val expiresAt: OffsetDateTime,
+)
 
 /**
  * RewardApi (3 endpoints — claimAdReward, checkInAttendance, getAttendanceState) implement.
@@ -27,7 +39,30 @@ import org.springframework.web.bind.annotation.RestController
 class RewardController(
     private val rewardService: RewardService,
     private val attendanceService: AttendanceService,
+    private val adRewardNonceService: AdRewardNonceService,
 ) : RewardApi {
+    @Operation(
+        summary = "광고 보상 nonce 발급 또는 상태 조회",
+        description = "사용자·용도별 활성 서버 nonce 를 반환하며 응답은 캐시하지 않습니다.",
+    )
+    @GetMapping("/rewards/ad")
+    fun issueAdRewardNonce(
+        @RequestParam(defaultValue = AdRewardNonceInbox.PURPOSE_AD_REWARD) purpose: String,
+    ): ResponseEntity<AdRewardNonceResponse> {
+        val issued = adRewardNonceService.issue(SecurityUtil.getCurrentUserId(), purpose)
+        return ResponseEntity
+            .ok()
+            .cacheControl(CacheControl.noStore())
+            .body(
+                AdRewardNonceResponse(
+                    nonce = issued.nonce,
+                    purpose = issued.purpose,
+                    status = issued.status,
+                    expiresAt = issued.expiresAt.atOffset(ZoneOffset.UTC),
+                ),
+            )
+    }
+
     @Operation(
         summary = "광고 시청 보상 수령",
         description = "하루 최대 5회까지 광고 시청 시 스페셜 코인 1개 지급.",
