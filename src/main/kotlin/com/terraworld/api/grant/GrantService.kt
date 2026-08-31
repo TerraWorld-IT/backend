@@ -7,6 +7,7 @@ import com.terraworld.common.exception.ErrorCode
 import com.terraworld.domain.character.CharacterDefRepository
 import com.terraworld.domain.character.UserCharacterRepository
 import com.terraworld.domain.grant.UserGrantRepository
+import com.terraworld.domain.item.ItemLayout
 import com.terraworld.domain.item.ItemRepository
 import com.terraworld.domain.item.UserItemRepository
 import org.springframework.stereotype.Service
@@ -36,7 +37,7 @@ object SpiritItems {
  * - **원자성**: @Transactional — grant 기록 + executor(credit / 캐릭터·아이템 지급)가 한 트랜잭션.
  * - executor 분기: CURRENCY → CurrencyService.credit / SPIRIT → user_characters 멱등 지급 /
  *   ITEM → user_items 멱등 소유 부여(아프젝 v2 — ref = item slug, 이미 보유면 수량 증가 없이 no-op) /
- *   BACKGROUND → 미연결(후속).
+ *   BACKGROUND → BACKGROUND 레이아웃 아이템을 user_items 에 멱등 소유 부여.
  *
  * @return true = 신규 지급, false = 이미 지급됨(멱등 no-op)
  */
@@ -89,7 +90,15 @@ class GrantService(
             }
 
             GrantType.BACKGROUND -> {
-                // TODO(P3): user_backgrounds 소유 upsert 연결
+                // 배경 소유권 SoT = BACKGROUND 레이아웃의 user_items. ref 는 item slug.
+                val item =
+                    itemRepository.findBySlug(ref).orElseThrow {
+                        BusinessException(ErrorCode.INVALID_INPUT, "존재하지 않는 배경 아이템 slug: $ref")
+                    }
+                if (item.layout != ItemLayout.BACKGROUND) {
+                    throw BusinessException(ErrorCode.INVALID_INPUT, "배경 아이템이 아닌 slug: $ref")
+                }
+                userItemRepository.insertIfAbsent(userId, item.id)
             }
         }
         return true
