@@ -27,7 +27,7 @@ class AdSsvSignatureVerifierTest {
                         ),
                 ),
             )
-        val verifier = AdSsvSignatureVerifier(objectMapper, keySetJson)
+        val verifier = AdSsvSignatureVerifier.forTest(objectMapper, keySetJson)
         val content = "transaction_id=tx-1&user_id=user-1&timestamp=1788130800000"
         val signature = sign(content, keyPair)
 

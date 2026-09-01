@@ -58,14 +58,23 @@ class AdSsvSignatureVerifier(
     private val cacheTtlMs = Duration.ofHours(24).toMillis()
     private val missRefreshWindowMs = Duration.ofSeconds(60).toMillis()
 
-    /** 공개키 JSON 파싱부터 실제 ECDSA 검증까지 네트워크 없이 검증하는 테스트 전용 생성자. */
-    internal constructor(
-        objectMapper: ObjectMapper,
-        keySetJson: String,
-    ) : this("https://test.invalid/admob-keys.json", objectMapper) {
-        cache = parseKeys(keySetJson)
-        cacheLoadedAtMs = System.currentTimeMillis()
-        lastMissRefreshAtMs = cacheLoadedAtMs
+    companion object {
+        /**
+         * 공개키 JSON 파싱부터 실제 ECDSA 검증까지 네트워크 없이 검증하는 테스트 전용 팩토리.
+         *
+         * @Component 는 단일 생성자만 두어야 Spring 이 주입 대상을 모호함 없이 선택한다
+         * (생성자를 둘 두면 @Autowired 부재 시 no-arg 폴백으로 부팅이 실패). 테스트용
+         * 대체 생성 경로는 이 팩토리로 분리한다.
+         */
+        internal fun forTest(
+            objectMapper: ObjectMapper,
+            keySetJson: String,
+        ): AdSsvSignatureVerifier =
+            AdSsvSignatureVerifier("https://test.invalid/admob-keys.json", objectMapper).apply {
+                cache = parseKeys(keySetJson)
+                cacheLoadedAtMs = System.currentTimeMillis()
+                lastMissRefreshAtMs = cacheLoadedAtMs
+            }
     }
 
     /**
