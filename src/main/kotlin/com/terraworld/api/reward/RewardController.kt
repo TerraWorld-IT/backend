@@ -6,28 +6,19 @@ import com.terraworld.security.SecurityUtil
 import io.swagger.v3.oas.annotations.Operation
 import io.swagger.v3.oas.annotations.tags.Tag
 import io.terraworld.api.api.RewardApi
+import io.terraworld.api.model.AdRewardNonceResponse
 import io.terraworld.api.model.AdRewardRequest
 import io.terraworld.api.model.AdRewardResponse
 import io.terraworld.api.model.AttendanceCheckInResponse
 import io.terraworld.api.model.AttendanceResponse
 import org.springframework.http.CacheControl
 import org.springframework.http.ResponseEntity
-import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.RequestMapping
-import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
-import java.time.OffsetDateTime
 import java.time.ZoneOffset
 
-data class AdRewardNonceResponse(
-    val nonce: String,
-    val purpose: String,
-    val status: String,
-    val expiresAt: OffsetDateTime,
-)
-
 /**
- * RewardApi (3 endpoints — claimAdReward, checkInAttendance, getAttendanceState) implement.
+ * RewardApi (4 endpoints — issueAdRewardNonce, claimAdReward, checkInAttendance, getAttendanceState) implement.
  * spec 의 tags=[Reward] 그룹핑 — Attendance 도메인이 흡수됨 (ADR-018).
  *
  * ARCH-008-phase-5/6 후: RewardService + AttendanceService 모두 generated DTO
@@ -45,10 +36,8 @@ class RewardController(
         summary = "광고 보상 nonce 발급 또는 상태 조회",
         description = "사용자·용도별 활성 서버 nonce 를 반환하며 응답은 캐시하지 않습니다.",
     )
-    @GetMapping("/rewards/ad")
-    fun issueAdRewardNonce(
-        @RequestParam(defaultValue = AdRewardNonceInbox.PURPOSE_AD_REWARD) purpose: String,
-    ): ResponseEntity<AdRewardNonceResponse> {
+    // 경로·쿼리 파라미터(purpose, 기본 AD_REWARD)는 생성 인터페이스 RewardApi 가 선언한다.
+    override fun issueAdRewardNonce(purpose: String): ResponseEntity<AdRewardNonceResponse> {
         val issued = adRewardNonceService.issue(SecurityUtil.getCurrentUserId(), purpose)
         return ResponseEntity
             .ok()
@@ -56,8 +45,8 @@ class RewardController(
             .body(
                 AdRewardNonceResponse(
                     nonce = issued.nonce,
-                    purpose = issued.purpose,
-                    status = issued.status,
+                    purpose = AdRewardNonceResponse.Purpose.forValue(issued.purpose),
+                    status = AdRewardNonceResponse.Status.forValue(issued.status),
                     expiresAt = issued.expiresAt.atOffset(ZoneOffset.UTC),
                 ),
             )
