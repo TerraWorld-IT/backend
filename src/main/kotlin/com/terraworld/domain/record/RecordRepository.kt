@@ -8,6 +8,10 @@ import org.springframework.data.repository.query.Param
 import java.time.LocalDate
 
 interface RecordRepository : JpaRepository<ActivityRecord, Long> {
+    /** 탈퇴 시 soft-delete된 기록의 사진도 함께 정리한다. */
+    @Query("SELECT r.photoUrl FROM ActivityRecord r WHERE r.user.id = :userId AND r.photoUrl IS NOT NULL")
+    fun findPhotoUrlsByUserId(userId: String): List<String>
+
     fun findAllByUserIdAndIsDeletedFalseOrderByCreatedAtDesc(
         userId: String,
         pageable: Pageable,

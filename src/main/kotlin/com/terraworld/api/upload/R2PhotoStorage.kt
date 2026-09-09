@@ -9,6 +9,7 @@ import software.amazon.awssdk.core.sync.RequestBody
 import software.amazon.awssdk.regions.Region
 import software.amazon.awssdk.services.s3.S3Client
 import software.amazon.awssdk.services.s3.S3Configuration
+import software.amazon.awssdk.services.s3.model.DeleteObjectRequest
 import software.amazon.awssdk.services.s3.model.PutObjectRequest
 import java.net.URI
 import java.util.UUID
@@ -31,6 +32,32 @@ class R2PhotoStorage(
     @Value("\${r2.public-base-url:}") private val publicBaseUrl: String,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
+
+    /** 외부 URL이나 임의 키를 지우지 않도록 이 저장소의 업로드 키 형식만 허용한다. */
+    internal fun ownsPublicUrl(publicUrl: String): Boolean = photoKey(publicUrl) != null
+
+    private fun photoKey(publicUrl: String): String? {
+        if (publicBaseUrl.isBlank()) return null
+        val prefix = "${publicBaseUrl.trimEnd('/')}/"
+        if (!publicUrl.startsWith(prefix)) return null
+        val key = publicUrl.removePrefix(prefix)
+        return key.takeIf {
+            Regex("photos/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.(jpg|png|webp|bin)").matches(it)
+        }
+    }
+
+    /** 미설정 시 무시하며, 삭제 실패는 호출자가 커밋 이후에 처리한다. */
+    fun delete(publicUrl: String) {
+        if (!isEnabled()) return
+        val key = photoKey(publicUrl) ?: return
+        client.deleteObject(
+            DeleteObjectRequest
+                .builder()
+                .bucket(bucket)
+                .key(key)
+                .build(),
+        )
+    }
 
     fun isEnabled(): Boolean =
         endpoint.isNotBlank() &&

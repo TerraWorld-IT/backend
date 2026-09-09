@@ -150,6 +150,12 @@ class ExchangeExecutorTest {
     private class FakeExchangeDailyUsageRepository :
         FakeJpaRepository<ExchangeDailyUsage, ExchangeDailyUsageId>(),
         ExchangeDailyUsageRepository {
+        override fun deleteAllByUserId(userId: String): Int {
+            val rows = store.values.filter { it.userId == userId }
+            deleteAll(rows)
+            return rows.size
+        }
+
         override fun extractId(entity: ExchangeDailyUsage): ExchangeDailyUsageId = ExchangeDailyUsageId(entity.userId, entity.fromCode, entity.toCode, entity.usageDate)
 
         fun get(

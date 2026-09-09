@@ -58,6 +58,11 @@ class AdRewardNonceInbox(
 }
 
 interface AdRewardNonceInboxRepository : JpaRepository<AdRewardNonceInbox, String> {
+    /** 계정 삭제 시 FK 없는 사용자 행을 즉시 일괄 삭제한다. */
+    @Modifying(flushAutomatically = true)
+    @Query("DELETE FROM AdRewardNonceInbox e WHERE e.userId = :userId")
+    fun deleteAllByUserId(userId: String): Int
+
     /** 같은 사용자·용도의 nonce 발급을 직렬화한다. */
     @Query(
         value = "SELECT 1 FROM (SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))) AS _lock",

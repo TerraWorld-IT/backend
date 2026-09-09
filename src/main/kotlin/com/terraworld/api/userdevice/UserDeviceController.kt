@@ -23,6 +23,12 @@ class UserDeviceService(
     private val repository: UserDeviceRepository,
     private val auditService: AuditService,
 ) {
+    /** 현재 사용자의 활성 디바이스를 모두 비활성화한다. 반복 호출해도 결과는 동일하다. */
+    @Transactional
+    fun deactivateAll(userId: String) {
+        repository.deactivateAllByUserId(userId)
+    }
+
     /**
      * 디바이스 토큰 멱등 upsert.
      *

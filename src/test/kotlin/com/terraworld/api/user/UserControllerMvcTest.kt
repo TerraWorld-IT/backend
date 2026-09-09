@@ -17,6 +17,7 @@ import io.terraworld.api.model.UserMeResponse
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.eq
+import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc
@@ -25,6 +26,7 @@ import org.springframework.boot.test.mock.mockito.MockBean
 import org.springframework.context.annotation.Import
 import org.springframework.http.MediaType
 import org.springframework.test.web.servlet.MockMvc
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
@@ -117,6 +119,12 @@ class UserControllerMvcTest : AbstractMvcTest() {
                     .content(objectMapper.writeValueAsString(payload)),
             ).andExpect(status().isOk)
             .andExpect(jsonPath("$.deviceId").value(42))
+    }
+
+    @Test
+    fun `DELETE 내 디바이스는 인증 사용자 범위로 비활성화하고 204`() {
+        mockMvc.perform(delete("/api/v1/users/me/devices")).andExpect(status().isNoContent)
+        verify(userDeviceService).deactivateAll(TEST_USER_ID)
     }
 
     // ── Negative cases ────────────────────────────────────────────────────────────

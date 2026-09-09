@@ -342,6 +342,8 @@ class TerrariumServiceTest {
     private class FakeRecordRepository :
         FakeJpaRepository<ActivityRecord, Long>(),
         RecordRepository {
+        override fun findPhotoUrlsByUserId(userId: String): List<String> = store.values.filter { it.user.id == userId }.mapNotNull { it.photoUrl }
+
         var maxRecordedDate: LocalDate? = null
 
         override fun extractId(entity: ActivityRecord): Long = error("not needed in this test")

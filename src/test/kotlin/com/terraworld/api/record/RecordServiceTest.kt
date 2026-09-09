@@ -271,6 +271,8 @@ class RecordServiceTest {
     private class FakeRecordRepository :
         FakeJpaRepository<ActivityRecord, Long>(),
         RecordRepository {
+        override fun findPhotoUrlsByUserId(userId: String): List<String> = store.values.filter { it.user.id == userId }.mapNotNull { it.photoUrl }
+
         var todayCountOverride: Long? = null
         private var seq = 0L
 
