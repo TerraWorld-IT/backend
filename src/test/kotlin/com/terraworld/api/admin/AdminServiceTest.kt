@@ -13,10 +13,17 @@ import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import org.mockito.Mockito.mock
+import org.mockito.Mockito.never
+import org.mockito.Mockito.times
 import org.mockito.Mockito.verify
 import org.mockito.Mockito.`when`
+import org.springframework.test.util.ReflectionTestUtils
+import java.security.SecureRandom
 import java.util.Optional
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
+import kotlin.test.assertTrue
 
 /**
  * code-review CDX-004 (구현 계획서 v4, 2026-05-21): AdminService 검증/해피패스 커버.
@@ -125,6 +132,124 @@ class AdminServiceTest {
         assertEquals(true, created.isActive)
         verify(itemRepository).save(org.mockito.kotlin.any<Item>())
     }
+
+    @Test
+    fun `createItem — slug 누락과 공백은 이름을 정규화하여 생성`() {
+        `when`(itemRepository.save(org.mockito.kotlin.any<Item>())).thenAnswer { it.arguments[0] as Item }
+
+        for (slug in listOf(null, "", "  ")) {
+            val created = createSlugItem("  Café -- Garden １２!  ", slug)
+            assertTrue(Regex("cafe-garden-12-[0-9a-f]{6}").matches(assertNotNull(created.slug)))
+        }
+    }
+
+    @Test
+    fun `createItem — 한글과 기호 이름은 item 접두어로 생성`() {
+        `when`(itemRepository.save(org.mockito.kotlin.any<Item>())).thenAnswer { it.arguments[0] as Item }
+
+        for (name in listOf("작은 선인장", "🌵 !!!")) {
+            val created = createSlugItem(name)
+            assertTrue(Regex("item-[0-9a-f]{6}").matches(assertNotNull(created.slug)))
+        }
+    }
+
+    @Test
+    fun `createItem — 긴 이름은 접미어를 보존하고 전체 50자 이하로 생성`() {
+        `when`(itemRepository.save(org.mockito.kotlin.any<Item>())).thenAnswer { it.arguments[0] as Item }
+
+        val slug = assertNotNull(createSlugItem("A".repeat(80)).slug)
+        assertEquals(50, slug.length)
+        assertTrue(Regex("a{43}-[0-9a-f]{6}").matches(slug))
+        val boundarySlug = assertNotNull(createSlugItem("A".repeat(42) + "-long-name").slug)
+        assertTrue(Regex("a{42}-[0-9a-f]{6}").matches(boundarySlug))
+    }
+
+    @Test
+    fun `createItem — 생성 slug 는 정령 전용 접미어와 충돌하지 않는다`() {
+        `when`(itemRepository.save(org.mockito.kotlin.any<Item>())).thenAnswer { it.arguments[0] as Item }
+
+        val slug = assertNotNull(createSlugItem("cat-spirit").slug)
+        assertTrue(Regex("cat-spirit-[0-9a-f]{6}").matches(slug))
+        assertFalse(slug.endsWith("-spirit"))
+    }
+
+    @Test
+    fun `createItem — 명시 slug 는 기존 공백 제거 외에 변경하지 않는다`() {
+        `when`(itemRepository.save(org.mockito.kotlin.any<Item>())).thenAnswer { it.arguments[0] as Item }
+
+        assertEquals("My_Custom-Slug", createSlugItem("다른 이름", "  My_Custom-Slug  ").slug)
+        verify(itemRepository).findBySlug("My_Custom-Slug")
+    }
+
+    @Test
+    fun `createItem — 생성 slug 충돌 시 새 접미어로 재시도`() {
+        val random = mock(SecureRandom::class.java)
+        var digit = 0
+        `when`(random.nextInt(16)).thenAnswer { digit++ / 6 }
+        ReflectionTestUtils.setField(service, "random", random)
+        val existing = Item(name = "기존", priceType = PriceType.BASIC, priceAmount = 0, assetUrl = "x")
+        `when`(itemRepository.findBySlug("garden-000000")).thenReturn(Optional.of(existing))
+        `when`(itemRepository.save(org.mockito.kotlin.any<Item>())).thenAnswer { it.arguments[0] as Item }
+
+        assertEquals("garden-111111", createSlugItem("Garden").slug)
+        verify(itemRepository).findBySlug("garden-000000")
+        verify(itemRepository).findBySlug("garden-111111")
+        verify(itemRepository, times(2)).findBySlug(org.mockito.kotlin.any())
+    }
+
+    @Test
+    fun `createItem — 다섯 번째 생성 후보까지 성공 가능`() {
+        val existing = Item(name = "기존", priceType = PriceType.BASIC, priceAmount = 0, assetUrl = "x")
+        var attempts = 0
+        `when`(itemRepository.findBySlug(org.mockito.kotlin.any())).thenAnswer {
+            if (++attempts < 5) Optional.of(existing) else Optional.empty<Item>()
+        }
+        `when`(itemRepository.save(org.mockito.kotlin.any<Item>())).thenAnswer { it.arguments[0] as Item }
+
+        assertNotNull(createSlugItem("Garden").slug)
+        verify(itemRepository, times(5)).findBySlug(org.mockito.kotlin.any())
+    }
+
+    @Test
+    fun `createItem — 다섯 번 충돌하면 기존 중복 오류로 종료하고 저장하지 않는다`() {
+        val existing = Item(name = "기존", priceType = PriceType.BASIC, priceAmount = 0, assetUrl = "x")
+        `when`(itemRepository.findBySlug(org.mockito.kotlin.any())).thenReturn(Optional.of(existing))
+
+        val ex = assertThrows<BusinessException> { createSlugItem("Garden") }
+        assertEquals(ErrorCode.ITEM_SLUG_DUPLICATE, ex.errorCode)
+        verify(itemRepository, times(5)).findBySlug(org.mockito.kotlin.any())
+        verify(itemRepository, never()).save(org.mockito.kotlin.any<Item>())
+    }
+
+    @Test
+    fun `생성기는 빈 이름도 처리하지만 createItem 의 빈 이름 거부 계약은 유지`() {
+        val slug = ReflectionTestUtils.invokeMethod<String>(service, "generateUniqueSlug", "")
+        assertTrue(Regex("item-[0-9a-f]{6}").matches(assertNotNull(slug)))
+        assertThrows<IllegalArgumentException> { createSlugItem("") }
+        assertThrows<IllegalArgumentException> { createSlugItem("  ") }
+        verify(itemRepository, never()).save(org.mockito.kotlin.any<Item>())
+    }
+
+    private fun createSlugItem(
+        name: String,
+        slug: String? = null,
+    ): Item =
+        service.createItem(
+            adminUserId = admin,
+            name = name,
+            slug = slug,
+            description = null,
+            categoryId = null,
+            priceType = PriceType.BASIC,
+            priceAmount = 10,
+            tokenPrice = null,
+            rarity = com.terraworld.domain.item.Rarity.COMMON,
+            assetUrl = "🌵",
+            layout = com.terraworld.domain.item.ItemLayout.FOREGROUND,
+            isAnimated = false,
+            width = 512,
+            height = 512,
+        )
 
     @Test
     fun `createItem — slug 중복은 BusinessException`() {
