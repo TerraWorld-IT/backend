@@ -1,6 +1,7 @@
 package com.terraworld.migration
 
 import org.flywaydb.core.Flyway
+import org.flywaydb.core.api.MigrationVersion
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.testcontainers.DockerClientFactory
@@ -47,8 +48,9 @@ class FlywayMigrationSmokeTest {
                     .load()
 
             val result = flyway.migrate()
-            // V1부터 V43까지 전부 적용
+            // V1부터 최신까지 적용하고 V44 포함 여부를 별도로 확인한다.
             assertTrue(result.migrationsExecuted >= 43, "적용된 마이그레이션 수=${result.migrationsExecuted} (>=43 기대)")
+            assertTrue(flyway.info().applied().any { it.version?.version == "44" }, "V44 미적용")
 
             pg.createConnection("").use { conn ->
                 val md = conn.metaData
@@ -315,6 +317,7 @@ class FlywayMigrationSmokeTest {
                 Flyway
                     .configure()
                     .dataSource(pg.jdbcUrl, pg.username, pg.password)
+                    .target("43")
                     .load()
                     .migrate()
             assertEquals(1, result.migrationsExecuted)
@@ -383,6 +386,84 @@ class FlywayMigrationSmokeTest {
                 verifyUserDeleteRace(pg, table, sql, insertFirst = false)
             }
             println("V43_EXECUTED: orphan cleanup + valid row preservation + 4 tables x 2 concurrent orderings + late writes rejected; skipped=0")
+        }
+    }
+
+    @Test
+    fun `V44 직전 최고 버전에서 null slug 를 채우고 재실행해도 변경하지 않는다`() {
+        assumeTrue(dockerAvailable(), "Docker 미가용 — 마이그레이션 스모크 skip (docker_unavailable)")
+
+        PostgreSQLContainer("postgres:16-alpine").use { pg ->
+            pg.start()
+            pg.createConnection("").use { conn ->
+                conn.createStatement().use { st ->
+                    st.execute("CREATE SCHEMA IF NOT EXISTS auth")
+                    st.execute("""CREATE TABLE IF NOT EXISTS auth."user" (id TEXT PRIMARY KEY)""")
+                }
+            }
+
+            val configuration =
+                Flyway
+                    .configure()
+                    .dataSource(pg.jdbcUrl, pg.username, pg.password)
+                    .locations("classpath:db/migration")
+            // V44 직전의 최고 버전을 선택한다. 계정 삭제 변경 통합 후에는 V43을 자동으로 포함한다.
+            val previousVersion =
+                configuration
+                    .load()
+                    .info()
+                    .all()
+                    .mapNotNull { it.version }
+                    .filter { it < MigrationVersion.fromVersion("44") }
+                    .maxOrNull()
+            Flyway
+                .configure()
+                .configuration(configuration)
+                .target(checkNotNull(previousVersion))
+                .load()
+                .migrate()
+
+            val itemId =
+                pg.createConnection("").use { conn ->
+                    conn.createStatement().use { st ->
+                        st
+                            .executeQuery(
+                                """
+                                INSERT INTO items (name, slug, price_type, price_amount, asset_url)
+                                VALUES ('기존 아이템', NULL, 'BASIC', 10, 'legacy.png')
+                                RETURNING id
+                                """.trimIndent(),
+                            ).use { rs ->
+                                assertTrue(rs.next())
+                                rs.getLong(1)
+                            }
+                    }
+                }
+            val flyway =
+                Flyway
+                    .configure()
+                    .dataSource(pg.jdbcUrl, pg.username, pg.password)
+                    .locations("classpath:db/migration")
+                    .target("44")
+                    .load()
+            assertEquals(1, flyway.migrate().migrationsExecuted)
+            assertTrue(flyway.info().applied().any { it.version?.version == "44" }, "V44 미적용")
+
+            pg.createConnection("").use { conn ->
+                conn.prepareStatement("SELECT slug FROM items WHERE id = ?").use { st ->
+                    st.setLong(1, itemId)
+                    st.executeQuery().use { rs ->
+                        assertTrue(rs.next())
+                        assertEquals("legacy-item-$itemId", rs.getString(1))
+                    }
+                }
+                // Flyway 이력 생략과 별개로 실제 마이그레이션 SQL 자체의 멱등성을 검증한다.
+                val sql = checkNotNull(javaClass.getResource("/db/migration/V44__items_slug_backfill.sql")).readText()
+                conn.createStatement().use { st ->
+                    assertEquals(0, st.executeUpdate(sql))
+                }
+            }
+            assertEquals(0, flyway.migrate().migrationsExecuted)
         }
     }
 

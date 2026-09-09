@@ -14,6 +14,8 @@ import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import java.net.URI
+import java.security.SecureRandom
+import java.text.Normalizer
 
 /**
  * N5 / P-ADMIN-001 (구현 계획서 v4, 2026-05-21): 관리자 backend API.
@@ -33,6 +35,12 @@ class AdminService(
     private val userRepository: UserRepository,
     private val auditService: AuditService,
 ) {
+    companion object {
+        private const val SLUG_SUFFIX_LENGTH = 6
+        private const val MAX_GENERATION_RETRIES = 5
+    }
+
+    private val random = SecureRandom()
     private val log = LoggerFactory.getLogger(javaClass)
 
     /** 카테고리 보상 조정 (이슬/토큰 지급량, 일일 한도). */
@@ -62,7 +70,7 @@ class AdminService(
     /**
      * 아이템 생성 (admin 상점 카탈로그 등록). (WP-W9, fullstack-ultraplan 2026-06-04)
      *
-     * slug 제공 시 고유성 검증(중복 = 409). category 지정 시 존재 검증(부재 = 404).
+     * slug 미제공 시 자동 생성, 제공 시 고유성 검증(중복 = 409). category 지정 시 존재 검증(부재 = 404).
      * 생성 직후 isActive=true. 입력 검증은 generated DTO(@Min/@Size) + 본 가드 이중.
      */
     @Transactional
@@ -117,7 +125,7 @@ class AdminService(
         val saved =
             itemRepository.save(
                 Item(
-                    slug = normalizedSlug,
+                    slug = normalizedSlug ?: generateUniqueSlug(name),
                     name = name.trim(),
                     description = description?.trim()?.takeIf { it.isNotBlank() },
                     category = category,
@@ -137,6 +145,32 @@ class AdminService(
         audit(adminUserId, "ADMIN_CREATE_ITEM", "Item", saved.id.toString())
         log.info("admin.item.create user={} item={} name={}", adminUserId, saved.id, saved.name)
         return saved
+    }
+
+    private fun generateUniqueSlug(name: String): String {
+        val base =
+            Normalizer
+                .normalize(name, Normalizer.Form.NFKD)
+                .lowercase()
+                .replace(Regex("\\p{M}+"), "")
+                .replace(Regex("[^a-z0-9-]+"), "-")
+                .replace(Regex("-+"), "-")
+                .trim('-')
+                .ifEmpty { "item" }
+                .take(50 - SLUG_SUFFIX_LENGTH - 1)
+                .trimEnd('-')
+        repeat(MAX_GENERATION_RETRIES) {
+            val suffix =
+                buildString(SLUG_SUFFIX_LENGTH) {
+                    repeat(SLUG_SUFFIX_LENGTH) {
+                        append(random.nextInt(16).toString(16))
+                    }
+                }
+            val candidate = "$base-$suffix"
+            if (itemRepository.findBySlug(candidate).isEmpty) return candidate
+        }
+        // 다섯 번 모두 충돌하면 기존 중복 오류 계약을 유지한다.
+        throw BusinessException(ErrorCode.ITEM_SLUG_DUPLICATE)
     }
 
     /** 아이템 활성/비활성 토글 (상점 노출 제어 — soft delete 대용). */
