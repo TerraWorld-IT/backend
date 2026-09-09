@@ -168,9 +168,33 @@ class UserDeviceServiceTest {
         assertEquals(0, repo.all().size)
     }
 
+    @Test
+    fun `전체 비활성화 후 본인 활성 디바이스는 0이며 타인 디바이스는 유지된다`() {
+        service.upsert("user-1", DeviceRegistrationRequest(token = "one", platform = "ANDROID"))
+        service.upsert("user-1", DeviceRegistrationRequest(token = "two", platform = "IOS"))
+        service.upsert("user-2", DeviceRegistrationRequest(token = "other", platform = "WEB"))
+        service.deactivateAll("user-1")
+        service.deactivateAll("user-1")
+        assertEquals(0, repo.findAllByUserIdAndIsActiveTrue("user-1").size)
+        assertEquals(1, repo.findAllByUserIdAndIsActiveTrue("user-2").size)
+        assertEquals(3, repo.all().size)
+    }
+
     private class FakeRepo :
         FakeJpaRepository<UserDevice, Long>(),
         UserDeviceRepository {
+        override fun deactivateAllByUserId(userId: String): Int {
+            val rows = findAllByUserIdAndIsActiveTrue(userId)
+            rows.forEach { it.isActive = false }
+            return rows.size
+        }
+
+        override fun deleteAllByUserId(userId: String): Int {
+            val rows = store.values.filter { it.userId == userId }
+            deleteAll(rows)
+            return rows.size
+        }
+
         private var nextId = 1L
 
         override fun extractId(entity: UserDevice): Long = entity.id

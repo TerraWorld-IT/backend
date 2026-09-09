@@ -7,6 +7,7 @@ import jakarta.persistence.IdClass
 import jakarta.persistence.Table
 import jakarta.persistence.Version
 import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.data.jpa.repository.Modifying
 import org.springframework.data.jpa.repository.Query
 import org.springframework.data.repository.query.Param
 import java.io.Serializable
@@ -48,6 +49,11 @@ data class ExchangeDailyUsageId(
 ) : Serializable
 
 interface ExchangeDailyUsageRepository : JpaRepository<ExchangeDailyUsage, ExchangeDailyUsageId> {
+    /** 계정 삭제 시 FK 없는 사용자 행을 즉시 일괄 삭제한다. */
+    @Modifying(flushAutomatically = true)
+    @Query("DELETE FROM ExchangeDailyUsage e WHERE e.userId = :userId")
+    fun deleteAllByUserId(userId: String): Int
+
     fun findByUserIdAndFromCodeAndToCodeAndUsageDate(
         userId: String,
         fromCode: String,

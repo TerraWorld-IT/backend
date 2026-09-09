@@ -1,5 +1,6 @@
 package com.terraworld.api.internal
 
+import com.terraworld.api.user.UserDeletionService
 import com.terraworld.security.UserBootstrapService
 import jakarta.annotation.PostConstruct
 import jakarta.validation.Valid
@@ -11,6 +12,8 @@ import org.springframework.beans.factory.annotation.Value
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.security.access.AccessDeniedException
+import org.springframework.web.bind.annotation.DeleteMapping
+import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestHeader
@@ -41,9 +44,26 @@ import java.security.MessageDigest
 @RequestMapping("/api/v1/internal/users")
 class InternalUserController(
     private val userBootstrapService: UserBootstrapService,
+    private val userDeletionService: UserDeletionService,
     @Value("\${auth.internal.token}") private val expectedToken: String,
 ) {
     private val log = LoggerFactory.getLogger(InternalUserController::class.java)
+
+    /**
+     * 인증 서버의 탈퇴 재시도를 허용하도록 미존재 사용자도 204를 반환한다.
+     * 내부 토큰 불일치는 bootstrap과 동일하게 403으로 거부한다.
+     */
+    @DeleteMapping("/{userId}")
+    fun deleteUser(
+        @RequestHeader("X-Internal-Token", required = false) token: String?,
+        @PathVariable @NotBlank @Size(max = 128) userId: String,
+    ): ResponseEntity<Unit> {
+        if (!isTokenValid(token)) {
+            throw AccessDeniedException("invalid internal token")
+        }
+        userDeletionService.deleteUser(userId)
+        return ResponseEntity.noContent().build()
+    }
 
     /**
      * SEC-031: a blank `INTERNAL_API_TOKEN` is a configuration error.

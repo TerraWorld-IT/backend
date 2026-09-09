@@ -504,6 +504,12 @@ class HabitServiceTest {
     private class FakeHabitTrackerRepository :
         FakeJpaRepository<HabitTracker, Long>(),
         HabitTrackerRepository {
+        override fun deleteAllByUserId(userId: String): Int {
+            val rows = store.values.filter { it.userId == userId }
+            deleteAll(rows)
+            return rows.size
+        }
+
         private var seq = 1000L
 
         override fun extractId(entity: HabitTracker): Long = entity.id
@@ -575,6 +581,8 @@ class HabitServiceTest {
     private class FakeHabitPairRequestRepository :
         FakeJpaRepository<HabitPairRequest, Long>(),
         HabitPairRequestRepository {
+        override fun findOpenByUserId(userId: String): List<HabitPairRequest> = store.values.filter { it.isOpen() && (it.requesterUserId == userId || it.partnerUserId == userId) }
+
         private var seq = 1L
 
         override fun extractId(entity: HabitPairRequest): Long = entity.id

@@ -84,6 +84,11 @@ enum class HabitStatus {
 }
 
 interface HabitTrackerRepository : JpaRepository<HabitTracker, Long> {
+    /** 계정 삭제 시 FK 없는 사용자 행을 즉시 일괄 삭제한다. */
+    @Modifying(flushAutomatically = true)
+    @Query("DELETE FROM HabitTracker e WHERE e.userId = :userId")
+    fun deleteAllByUserId(userId: String): Int
+
     fun findAllByUserIdAndStatusIn(
         userId: String,
         statuses: Collection<HabitStatus>,

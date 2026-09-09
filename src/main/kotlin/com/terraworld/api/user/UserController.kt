@@ -28,6 +28,11 @@ class UserController(
     private val userService: UserService,
     private val userDeviceService: UserDeviceService,
 ) : UserApi {
+    override fun deactivateMyDevices(): ResponseEntity<Unit> {
+        userDeviceService.deactivateAll(SecurityUtil.getCurrentUserId())
+        return ResponseEntity.noContent().build()
+    }
+
     @Operation(summary = "내 정보 조회", description = "현재 로그인한 유저의 전체 데이터를 반환합니다")
     override fun getMe(): ResponseEntity<UserMeResponse> {
         val current = SecurityUtil.getCurrentUser()

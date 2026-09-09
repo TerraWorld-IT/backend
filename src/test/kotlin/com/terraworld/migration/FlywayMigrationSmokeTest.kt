@@ -5,6 +5,11 @@ import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.testcontainers.DockerClientFactory
 import org.testcontainers.containers.PostgreSQLContainer
+import java.sql.SQLException
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.TimeUnit
+import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -42,8 +47,8 @@ class FlywayMigrationSmokeTest {
                     .load()
 
             val result = flyway.migrate()
-            // V1부터 V42까지 전부 적용
-            assertTrue(result.migrationsExecuted >= 42, "적용된 마이그레이션 수=${result.migrationsExecuted} (>=42 기대)")
+            // V1부터 V43까지 전부 적용
+            assertTrue(result.migrationsExecuted >= 43, "적용된 마이그레이션 수=${result.migrationsExecuted} (>=43 기대)")
 
             pg.createConnection("").use { conn ->
                 val md = conn.metaData
@@ -228,6 +233,217 @@ class FlywayMigrationSmokeTest {
                     one("SELECT COUNT(*) FROM user_grants WHERE user_id = 'u1' AND grant_type = 'ITEM' AND grant_ref = 'cat-spirit' AND idempotency_key LIKE 'growth:%:spirit'").use { assertTrue(it.getInt(1) == 1) }
                     one("SELECT COUNT(*) FROM user_items ui JOIN items i ON i.id = ui.item_id WHERE ui.user_id = 'u1' AND i.slug = 'cat-spirit'").use { assertTrue(it.getInt(1) == 1) }
                     one("SELECT COUNT(*) FROM user_grants WHERE user_id IN ('u2','u3')").use { assertTrue(it.getInt(1) == 0) }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun `V43은 기존 고아를 정리하고 네 테이블의 삭제 경합과 늦은 쓰기를 차단한다`() {
+        assumeTrue(dockerAvailable(), "Docker 미가용 — V43 스모크 skip (docker_unavailable)")
+        PostgreSQLContainer("postgres:16-alpine").use { pg ->
+            pg.start()
+            val inserts =
+                linkedMapOf(
+                    "user_devices" to "INSERT INTO user_devices (user_id, token, platform) VALUES ('%s', 'token', 'ANDROID')",
+                    "habit_trackers" to "INSERT INTO habit_trackers (user_id, title, start_date) VALUES ('%s', '습관', CURRENT_DATE)",
+                    "ad_reward_nonce_inbox" to "INSERT INTO ad_reward_nonce_inbox (user_id, nonce) VALUES ('%s', '%s')",
+                    "exchange_daily_usage" to "INSERT INTO exchange_daily_usage (user_id, from_code, to_code, usage_date) VALUES ('%s', 'DEW', 'COIN', CURRENT_DATE)",
+                )
+            pg.createConnection("").use { conn ->
+                conn.createStatement().use { st ->
+                    st.execute("CREATE SCHEMA auth")
+                    st.execute("""CREATE TABLE auth."user" (id TEXT PRIMARY KEY)""")
+                }
+            }
+            Flyway
+                .configure()
+                .dataSource(pg.jdbcUrl, pg.username, pg.password)
+                .target("42")
+                .load()
+                .migrate()
+            pg.createConnection("").use { conn ->
+                conn.createStatement().use { st ->
+                    st.execute("""INSERT INTO auth."user" VALUES ('valid')""")
+                    st.execute("INSERT INTO users (id, nickname) VALUES ('valid', '유지')")
+                    inserts.values.forEach { sql ->
+                        st.execute(sql.format("orphan", "orphan"))
+                        st.execute(sql.format("valid", "valid"))
+                    }
+                    st.execute("INSERT INTO habit_cycles (tracker_id, user_id, cycle_no, started_on) SELECT id, user_id, 1, CURRENT_DATE FROM habit_trackers")
+                    st.execute(
+                        "INSERT INTO habit_pair_requests (requester_tracker_id, requester_user_id, partner_user_id, kind, status, expires_at) " +
+                            "SELECT id, user_id, 'valid', 'START', 'REQUESTED', NOW() FROM habit_trackers WHERE user_id = 'orphan'",
+                    )
+                    // 고아와 연결된 정상 사용자의 START 양방향·EXTEND 양방향·만료 요청 및 무관한 대기.
+                    st.execute(
+                        """
+                        INSERT INTO habit_trackers(id, user_id, title, start_date, status, partner_tracker_id, friend_link_id) VALUES
+                          (9201, 'orphan', '시작 요청', CURRENT_DATE, 'PENDING', 9202, 77),
+                          (9202, 'valid', '시작 수신', CURRENT_DATE, 'PENDING', 9201, 77),
+                          (9211, 'orphan', '연장 수신', CURRENT_DATE, 'ACTIVE', 9212, 78),
+                          (9212, 'valid', '연장 요청', CURRENT_DATE, 'PENDING', 9211, 78),
+                          (9221, 'orphan', '연장 요청', CURRENT_DATE, 'PENDING', 9222, 79),
+                          (9222, 'valid', '연장 수신', CURRENT_DATE, 'COMPLETED_UNCLAIMED', 9221, 79),
+                          (9231, 'orphan', '만료 연장 수신', CURRENT_DATE, 'ACTIVE', 9232, 80),
+                          (9232, 'valid', '만료 연장 요청', CURRENT_DATE, 'PENDING', 9231, 80),
+                          (9241, 'orphan', '시작 수신', CURRENT_DATE, 'PENDING', 9242, 81),
+                          (9242, 'valid', '시작 요청', CURRENT_DATE, 'PENDING', 9241, 81),
+                          (9252, 'valid', '무관한 대기', CURRENT_DATE, 'PENDING', NULL, NULL)
+                        """.trimIndent(),
+                    )
+                    st.execute(
+                        """
+                        INSERT INTO habit_cycles(id, tracker_id, user_id, cycle_no, started_on, reward_sparkle) VALUES
+                          (9222, 9222, 'valid', 1, CURRENT_DATE - 6, 200)
+                        """.trimIndent(),
+                    )
+                    st.execute("UPDATE habit_trackers SET current_cycle_id = 9222, cycle_completed_at = TIMESTAMP '2026-09-01 12:00:00' WHERE id = 9222")
+                    st.execute(
+                        """
+                        INSERT INTO habit_pair_requests(requester_tracker_id, requester_user_id, partner_tracker_id, partner_user_id, kind, status, expires_at) VALUES
+                          (9201, 'orphan', 9202, 'valid', 'START', 'REQUESTED', NOW() + INTERVAL '7 days'),
+                          (9212, 'valid', 9211, 'orphan', 'EXTEND', 'REQUESTED', NOW() + INTERVAL '7 days'),
+                          (9221, 'orphan', 9222, 'valid', 'EXTEND', 'REQUESTED', NOW() + INTERVAL '7 days'),
+                          (9232, 'valid', 9231, 'orphan', 'EXTEND', 'REQUESTED', NOW() - INTERVAL '1 day'),
+                          (9242, 'valid', 9241, 'orphan', 'START', 'REQUESTED', NOW() + INTERVAL '7 days')
+                        """.trimIndent(),
+                    )
+                }
+            }
+            val result =
+                Flyway
+                    .configure()
+                    .dataSource(pg.jdbcUrl, pg.username, pg.password)
+                    .load()
+                    .migrate()
+            assertEquals(1, result.migrationsExecuted)
+            pg.createConnection("").use { conn ->
+                conn.createStatement().use { st ->
+                    (inserts.keys + "habit_cycles").forEach { table ->
+                        st.executeQuery("SELECT COUNT(*) FROM $table WHERE user_id = 'orphan'").use { rs ->
+                            assertTrue(rs.next())
+                            assertEquals(0, rs.getInt(1), "$table 고아 정리")
+                        }
+                        st.executeQuery("SELECT COUNT(*) FROM $table WHERE user_id = 'valid'").use { rs ->
+                            assertTrue(rs.next())
+                            val expected =
+                                when (table) {
+                                    "habit_trackers" -> 7
+                                    "habit_cycles" -> 2
+                                    else -> 1
+                                }
+                            assertEquals(expected, rs.getInt(1), "$table 정상 행 보존")
+                        }
+                    }
+                    st.executeQuery("SELECT COUNT(*) FROM habit_pair_requests").use { rs ->
+                        assertTrue(rs.next())
+                        assertEquals(0, rs.getInt(1), "고아 트래커의 하위 요청 cascade")
+                    }
+                    st.executeQuery("SELECT COUNT(*) FROM habit_trackers WHERE id IN (9202, 9212, 9232, 9242) AND status = 'BROKEN'").use { rs ->
+                        assertTrue(rs.next())
+                        assertEquals(4, rs.getInt(1), "START 양방향 및 EXTEND 요청자는 만료 여부와 무관하게 종료")
+                    }
+                    st
+                        .executeQuery(
+                            "SELECT status, current_cycle_id, cycle_completed_at = TIMESTAMP '2026-09-01 12:00:00' FROM habit_trackers WHERE id = 9222",
+                        ).use { rs ->
+                            assertTrue(rs.next())
+                            assertEquals("COMPLETED_UNCLAIMED", rs.getString(1), "EXTEND 수신자의 기존 사이클 유지")
+                            assertEquals(9222L, rs.getLong(2))
+                            assertTrue(rs.getBoolean(3), "완주 시각 보존")
+                        }
+                    st.executeQuery("SELECT reward_sparkle, cycle_no FROM habit_cycles WHERE id = 9222").use { rs ->
+                        assertTrue(rs.next())
+                        assertEquals(200L, rs.getLong(1))
+                        assertEquals(1, rs.getInt(2))
+                    }
+                    st
+                        .executeQuery(
+                            "SELECT COUNT(*) FROM habit_trackers WHERE id IN (9202, 9212, 9222, 9232, 9242) AND partner_tracker_id IS NULL AND friend_link_id IS NULL AND version = 1",
+                        ).use { rs ->
+                            assertTrue(rs.next())
+                            assertEquals(5, rs.getInt(1), "정상 트래커의 고아 연결 해제 및 버전 갱신")
+                        }
+                    st.executeQuery("SELECT status, version FROM habit_trackers WHERE id = 9252").use { rs ->
+                        assertTrue(rs.next())
+                        assertEquals("PENDING", rs.getString(1), "고아와 무관한 대기 상태 보존")
+                        assertEquals(0L, rs.getLong(2))
+                    }
+                    inserts.forEach { (table, sql) ->
+                        val ex = assertFailsWith<SQLException> { st.execute(sql.format("missing", "missing")) }
+                        assertEquals("23503", ex.sqlState, "$table 탈퇴 후 쓰기 거부")
+                    }
+                }
+            }
+            inserts.forEach { (table, sql) ->
+                // INSERT가 먼저 FK 잠금을 잡으면 사용자 삭제가 기다린 뒤 새 행까지 cascade한다.
+                verifyUserDeleteRace(pg, table, sql, insertFirst = true)
+                // DELETE가 먼저 잠금을 잡으면 대기하던 INSERT가 삭제 커밋 후 FK 위반으로 실패한다.
+                verifyUserDeleteRace(pg, table, sql, insertFirst = false)
+            }
+            println("V43_EXECUTED: orphan cleanup + valid row preservation + 4 tables x 2 concurrent orderings + late writes rejected; skipped=0")
+        }
+    }
+
+    private fun verifyUserDeleteRace(
+        pg: PostgreSQLContainer<*>,
+        table: String,
+        sql: String,
+        insertFirst: Boolean,
+    ) {
+        val userId = "race-$table-$insertFirst"
+        pg.createConnection("").use { first ->
+            pg.createConnection("").use { second ->
+                first.createStatement().use { st ->
+                    st.execute("""INSERT INTO auth."user" VALUES ('$userId')""")
+                    st.execute("INSERT INTO users (id, nickname) VALUES ('$userId', '경합')")
+                }
+                val secondPid =
+                    second.createStatement().use { st ->
+                        st.execute("SET statement_timeout = '10s'")
+                        st.executeQuery("SELECT pg_backend_pid()").use { rs ->
+                            rs.next()
+                            rs.getInt(1)
+                        }
+                    }
+                first.autoCommit = false
+                val insert = sql.format(userId, userId)
+                val delete = "DELETE FROM users WHERE id = '$userId'"
+                first.createStatement().use { it.execute(if (insertFirst) insert else delete) }
+                val pending =
+                    CompletableFuture.supplyAsync {
+                        try {
+                            second.createStatement().use { it.execute(if (insertFirst) delete else insert) }
+                            "committed"
+                        } catch (ex: SQLException) {
+                            ex.sqlState
+                        }
+                    }
+                try {
+                    val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+                    var blocked = false
+                    while (!blocked && !pending.isDone && System.nanoTime() < deadline) {
+                        first.createStatement().use { st ->
+                            st.executeQuery("SELECT cardinality(pg_blocking_pids($secondPid)) > 0").use { rs ->
+                                rs.next()
+                                blocked = rs.getBoolean(1)
+                            }
+                        }
+                        if (!blocked) Thread.sleep(10)
+                    }
+                    assertTrue(blocked, "$table 경합 순서 insertFirst=$insertFirst 잠금 대기 실증")
+                    first.commit()
+                    assertEquals(if (insertFirst) "committed" else "23503", pending.get(10, TimeUnit.SECONDS))
+                    first.createStatement().use { st ->
+                        st.executeQuery("SELECT COUNT(*) FROM $table WHERE user_id = '$userId'").use { rs ->
+                            assertTrue(rs.next())
+                            assertEquals(0, rs.getInt(1), "$table 경합 후 잔존 없음")
+                        }
+                    }
+                } finally {
+                    first.rollback()
+                    pending.get(10, TimeUnit.SECONDS)
                 }
             }
         }
