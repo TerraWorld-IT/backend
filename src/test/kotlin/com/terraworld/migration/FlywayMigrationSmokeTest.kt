@@ -275,6 +275,40 @@ class FlywayMigrationSmokeTest {
                         "INSERT INTO habit_pair_requests (requester_tracker_id, requester_user_id, partner_user_id, kind, status, expires_at) " +
                             "SELECT id, user_id, 'valid', 'START', 'REQUESTED', NOW() FROM habit_trackers WHERE user_id = 'orphan'",
                     )
+                    // 고아와 연결된 정상 사용자의 START 양방향·EXTEND 양방향·만료 요청 및 무관한 대기.
+                    st.execute(
+                        """
+                        INSERT INTO habit_trackers(id, user_id, title, start_date, status, partner_tracker_id, friend_link_id) VALUES
+                          (9201, 'orphan', '시작 요청', CURRENT_DATE, 'PENDING', 9202, 77),
+                          (9202, 'valid', '시작 수신', CURRENT_DATE, 'PENDING', 9201, 77),
+                          (9211, 'orphan', '연장 수신', CURRENT_DATE, 'ACTIVE', 9212, 78),
+                          (9212, 'valid', '연장 요청', CURRENT_DATE, 'PENDING', 9211, 78),
+                          (9221, 'orphan', '연장 요청', CURRENT_DATE, 'PENDING', 9222, 79),
+                          (9222, 'valid', '연장 수신', CURRENT_DATE, 'COMPLETED_UNCLAIMED', 9221, 79),
+                          (9231, 'orphan', '만료 연장 수신', CURRENT_DATE, 'ACTIVE', 9232, 80),
+                          (9232, 'valid', '만료 연장 요청', CURRENT_DATE, 'PENDING', 9231, 80),
+                          (9241, 'orphan', '시작 수신', CURRENT_DATE, 'PENDING', 9242, 81),
+                          (9242, 'valid', '시작 요청', CURRENT_DATE, 'PENDING', 9241, 81),
+                          (9252, 'valid', '무관한 대기', CURRENT_DATE, 'PENDING', NULL, NULL)
+                        """.trimIndent(),
+                    )
+                    st.execute(
+                        """
+                        INSERT INTO habit_cycles(id, tracker_id, user_id, cycle_no, started_on, reward_sparkle) VALUES
+                          (9222, 9222, 'valid', 1, CURRENT_DATE - 6, 200)
+                        """.trimIndent(),
+                    )
+                    st.execute("UPDATE habit_trackers SET current_cycle_id = 9222, cycle_completed_at = TIMESTAMP '2026-09-01 12:00:00' WHERE id = 9222")
+                    st.execute(
+                        """
+                        INSERT INTO habit_pair_requests(requester_tracker_id, requester_user_id, partner_tracker_id, partner_user_id, kind, status, expires_at) VALUES
+                          (9201, 'orphan', 9202, 'valid', 'START', 'REQUESTED', NOW() + INTERVAL '7 days'),
+                          (9212, 'valid', 9211, 'orphan', 'EXTEND', 'REQUESTED', NOW() + INTERVAL '7 days'),
+                          (9221, 'orphan', 9222, 'valid', 'EXTEND', 'REQUESTED', NOW() + INTERVAL '7 days'),
+                          (9232, 'valid', 9231, 'orphan', 'EXTEND', 'REQUESTED', NOW() - INTERVAL '1 day'),
+                          (9242, 'valid', 9241, 'orphan', 'START', 'REQUESTED', NOW() + INTERVAL '7 days')
+                        """.trimIndent(),
+                    )
                 }
             }
             val result =
@@ -293,12 +327,48 @@ class FlywayMigrationSmokeTest {
                         }
                         st.executeQuery("SELECT COUNT(*) FROM $table WHERE user_id = 'valid'").use { rs ->
                             assertTrue(rs.next())
-                            assertEquals(1, rs.getInt(1), "$table 정상 행 보존")
+                            val expected =
+                                when (table) {
+                                    "habit_trackers" -> 7
+                                    "habit_cycles" -> 2
+                                    else -> 1
+                                }
+                            assertEquals(expected, rs.getInt(1), "$table 정상 행 보존")
                         }
                     }
                     st.executeQuery("SELECT COUNT(*) FROM habit_pair_requests").use { rs ->
                         assertTrue(rs.next())
                         assertEquals(0, rs.getInt(1), "고아 트래커의 하위 요청 cascade")
+                    }
+                    st.executeQuery("SELECT COUNT(*) FROM habit_trackers WHERE id IN (9202, 9212, 9232, 9242) AND status = 'BROKEN'").use { rs ->
+                        assertTrue(rs.next())
+                        assertEquals(4, rs.getInt(1), "START 양방향 및 EXTEND 요청자는 만료 여부와 무관하게 종료")
+                    }
+                    st
+                        .executeQuery(
+                            "SELECT status, current_cycle_id, cycle_completed_at = TIMESTAMP '2026-09-01 12:00:00' FROM habit_trackers WHERE id = 9222",
+                        ).use { rs ->
+                            assertTrue(rs.next())
+                            assertEquals("COMPLETED_UNCLAIMED", rs.getString(1), "EXTEND 수신자의 기존 사이클 유지")
+                            assertEquals(9222L, rs.getLong(2))
+                            assertTrue(rs.getBoolean(3), "완주 시각 보존")
+                        }
+                    st.executeQuery("SELECT reward_sparkle, cycle_no FROM habit_cycles WHERE id = 9222").use { rs ->
+                        assertTrue(rs.next())
+                        assertEquals(200L, rs.getLong(1))
+                        assertEquals(1, rs.getInt(2))
+                    }
+                    st
+                        .executeQuery(
+                            "SELECT COUNT(*) FROM habit_trackers WHERE id IN (9202, 9212, 9222, 9232, 9242) AND partner_tracker_id IS NULL AND friend_link_id IS NULL AND version = 1",
+                        ).use { rs ->
+                            assertTrue(rs.next())
+                            assertEquals(5, rs.getInt(1), "정상 트래커의 고아 연결 해제 및 버전 갱신")
+                        }
+                    st.executeQuery("SELECT status, version FROM habit_trackers WHERE id = 9252").use { rs ->
+                        assertTrue(rs.next())
+                        assertEquals("PENDING", rs.getString(1), "고아와 무관한 대기 상태 보존")
+                        assertEquals(0L, rs.getLong(2))
                     }
                     inserts.forEach { (table, sql) ->
                         val ex = assertFailsWith<SQLException> { st.execute(sql.format("missing", "missing")) }

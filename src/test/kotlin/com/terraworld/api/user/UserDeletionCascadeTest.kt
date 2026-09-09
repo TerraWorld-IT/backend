@@ -95,15 +95,19 @@ class UserDeletionCascadeTest {
                 }
                 verify(photoStorage, never()).delete(any())
                 assertEquals(2, count(jdbc, "habit_trackers", "id IN (9012, 9042) AND status = 'PENDING'"))
-                assertEquals(1, count(jdbc, "habit_trackers", "id = 9022 AND status = 'PENDING'"))
+                assertEquals(2, count(jdbc, "habit_trackers", "id IN (9022, 9052) AND status = 'PENDING'"))
                 assertEquals(1, count(jdbc, "categories", "id = 9003 AND owner_user_id = 'deleted-user'"))
                 predicates.forEach { (table, predicate) ->
                     assertTrue(count(jdbc, table, predicate) > 0, "$table 롤백 후 보존")
                 }
 
                 service.deleteUser("deleted-user")
+                val rowsAfterDeletion = remainingRows(jdbc)
+                val photoDeletesAfterDeletion = photoDeletes.toList()
                 service.deleteUser("deleted-user")
                 service.deleteUser("never-existed")
+                assertEquals(rowsAfterDeletion, remainingRows(jdbc), "이미 삭제되거나 미존재인 사용자 재시도는 DB 행을 변경하지 않는다")
+                assertEquals(photoDeletesAfterDeletion, photoDeletes, "재시도는 R2 삭제를 추가로 호출하지 않는다")
                 predicates.forEach { (table, predicate) ->
                     assertEquals(0, count(jdbc, table, predicate), "$table 삭제 결과")
                 }
@@ -112,11 +116,12 @@ class UserDeletionCascadeTest {
                 assertEquals(auditBefore, jdbc.queryForList("SELECT * FROM audit_logs ORDER BY id"))
                 assertEquals(0, count(jdbc, "activity_records", "partner_user_id = 'deleted-user'"))
                 assertEquals(0, count(jdbc, "invites", "invitee_user_id = 'deleted-user'"))
-                assertEquals(2, count(jdbc, "habit_trackers", "user_id = 'keep-user' AND status = 'ACTIVE'"))
+                assertEquals(1, count(jdbc, "habit_trackers", "user_id = 'keep-user' AND status = 'ACTIVE'"))
                 assertEquals(2, count(jdbc, "habit_trackers", "id IN (9012, 9042) AND status = 'BROKEN'"))
-                assertEquals(1, count(jdbc, "habit_trackers", "id = 9022 AND status = 'ACTIVE' AND current_cycle_id = 9022"))
+                assertEquals(1, count(jdbc, "habit_trackers", "id = 9022 AND status = 'BROKEN' AND current_cycle_id = 9022"))
+                assertEquals(1, count(jdbc, "habit_trackers", "id = 9052 AND status = 'BROKEN' AND current_cycle_id = 9052"), "만료된 EXTEND 요청자는 재활성화되지 않는다")
                 assertEquals(1, count(jdbc, "habit_trackers", "id = 9032 AND status = 'COMPLETED_UNCLAIMED' AND current_cycle_id = 9032"))
-                assertEquals(4, count(jdbc, "habit_trackers", "id IN (9012, 9022, 9032, 9042) AND partner_tracker_id IS NULL AND friend_link_id IS NULL"))
+                assertEquals(5, count(jdbc, "habit_trackers", "id IN (9012, 9022, 9032, 9042, 9052) AND partner_tracker_id IS NULL AND friend_link_id IS NULL"))
                 assertEquals(1, count(jdbc, "categories", "id = 9003 AND owner_user_id IS NULL AND is_custom = TRUE"))
                 assertEquals(0, count(jdbc, "categories", "id = 9001"), "비공유 커스텀 카테고리는 cascade 삭제")
                 assertEquals(cyclesBefore, jdbc.queryForList("SELECT * FROM habit_cycles WHERE user_id = 'keep-user' ORDER BY id"))
@@ -177,6 +182,11 @@ class UserDeletionCascadeTest {
             put("categories", count(jdbc, "categories", "owner_user_id = 'keep-user'"))
             put("terrarium_items", count(jdbc, "terrarium_items", "terrarium_id = 9002"))
             put("terrarium_tier_backgrounds", count(jdbc, "terrarium_tier_backgrounds", "terrarium_id = 9002"))
+        }
+
+    private fun remainingRows(jdbc: JdbcTemplate): Map<String, List<Map<String, Any>>> =
+        deletionPredicates().keys.associateWith { table ->
+            jdbc.queryForList("SELECT * FROM $table t ORDER BY to_jsonb(t)::text")
         }
 
     private fun count(

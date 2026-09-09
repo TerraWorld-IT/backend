@@ -15,11 +15,13 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
+import org.mockito.kotlin.clearInvocations
 import org.mockito.kotlin.doThrow
 import org.mockito.kotlin.inOrder
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
 import org.mockito.kotlin.verify
+import org.mockito.kotlin.verifyNoInteractions
 import org.mockito.kotlin.verifyNoMoreInteractions
 import org.mockito.kotlin.whenever
 import org.springframework.transaction.support.TransactionSynchronization
@@ -89,10 +91,19 @@ class UserDeletionServiceTest {
     }
 
     @Test
-    fun `이미 없는 사용자 재삭제도 성공한다`() {
+    fun `이미 없는 사용자 재삭제는 DB 변경과 R2 호출 없이 성공한다`() {
         service.deleteUser("deleted-user")
+        TransactionSynchronizationManager.getSynchronizations().forEach { it.afterCommit() }
+        TransactionSynchronizationManager.clearSynchronization()
+        TransactionSynchronizationManager.initSynchronization()
+        clearInvocations(records, devices, trackers, nonces, exchanges, photos, categories, requests)
+
         service.deleteUser("deleted-user")
+        service.deleteUser("never-existed")
+
         assertFalse(users.existsById("deleted-user"))
+        assertTrue(TransactionSynchronizationManager.getSynchronizations().isEmpty())
+        verifyNoInteractions(records, devices, trackers, nonces, exchanges, photos, categories, requests)
     }
 
     @Test

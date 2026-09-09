@@ -43,6 +43,15 @@ class InternalUserControllerMvcTest {
     }
 
     @Test
+    fun `정확히 128자인 사용자 ID는 204이며 삭제 서비스를 호출한다`() {
+        val userId = "u".repeat(128)
+        mockMvc
+            .perform(delete("/api/v1/internal/users/{userId}", userId).header("X-Internal-Token", "internal-test-token"))
+            .andExpect(status().isNoContent)
+        verify(userDeletionService).deleteUser(userId)
+    }
+
+    @Test
     fun `공백 또는 128자를 초과하는 사용자 ID는 400이며 삭제하지 않는다`() {
         listOf(" ", "u".repeat(129)).forEach { userId ->
             mockMvc

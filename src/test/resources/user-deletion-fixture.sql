@@ -75,13 +75,17 @@ VALUES (9011, 'deleted-user', '시작 송신', CURRENT_DATE, 'PENDING', 9012, 1)
        (9031, 'deleted-user', '연장 송신', CURRENT_DATE, 'PENDING', 9032, 1),
        (9032, 'keep-user', '연장 수신', CURRENT_DATE, 'COMPLETED_UNCLAIMED', 9031, 1),
        (9041, 'deleted-user', '시작 수신', CURRENT_DATE, 'PENDING', 9042, 1),
-       (9042, 'keep-user', '시작 송신', CURRENT_DATE, 'PENDING', 9041, 1);
+       (9042, 'keep-user', '시작 송신', CURRENT_DATE, 'PENDING', 9041, 1),
+       (9051, 'deleted-user', '만료 연장 수신', CURRENT_DATE, 'ACTIVE', 9052, 1),
+       (9052, 'keep-user', '만료 연장 송신', CURRENT_DATE, 'PENDING', 9051, 1);
 INSERT INTO habit_cycles (id, tracker_id, user_id, cycle_no, started_on, reward_sparkle)
 VALUES (9022, 9022, 'keep-user', 2, CURRENT_DATE, 100),
-       (9032, 9032, 'keep-user', 1, CURRENT_DATE - 6, 200);
-UPDATE habit_trackers SET current_cycle_id = id WHERE id IN (9022, 9032);
+       (9032, 9032, 'keep-user', 1, CURRENT_DATE - 6, 200),
+       (9052, 9052, 'keep-user', 2, CURRENT_DATE - 8, 100);
+UPDATE habit_trackers SET current_cycle_id = id WHERE id IN (9022, 9032, 9052);
 INSERT INTO habit_pair_requests (requester_tracker_id, requester_user_id, partner_tracker_id, partner_user_id, kind, status, expires_at)
 VALUES (9011, 'deleted-user', 9012, 'keep-user', 'START', 'REQUESTED', NOW() + INTERVAL '7 days'),
        (9022, 'keep-user', 9021, 'deleted-user', 'EXTEND', 'REQUESTED', NOW() + INTERVAL '7 days'),
        (9031, 'deleted-user', 9032, 'keep-user', 'EXTEND', 'REQUESTED', NOW() + INTERVAL '7 days'),
-       (9042, 'keep-user', 9041, 'deleted-user', 'START', 'REQUESTED', NOW() + INTERVAL '7 days');
+       (9042, 'keep-user', 9041, 'deleted-user', 'START', 'REQUESTED', NOW() + INTERVAL '7 days'),
+       (9052, 'keep-user', 9051, 'deleted-user', 'EXTEND', 'REQUESTED', NOW() - INTERVAL '1 day');
