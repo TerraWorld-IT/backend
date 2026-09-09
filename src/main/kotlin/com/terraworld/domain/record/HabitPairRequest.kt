@@ -9,6 +9,7 @@ import jakarta.persistence.GenerationType
 import jakarta.persistence.Id
 import jakarta.persistence.Table
 import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.data.jpa.repository.Query
 import java.time.LocalDateTime
 
 /**
@@ -61,6 +62,13 @@ enum class HabitPairRequestKind { START, EXTEND }
 enum class HabitPairRequestStatus { REQUESTED, ACCEPTED, DECLINED, CANCELLED, EXPIRED }
 
 interface HabitPairRequestRepository : JpaRepository<HabitPairRequest, Long> {
+    /** 계정 삭제 전에 상대 트래커의 시작·연장 대기를 정리한다. */
+    @Query(
+        "SELECT r FROM HabitPairRequest r WHERE r.status = com.terraworld.domain.record.HabitPairRequestStatus.REQUESTED " +
+            "AND (r.requesterUserId = :userId OR r.partnerUserId = :userId)",
+    )
+    fun findOpenByUserId(userId: String): List<HabitPairRequest>
+
     /** 트래커 집합이 요청자 또는 수신자로 관여한 요청 전부 — 목록 응답의 partnerStatus/extendStatus 배치 해석. */
     fun findAllByRequesterTrackerIdInOrPartnerTrackerIdIn(
         requesterTrackerIds: Collection<Long>,

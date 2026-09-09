@@ -85,6 +85,8 @@ class UserDeletionCascadeTest {
                 }
                 val keepCounts = retainedUserCounts(jdbc)
                 val ledgerBefore = jdbc.queryForList("SELECT * FROM entitlement_tx_ledger ORDER BY id")
+                val cyclesBefore = jdbc.queryForList("SELECT * FROM habit_cycles WHERE user_id = 'keep-user' ORDER BY id")
+                val recordsBefore = jdbc.queryForList("SELECT category_id, photo_url, is_deleted FROM activity_records WHERE user_id = 'keep-user' ORDER BY id")
                 val auditBefore = jdbc.queryForList("SELECT * FROM audit_logs ORDER BY id")
 
                 transactions.executeWithoutResult { status ->
@@ -92,6 +94,9 @@ class UserDeletionCascadeTest {
                     status.setRollbackOnly()
                 }
                 verify(photoStorage, never()).delete(any())
+                assertEquals(2, count(jdbc, "habit_trackers", "id IN (9012, 9042) AND status = 'PENDING'"))
+                assertEquals(1, count(jdbc, "habit_trackers", "id = 9022 AND status = 'PENDING'"))
+                assertEquals(1, count(jdbc, "categories", "id = 9003 AND owner_user_id = 'deleted-user'"))
                 predicates.forEach { (table, predicate) ->
                     assertTrue(count(jdbc, table, predicate) > 0, "$table 롤백 후 보존")
                 }
@@ -107,8 +112,18 @@ class UserDeletionCascadeTest {
                 assertEquals(auditBefore, jdbc.queryForList("SELECT * FROM audit_logs ORDER BY id"))
                 assertEquals(0, count(jdbc, "activity_records", "partner_user_id = 'deleted-user'"))
                 assertEquals(0, count(jdbc, "invites", "invitee_user_id = 'deleted-user'"))
-                assertEquals(1, count(jdbc, "habit_trackers", "user_id = 'keep-user' AND status = 'ACTIVE'"))
-                assertEquals(1, count(jdbc, "habit_cycles", "user_id = 'keep-user' AND cycle_no = 1"))
+                assertEquals(2, count(jdbc, "habit_trackers", "user_id = 'keep-user' AND status = 'ACTIVE'"))
+                assertEquals(2, count(jdbc, "habit_trackers", "id IN (9012, 9042) AND status = 'BROKEN'"))
+                assertEquals(1, count(jdbc, "habit_trackers", "id = 9022 AND status = 'ACTIVE' AND current_cycle_id = 9022"))
+                assertEquals(1, count(jdbc, "habit_trackers", "id = 9032 AND status = 'COMPLETED_UNCLAIMED' AND current_cycle_id = 9032"))
+                assertEquals(4, count(jdbc, "habit_trackers", "id IN (9012, 9022, 9032, 9042) AND partner_tracker_id IS NULL AND friend_link_id IS NULL"))
+                assertEquals(1, count(jdbc, "categories", "id = 9003 AND owner_user_id IS NULL AND is_custom = TRUE"))
+                assertEquals(0, count(jdbc, "categories", "id = 9001"), "비공유 커스텀 카테고리는 cascade 삭제")
+                assertEquals(cyclesBefore, jdbc.queryForList("SELECT * FROM habit_cycles WHERE user_id = 'keep-user' ORDER BY id"))
+                assertEquals(recordsBefore, jdbc.queryForList("SELECT category_id, photo_url, is_deleted FROM activity_records WHERE user_id = 'keep-user' ORDER BY id"))
+                verify(photoStorage, never()).delete("https://photos.example/photos/shared.jpg")
+                verify(photoStorage, never()).delete("https://photos.example/photos/shared-deleted.jpg")
+                assertEquals(2, count(jdbc, "habit_cycles", "user_id = 'keep-user' AND cycle_no = 1"))
                 assertEquals(2, count(jdbc, "auth.\"user\"", "TRUE"), "인증 계정 삭제는 인증 서버 책임")
                 assertEquals(2, photoDeletes.size, "soft-delete 사진 포함, 중복 제거, 실패 후 다음 사진도 시도")
                 assertTrue(photoDeletes.contains("https://photos.example/photos/00000000-0000-0000-0000-000000000002.png"))

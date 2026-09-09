@@ -273,6 +273,16 @@ class RecordServiceTest {
         RecordRepository {
         override fun findPhotoUrlsByUserId(userId: String): List<String> = store.values.filter { it.user.id == userId }.mapNotNull { it.photoUrl }
 
+        override fun findPhotoUrlsReferencedByOtherUsers(
+            userId: String,
+            photoUrls: Collection<String>,
+        ): List<String> =
+            store.values
+                .filter { it.user.id != userId }
+                .mapNotNull { it.photoUrl }
+                .filter { it in photoUrls }
+                .distinct()
+
         var todayCountOverride: Long? = null
         private var seq = 0L
 
@@ -428,6 +438,8 @@ class RecordServiceTest {
     private class FakeCategoryRepository :
         FakeJpaRepository<Category, Long>(),
         CategoryRepository {
+        override fun releaseSharedCategories(userId: String): Int = error("계정 삭제는 실제 DB 통합 테스트로 검증")
+
         override fun extractId(entity: Category): Long = entity.id
 
         override fun findAllByIsActiveTrueAndIsCustomFalse(): List<Category> = store.values.filter { it.isActive && !it.isCustom }

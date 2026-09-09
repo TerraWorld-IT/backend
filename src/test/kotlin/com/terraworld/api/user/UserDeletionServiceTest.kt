@@ -1,7 +1,9 @@
 package com.terraworld.api.user
 
 import com.terraworld.api.upload.R2PhotoStorage
+import com.terraworld.domain.category.CategoryRepository
 import com.terraworld.domain.exchange.ExchangeDailyUsageRepository
+import com.terraworld.domain.record.HabitPairRequestRepository
 import com.terraworld.domain.record.HabitTrackerRepository
 import com.terraworld.domain.record.RecordRepository
 import com.terraworld.domain.reward.AdRewardNonceInboxRepository
@@ -33,7 +35,9 @@ class UserDeletionServiceTest {
     private val nonces: AdRewardNonceInboxRepository = mock()
     private val exchanges: ExchangeDailyUsageRepository = mock()
     private val photos: R2PhotoStorage = mock()
-    private val service = UserDeletionService(users, records, devices, trackers, nonces, exchanges, photos)
+    private val categories: CategoryRepository = mock()
+    private val requests: HabitPairRequestRepository = mock()
+    private val service = UserDeletionService(users, records, devices, trackers, nonces, exchanges, photos, categories, requests)
 
     @BeforeEach
     fun setUp() {
@@ -57,6 +61,11 @@ class UserDeletionServiceTest {
         assertTrue(users.existsById("other-user"))
         inOrder(records, devices, trackers, nonces, exchanges) {
             verify(records).findPhotoUrlsByUserId("deleted-user")
+            verify(records).findPhotoUrlsReferencedByOtherUsers("deleted-user", listOf("owned-photo"))
+            verify(devices).deleteAllByUserId("deleted-user")
+            verify(trackers).deleteAllByUserId("deleted-user")
+            verify(nonces).deleteAllByUserId("deleted-user")
+            verify(exchanges).deleteAllByUserId("deleted-user")
             verify(devices).deleteAllByUserId("deleted-user")
             verify(trackers).deleteAllByUserId("deleted-user")
             verify(nonces).deleteAllByUserId("deleted-user")
@@ -68,6 +77,15 @@ class UserDeletionServiceTest {
         TransactionSynchronizationManager.getSynchronizations().forEach { it.afterCommit() }
         verify(photos).delete("owned-photo")
         verify(photos, never()).delete("external-photo")
+    }
+
+    @Test
+    fun `다른 사용자 기록이 참조하는 사진은 삭제하지 않는다`() {
+        whenever(records.findPhotoUrlsReferencedByOtherUsers("deleted-user", listOf("owned-photo"))).thenReturn(listOf("owned-photo"))
+        service.deleteUser("deleted-user")
+        TransactionSynchronizationManager.getSynchronizations().forEach { it.afterCommit() }
+        assertFalse(users.existsById("deleted-user"))
+        verify(photos, never()).delete(any())
     }
 
     @Test

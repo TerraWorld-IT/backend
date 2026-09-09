@@ -43,6 +43,16 @@ class InternalUserControllerMvcTest {
     }
 
     @Test
+    fun `공백 또는 128자를 초과하는 사용자 ID는 400이며 삭제하지 않는다`() {
+        listOf(" ", "u".repeat(129)).forEach { userId ->
+            mockMvc
+                .perform(delete("/api/v1/internal/users/{userId}", userId).header("X-Internal-Token", "internal-test-token"))
+                .andExpect(status().isBadRequest)
+        }
+        verifyNoInteractions(userDeletionService)
+    }
+
+    @Test
     fun `내부 토큰 불일치와 누락은 403이며 삭제를 실행하지 않는다`() {
         mockMvc
             .perform(delete("/api/v1/internal/users/deleted-user").header("X-Internal-Token", "invalid-token"))

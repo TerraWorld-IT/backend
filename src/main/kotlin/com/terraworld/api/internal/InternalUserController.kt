@@ -56,7 +56,7 @@ class InternalUserController(
     @DeleteMapping("/{userId}")
     fun deleteUser(
         @RequestHeader("X-Internal-Token", required = false) token: String?,
-        @PathVariable userId: String,
+        @PathVariable @NotBlank @Size(max = 128) userId: String,
     ): ResponseEntity<Unit> {
         if (!isTokenValid(token)) {
             throw AccessDeniedException("invalid internal token")

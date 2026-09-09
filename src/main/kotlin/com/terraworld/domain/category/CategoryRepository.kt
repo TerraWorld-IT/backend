@@ -3,8 +3,22 @@ package com.terraworld.domain.category
 import com.terraworld.common.cache.CacheNames
 import org.springframework.cache.annotation.Cacheable
 import org.springframework.data.jpa.repository.JpaRepository
+import org.springframework.data.jpa.repository.Modifying
+import org.springframework.data.jpa.repository.Query
 
 interface CategoryRepository : JpaRepository<Category, Long> {
+    /** 타 사용자 기록이 참조하는 커스텀 카테고리는 계정 cascade 전에 소유권만 해제한다. */
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query(
+        value = """
+            UPDATE categories c SET owner_user_id = NULL
+            WHERE c.owner_user_id = :userId AND c.is_custom = TRUE
+              AND EXISTS (SELECT 1 FROM activity_records r WHERE r.category_id = c.id AND r.user_id <> :userId)
+        """,
+        nativeQuery = true,
+    )
+    fun releaseSharedCategories(userId: String): Int
+
     /**
      * 활성 카테고리 목록. 시스템 카테고리(isCustom=false) 만 반환.
      * 다른 사용자의 커스텀 카테고리는 노출되지 않게 위해 필터링한다.

@@ -1,7 +1,11 @@
 package com.terraworld.api.user
 
 import com.terraworld.api.upload.R2PhotoStorage
+import com.terraworld.domain.category.CategoryRepository
 import com.terraworld.domain.exchange.ExchangeDailyUsageRepository
+import com.terraworld.domain.record.HabitPairRequestKind
+import com.terraworld.domain.record.HabitPairRequestRepository
+import com.terraworld.domain.record.HabitStatus
 import com.terraworld.domain.record.HabitTrackerRepository
 import com.terraworld.domain.record.RecordRepository
 import com.terraworld.domain.reward.AdRewardNonceInboxRepository
@@ -13,7 +17,7 @@ import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionSynchronization
 import org.springframework.transaction.support.TransactionSynchronizationManager
 
-/** 사용자 FK가 없는 개인정보를 명시적으로 정리하고 나머지는 DB cascade로 삭제한다. */
+/** 공유 데이터를 보존하고 개인정보는 명시 삭제와 DB cascade로 정리한다. */
 @Service
 @Transactional
 class UserDeletionService(
@@ -24,19 +28,27 @@ class UserDeletionService(
     private val nonceRepository: AdRewardNonceInboxRepository,
     private val exchangeRepository: ExchangeDailyUsageRepository,
     private val photoStorage: R2PhotoStorage,
+    private val categoryRepository: CategoryRepository,
+    private val pairRequestRepository: HabitPairRequestRepository,
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
 
     fun deleteUser(userId: String) {
         // 동일 사용자의 bootstrap 및 삭제 재시도를 트랜잭션 단위로 직렬화한다.
         userRepository.acquireBootstrapLock("bootstrap|$userId")
-        val photos = recordRepository.findPhotoUrlsByUserId(userId).filter(photoStorage::ownsPublicUrl).distinct()
-        deviceRepository.deleteAllByUserId(userId)
-        trackerRepository.deleteAllByUserId(userId)
-        nonceRepository.deleteAllByUserId(userId)
-        exchangeRepository.deleteAllByUserId(userId)
+        val candidates = recordRepository.findPhotoUrlsByUserId(userId).filter(photoStorage::ownsPublicUrl).distinct()
+        val sharedPhotos =
+            if (candidates.isEmpty()) emptySet() else recordRepository.findPhotoUrlsReferencedByOtherUsers(userId, candidates).toSet()
+        val photos = candidates.filterNot { it in sharedPhotos }
+        // soft-delete 기록도 참조를 유지하므로 공유 카테고리는 소유권만 해제한다.
+        categoryRepository.releaseSharedCategories(userId)
+        settlePendingPairRequests(userId)
+        deletePersonalRows(userId)
         // 결제 멱등 원장(entitlement_tx_ledger)과 감사 로그(audit_logs)는 사용자 ID를 포함해 보존한다.
         userRepository.deleteById(userId)
+        // users DELETE를 실제 실행한 뒤 재정리한다. 동시 INSERT는 V43 FK가 차단하거나 cascade로 제거한다.
+        userRepository.flush()
+        deletePersonalRows(userId)
 
         if (photos.isNotEmpty()) {
             TransactionSynchronizationManager.registerSynchronization(
@@ -53,6 +65,29 @@ class UserDeletionService(
                     }
                 },
             )
+        }
+    }
+
+    private fun deletePersonalRows(userId: String) {
+        deviceRepository.deleteAllByUserId(userId)
+        trackerRepository.deleteAllByUserId(userId)
+        nonceRepository.deleteAllByUserId(userId)
+        exchangeRepository.deleteAllByUserId(userId)
+    }
+
+    private fun settlePendingPairRequests(userId: String) {
+        pairRequestRepository.findOpenByUserId(userId).forEach { request ->
+            val peerId = if (request.requesterUserId == userId) request.partnerTrackerId else request.requesterTrackerId
+            val peerUserId = if (request.requesterUserId == userId) request.partnerUserId else request.requesterUserId
+            if (peerId == null || peerUserId == userId) return@forEach
+            // HabitService와 같은 CAS를 재사용한다. START는 종료, EXTEND는 이미 열린 새 사이클을 단독 진행한다.
+            val target = if (request.kind == HabitPairRequestKind.START) HabitStatus.BROKEN else HabitStatus.ACTIVE
+            trackerRepository.casStatus(peerId, peerUserId, HabitStatus.PENDING, target)
+            trackerRepository.findByIdAndUserId(peerId, peerUserId)?.let { peer ->
+                peer.partnerTrackerId = null
+                peer.friendLinkId = null
+                trackerRepository.save(peer)
+            }
         }
     }
 }
