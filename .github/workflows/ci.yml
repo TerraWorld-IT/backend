@@ -158,6 +158,23 @@ jobs:
         run: |
           set -euo pipefail
           export PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin"
+          # 앱 CI와 공유하는 호스트 락으로 배포를 직렬화한다(config-sync 워크플로와 동일 락).
+          DEPLOY_LOCK="${TERRAWORLD_DEPLOY_LOCK:-/tmp/terraworld-deploy.lock}"
+          acquire_deploy_lock() {
+            local waited=0 timeout=900 stale=1800 age now mtime
+            while ! mkdir "$DEPLOY_LOCK" 2>/dev/null; do
+              now=$(date +%s)
+              mtime=$(stat -f %m "$DEPLOY_LOCK" 2>/dev/null || stat -c %Y "$DEPLOY_LOCK" 2>/dev/null || echo "$now")
+              age=$(( now - mtime ))
+              if [ "$age" -gt "$stale" ]; then rmdir "$DEPLOY_LOCK" 2>/dev/null || true; continue; fi
+              if [ "$waited" -ge "$timeout" ]; then echo "::error::배포 락 획득 타임아웃(${timeout}s)"; exit 1; fi
+              sleep 5; waited=$(( waited + 5 ))
+            done
+            printf '%s %s\n' "${GITHUB_WORKFLOW:-?}" "${GITHUB_RUN_ID:-?}" > "$DEPLOY_LOCK/owner" 2>/dev/null || true
+          }
+          release_deploy_lock() { rm -rf "$DEPLOY_LOCK" 2>/dev/null || true; }
+          trap release_deploy_lock EXIT
+          acquire_deploy_lock
           # 미설정만 기존 경로로 폴백한다. 명시된 잘못된 값은 다른 디렉터리 배포를 막기 위해 실패시킨다.
           DEFAULT_DEPLOY=/Users/jaeseok/TerraWorld-IT/deploy
           if [ "${TERRAWORLD_DEPLOY_DIR+x}" = x ]; then
@@ -186,7 +203,7 @@ jobs:
           # 비대화형 맥 러너는 osxkeychain 잠김으로 `docker login` 불가 —
           # frontend deploy 와 동일하게 임시 DOCKER_CONFIG 에 auth 직접 기록.
           TMPCFG="$(mktemp -d)"
-          trap 'rm -rf "$TMPCFG"' EXIT
+          trap 'rm -rf "$TMPCFG"; release_deploy_lock' EXIT
           if [ -d "$HOME/.docker/cli-plugins" ]; then
             ln -s "$HOME/.docker/cli-plugins" "$TMPCFG/cli-plugins"
           fi
