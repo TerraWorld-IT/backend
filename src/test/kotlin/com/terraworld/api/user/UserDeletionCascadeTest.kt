@@ -1,5 +1,6 @@
 package com.terraworld.api.user
 
+import com.terraworld.api.upload.PhotoDeletionOutboxDrainer
 import com.terraworld.api.upload.R2PhotoStorage
 import com.terraworld.api.userdevice.UserDeviceService
 import com.terraworld.common.audit.AuditService
@@ -9,6 +10,7 @@ import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.doAnswer
+import org.mockito.kotlin.doNothing
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
 import org.mockito.kotlin.verify
@@ -55,6 +57,7 @@ class UserDeletionCascadeTest {
             dataSource.connection.use { ScriptUtils.executeSqlScript(it, ClassPathResource("user-deletion-fixture.sql")) }
 
             val photoStorage: R2PhotoStorage = mock()
+            whenever(photoStorage.isEnabled()).thenReturn(true)
             whenever(photoStorage.ownsPublicUrl(any())).thenAnswer {
                 (it.arguments[0] as String).startsWith("https://photos.example/photos/")
             }
@@ -94,6 +97,7 @@ class UserDeletionCascadeTest {
                     status.setRollbackOnly()
                 }
                 verify(photoStorage, never()).delete(any())
+                assertEquals(0, count(jdbc, "photo_deletion_outbox", "TRUE"), "삭제 롤백 시 outbox도 롤백")
                 assertEquals(2, count(jdbc, "habit_trackers", "id IN (9012, 9042) AND status = 'PENDING'"))
                 assertEquals(2, count(jdbc, "habit_trackers", "id IN (9022, 9052) AND status = 'PENDING'"))
                 assertEquals(1, count(jdbc, "categories", "id = 9003 AND owner_user_id = 'deleted-user'"))
@@ -102,6 +106,7 @@ class UserDeletionCascadeTest {
                 }
 
                 service.deleteUser("deleted-user")
+                assertEquals(2, count(jdbc, "photo_deletion_outbox", "attempts = 1 AND last_attempt_at IS NOT NULL"))
                 val rowsAfterDeletion = remainingRows(jdbc)
                 val photoDeletesAfterDeletion = photoDeletes.toList()
                 service.deleteUser("deleted-user")
@@ -132,6 +137,9 @@ class UserDeletionCascadeTest {
                 assertEquals(2, count(jdbc, "auth.\"user\"", "TRUE"), "인증 계정 삭제는 인증 서버 책임")
                 assertEquals(2, photoDeletes.size, "soft-delete 사진 포함, 중복 제거, 실패 후 다음 사진도 시도")
                 assertTrue(photoDeletes.contains("https://photos.example/photos/00000000-0000-0000-0000-000000000002.png"))
+                doNothing().whenever(photoStorage).delete(any())
+                context.getBean(PhotoDeletionOutboxDrainer::class.java).drain()
+                assertEquals(0, count(jdbc, "photo_deletion_outbox", "TRUE"), "재시도 성공 시 별도 트랜잭션으로 outbox 삭제")
                 println("USER_DELETION_CASCADE_EXECUTED: PostgreSQL 16; ${predicates.size} deletion predicates zero; retained ledger/audit unchanged; peer data preserved; rollback and afterCommit verified; skipped=0")
             }
         }
@@ -205,7 +213,7 @@ class UserDeletionCascadeTest {
     @Configuration
     @EnableTransactionManagement
     @EnableJpaRepositories("com.terraworld.domain")
-    @Import(UserDeletionService::class, UserDeviceService::class)
+    @Import(UserDeletionService::class, UserDeviceService::class, PhotoDeletionOutboxDrainer::class)
     class JpaConfig {
         @Bean
         fun entityManagerFactory(dataSource: DataSource): LocalContainerEntityManagerFactoryBean =
