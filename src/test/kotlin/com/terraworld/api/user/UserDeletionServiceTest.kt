@@ -1,5 +1,6 @@
 package com.terraworld.api.user
 
+import com.terraworld.api.upload.PhotoDeletionOutboxDrainer
 import com.terraworld.api.upload.R2PhotoStorage
 import com.terraworld.domain.category.CategoryRepository
 import com.terraworld.domain.exchange.ExchangeDailyUsageRepository
@@ -7,6 +8,8 @@ import com.terraworld.domain.record.HabitPairRequestRepository
 import com.terraworld.domain.record.HabitTrackerRepository
 import com.terraworld.domain.record.RecordRepository
 import com.terraworld.domain.reward.AdRewardNonceInboxRepository
+import com.terraworld.domain.upload.PhotoDeletionOutbox
+import com.terraworld.domain.upload.PhotoDeletionOutboxRepository
 import com.terraworld.domain.user.User
 import com.terraworld.domain.user.UserRepository
 import com.terraworld.domain.userdevice.UserDeviceRepository
@@ -15,8 +18,10 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
+import org.mockito.kotlin.argThat
 import org.mockito.kotlin.clearInvocations
 import org.mockito.kotlin.doThrow
+import org.mockito.kotlin.eq
 import org.mockito.kotlin.inOrder
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
@@ -26,6 +31,7 @@ import org.mockito.kotlin.verifyNoMoreInteractions
 import org.mockito.kotlin.whenever
 import org.springframework.transaction.support.TransactionSynchronization
 import org.springframework.transaction.support.TransactionSynchronizationManager
+import java.util.Optional
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -39,7 +45,9 @@ class UserDeletionServiceTest {
     private val photos: R2PhotoStorage = mock()
     private val categories: CategoryRepository = mock()
     private val requests: HabitPairRequestRepository = mock()
-    private val service = UserDeletionService(users, records, devices, trackers, nonces, exchanges, photos, categories, requests)
+    private val outbox: PhotoDeletionOutboxRepository = mock()
+    private val drainer = PhotoDeletionOutboxDrainer(outbox, photos, records)
+    private val service = UserDeletionService(users, records, devices, trackers, nonces, exchanges, photos, categories, requests, outbox, drainer)
 
     @BeforeEach
     fun setUp() {
@@ -48,6 +56,9 @@ class UserDeletionServiceTest {
         users.save(User("other-user", "유지"))
         whenever(records.findPhotoUrlsByUserId("deleted-user")).thenReturn(listOf("owned-photo", "owned-photo", "external-photo"))
         whenever(photos.ownsPublicUrl("owned-photo")).thenReturn(true)
+        whenever(photos.isEnabled()).thenReturn(true)
+        whenever(outbox.findById(any())).thenReturn(Optional.empty())
+        whenever(outbox.save(any<PhotoDeletionOutbox>())).thenAnswer { it.arguments[0] }
     }
 
     @AfterEach
@@ -76,8 +87,12 @@ class UserDeletionServiceTest {
         verifyNoMoreInteractions(records, devices, trackers, nonces, exchanges)
         // 보존 원장은 서비스 의존성 자체에 없으므로 삭제·변경 경로가 없다.
         verify(photos, never()).delete(any())
+        verify(outbox).save(argThat<PhotoDeletionOutbox> { publicUrl == "owned-photo" && attempts == 0 && lastAttemptAt == null })
+        verify(outbox, never()).save(argThat<PhotoDeletionOutbox> { publicUrl == "external-photo" })
+        verify(outbox, never()).deleteCompleted(any())
         TransactionSynchronizationManager.getSynchronizations().forEach { it.afterCommit() }
         verify(photos).delete("owned-photo")
+        verify(outbox).deleteCompleted("owned-photo")
         verify(photos, never()).delete("external-photo")
     }
 
@@ -88,6 +103,7 @@ class UserDeletionServiceTest {
         TransactionSynchronizationManager.getSynchronizations().forEach { it.afterCommit() }
         assertFalse(users.existsById("deleted-user"))
         verify(photos, never()).delete(any())
+        verifyNoInteractions(outbox)
     }
 
     @Test
@@ -96,14 +112,14 @@ class UserDeletionServiceTest {
         TransactionSynchronizationManager.getSynchronizations().forEach { it.afterCommit() }
         TransactionSynchronizationManager.clearSynchronization()
         TransactionSynchronizationManager.initSynchronization()
-        clearInvocations(records, devices, trackers, nonces, exchanges, photos, categories, requests)
+        clearInvocations(records, devices, trackers, nonces, exchanges, photos, categories, requests, outbox)
 
         service.deleteUser("deleted-user")
         service.deleteUser("never-existed")
 
         assertFalse(users.existsById("deleted-user"))
         assertTrue(TransactionSynchronizationManager.getSynchronizations().isEmpty())
-        verifyNoInteractions(records, devices, trackers, nonces, exchanges, photos, categories, requests)
+        verifyNoInteractions(records, devices, trackers, nonces, exchanges, photos, categories, requests, outbox)
     }
 
     @Test
@@ -124,6 +140,21 @@ class UserDeletionServiceTest {
         TransactionSynchronizationManager.getSynchronizations().forEach { it.afterCommit() }
         assertFalse(users.existsById("deleted-user"))
         verify(photos).delete("next-photo")
+        verify(outbox).recordFailure(eq("owned-photo"), any(), eq(10))
+        verify(outbox, never()).deleteCompleted("owned-photo")
+        verify(outbox).deleteCompleted("next-photo")
+    }
+
+    @Test
+    fun `기존 outbox 재시도 횟수와 생성 시각을 보존한다`() {
+        val pending = PhotoDeletionOutbox("owned-photo", attempts = 10)
+        whenever(outbox.findById("owned-photo")).thenReturn(Optional.of(pending))
+
+        service.deleteUser("deleted-user")
+        TransactionSynchronizationManager.getSynchronizations().forEach { it.afterCommit() }
+
+        verify(outbox, never()).save(any<PhotoDeletionOutbox>())
+        verify(photos, never()).delete(any())
     }
 
     private class FakeUsers :

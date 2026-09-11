@@ -8,6 +8,9 @@ import org.springframework.data.repository.query.Param
 import java.time.LocalDate
 
 interface RecordRepository : JpaRepository<ActivityRecord, Long> {
+    /** 지연된 사진 삭제 전에 soft-delete 기록을 포함한 모든 참조를 확인한다. */
+    fun existsByPhotoUrl(photoUrl: String): Boolean
+
     /** 탈퇴 시 soft-delete된 기록의 사진도 함께 정리한다. */
     @Query("SELECT r.photoUrl FROM ActivityRecord r WHERE r.user.id = :userId AND r.photoUrl IS NOT NULL")
     fun findPhotoUrlsByUserId(userId: String): List<String>

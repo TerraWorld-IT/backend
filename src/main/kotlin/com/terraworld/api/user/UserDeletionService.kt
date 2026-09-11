@@ -1,5 +1,6 @@
 package com.terraworld.api.user
 
+import com.terraworld.api.upload.PhotoDeletionOutboxDrainer
 import com.terraworld.api.upload.R2PhotoStorage
 import com.terraworld.domain.category.CategoryRepository
 import com.terraworld.domain.exchange.ExchangeDailyUsageRepository
@@ -9,9 +10,10 @@ import com.terraworld.domain.record.HabitPairRequestStatus
 import com.terraworld.domain.record.HabitTrackerRepository
 import com.terraworld.domain.record.RecordRepository
 import com.terraworld.domain.reward.AdRewardNonceInboxRepository
+import com.terraworld.domain.upload.PhotoDeletionOutbox
+import com.terraworld.domain.upload.PhotoDeletionOutboxRepository
 import com.terraworld.domain.user.UserRepository
 import com.terraworld.domain.userdevice.UserDeviceRepository
-import org.slf4j.LoggerFactory
 import org.springframework.stereotype.Service
 import org.springframework.transaction.annotation.Transactional
 import org.springframework.transaction.support.TransactionSynchronization
@@ -31,9 +33,9 @@ class UserDeletionService(
     private val photoStorage: R2PhotoStorage,
     private val categoryRepository: CategoryRepository,
     private val pairRequestRepository: HabitPairRequestRepository,
+    private val photoOutboxRepository: PhotoDeletionOutboxRepository,
+    private val photoOutboxDrainer: PhotoDeletionOutboxDrainer,
 ) {
-    private val log = LoggerFactory.getLogger(javaClass)
-
     fun deleteUser(userId: String) {
         // 동일 사용자의 bootstrap 및 삭제 재시도를 트랜잭션 단위로 직렬화한다.
         userRepository.acquireBootstrapLock("bootstrap|$userId")
@@ -54,17 +56,17 @@ class UserDeletionService(
         deletePersonalRows(userId)
 
         if (photos.isNotEmpty()) {
+            // 사용자 삭제와 같은 트랜잭션에서 보존하며 기존 재시도 횟수는 초기화하지 않는다.
+            val pending =
+                photos.map { publicUrl ->
+                    photoOutboxRepository.findById(publicUrl).orElseGet {
+                        photoOutboxRepository.save(PhotoDeletionOutbox(publicUrl))
+                    }
+                }
             TransactionSynchronizationManager.registerSynchronization(
                 object : TransactionSynchronization {
                     override fun afterCommit() {
-                        photos.forEach { publicUrl ->
-                            try {
-                                photoStorage.delete(publicUrl)
-                            } catch (ex: Exception) {
-                                // URL이나 SDK 예외 본문의 개인정보를 남기지 않고 실패 종류만 기록한다.
-                                log.warn("계정 삭제 후 R2 사진 정리 실패: {}", ex.javaClass.simpleName)
-                            }
-                        }
+                        pending.forEach(photoOutboxDrainer::deletePhoto)
                     }
                 },
             )
