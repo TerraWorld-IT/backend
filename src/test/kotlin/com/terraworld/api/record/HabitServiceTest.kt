@@ -58,6 +58,8 @@ class HabitServiceTest {
     private lateinit var inviteRepository: InviteRepository
     private lateinit var userRepository: UserRepository
     private lateinit var eventPublisher: ApplicationEventPublisher
+    private lateinit var growthService: com.terraworld.api.growth.GrowthService
+    private lateinit var recordRepository: com.terraworld.domain.record.RecordRepository
     private lateinit var service: HabitService
     private val today: LocalDate = KstTime.today()
 
@@ -75,7 +77,21 @@ class HabitServiceTest {
         whenever(userRepository.findById("u")).thenReturn(Optional.of(User(id = "u", nickname = "나")))
         whenever(userRepository.findById("friend")).thenReturn(Optional.of(User(id = "friend", nickname = "재석")))
         whenever(userRepository.findAllById(any<Iterable<String>>())).thenReturn(listOf(User(id = "friend", nickname = "재석"), User(id = "u", nickname = "나")))
-        service = HabitService(repo, cycleRepo, requestRepo, grantService, inviteRepository, userRepository, eventPublisher, HabitProperties())
+        growthService = mock(com.terraworld.api.growth.GrowthService::class.java)
+        recordRepository = mock(com.terraworld.domain.record.RecordRepository::class.java)
+        service = HabitService(repo, cycleRepo, requestRepo, grantService, inviteRepository, userRepository, eventPublisher, growthService, recordRepository, HabitProperties())
+    }
+
+    @Test
+    fun `checkIn — 일상과 동일 잠금 아래 성장 호출하며 같은 날 재체크인은 멱등`() {
+        tracker(1L)
+        service.checkIn("u", 1L)
+        service.checkIn("u", 1L)
+        verify(growthService).advanceAllStreaks("u")
+        val order = org.mockito.kotlin.inOrder(recordRepository, growthService)
+        order.verify(recordRepository).acquireRecordDailyLock("record|u|$today")
+        order.verify(growthService).advanceAllStreaks("u")
+        verify(grantService, never()).grant(any(), any(), any(), any(), any(), any())
     }
 
     private fun tracker(
@@ -504,6 +520,11 @@ class HabitServiceTest {
     private class FakeHabitTrackerRepository :
         FakeJpaRepository<HabitTracker, Long>(),
         HabitTrackerRepository {
+        override fun existsByUserIdAndLastCheckedDate(
+            userId: String,
+            lastCheckedDate: LocalDate,
+        ): Boolean = store.values.any { it.userId == userId && it.lastCheckedDate == lastCheckedDate }
+
         override fun deleteAllByUserId(userId: String): Int {
             val rows = store.values.filter { it.userId == userId }
             deleteAll(rows)

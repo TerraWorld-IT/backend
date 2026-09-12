@@ -9,6 +9,7 @@ import com.terraworld.common.exception.ErrorCode
 import com.terraworld.domain.category.Category
 import com.terraworld.domain.category.CategoryRepository
 import com.terraworld.domain.record.ActivityRecord
+import com.terraworld.domain.record.DailyType
 import com.terraworld.domain.record.RecordRepository
 import com.terraworld.domain.record.RecordStatisticsSummary
 import com.terraworld.domain.record.UserMaxRecordedDateProjection
@@ -21,7 +22,9 @@ import io.terraworld.api.model.CurrencyResponse
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
+import org.mockito.Mockito.CALLS_REAL_METHODS
 import org.mockito.Mockito.mock
+import org.mockito.Mockito.mockStatic
 import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.eq
@@ -30,14 +33,16 @@ import org.mockito.kotlin.whenever
 import org.springframework.data.domain.Page
 import org.springframework.data.domain.PageImpl
 import org.springframework.data.domain.Pageable
+import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneId
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
  * RecordService.createRecord 분기 커버 (낙서장 P1 read-cutover 후: 보상=CurrencyService.credit 단일 SoT).
  * - 해피: response.reward + record 저장 + credit(COIN/토큰) verify + updatedCurrency(신 substrate stub)
- * - dailyType=PHOTO: 코인 10 + 이슬 2 credit
+ * - dailyType=PHOTO: 코인 10 + 이슬 1 credit
  * - dailyLimit / USER_NOT_FOUND / CATEGORY_NOT_FOUND / partner INVALID / co-record / duration
  */
 class RecordServiceTest {
@@ -129,16 +134,16 @@ class RecordServiceTest {
     }
 
     @Test
-    fun `createRecord dailyType=PHOTO — 코인 10 + 이슬(DEW) 2 credit`() {
+    fun `createRecord dailyType=PHOTO — 코인 10 + 이슬(DEW) 1 credit`() {
         whenever(currencyService.currencyResponse(any())).thenReturn(CurrencyResponse(balances = emptyList()))
 
         val response =
             service.createRecord("user-1", CreateRecordRequest(categoryId = 1L, dailyType = com.terraworld.domain.record.DailyType.PHOTO))
 
         assertEquals(10, response.reward.basicCoins)
-        assertEquals(2, response.reward.categoryTokens)
+        assertEquals(1, response.reward.categoryTokens)
         verify(currencyService).credit(eq("user-1"), eq("COIN"), eq(10L), any(), anyOrNull(), anyOrNull())
-        verify(currencyService).credit(eq("user-1"), eq("DEW"), eq(2L), any(), anyOrNull(), anyOrNull())
+        verify(currencyService).credit(eq("user-1"), eq("DEW"), eq(1L), any(), anyOrNull(), anyOrNull())
     }
 
     @Test
@@ -268,9 +273,74 @@ class RecordServiceTest {
 
     // ─── Fakes ─────────────────────────────────────────────────
 
+    @Test
+    fun `daily rewards — 각 타입 최초만 지급하고 삭제 후에도 cap까지 저장하며 초과는 거부`() {
+        val names = listOf("산책", "독서", "러닝", "낙서")
+        DailyType.entries.forEachIndexed { index, type ->
+            val categoryId = index + 1L
+            val limit = if (type == DailyType.FOCUS) 3 else 5
+            categoryRepo.save(Category(id = categoryId, name = names[index], tokenName = "토큰", dailyLimit = limit))
+            val request = CreateRecordRequest(categoryId = categoryId, dailyType = type)
+            val first = service.createRecord("user-1", request)
+            assertEquals(type.coinReward.toInt(), first.reward.basicCoins)
+            assertEquals(type.tokenReward.toInt(), first.reward.categoryTokens)
+            service.deleteRecord("user-1", first.record.id)
+            repeat(limit - 1) {
+                val next = service.createRecord("user-1", request)
+                assertEquals(0, next.reward.basicCoins)
+                assertEquals(0, next.reward.categoryTokens)
+            }
+            val error = assertThrows<BusinessException> { service.createRecord("user-1", request) }
+            assertEquals(ErrorCode.DAILY_LIMIT_EXCEEDED, error.errorCode)
+            verify(currencyService).credit(eq("user-1"), eq(type.currencyCode), eq(type.tokenReward), any(), anyOrNull(), anyOrNull())
+        }
+        assertEquals(18, recordRepo.all().size)
+        assertEquals(4, recordRepo.all().count { it.rewardGranted })
+        verify(currencyService, org.mockito.kotlin.times(8)).credit(any(), any(), any(), any(), anyOrNull(), anyOrNull())
+    }
+
+    @Test
+    fun `daily rewards — KST 자정 전후 최초 지급은 재개되고 각 날짜의 두번째는 0`() {
+        var instant = Instant.parse("2026-09-12T14:59:59Z")
+        mockStatic(LocalDate::class.java, CALLS_REAL_METHODS).use { dates ->
+            dates.`when`<LocalDate> { LocalDate.now(any<ZoneId>()) }.thenAnswer {
+                LocalDate.ofInstant(instant, it.getArgument<ZoneId>(0))
+            }
+            val request = CreateRecordRequest(categoryId = 1L, dailyType = DailyType.PHOTO)
+            val first = service.createRecord("user-1", request)
+            assertEquals(LocalDate.of(2026, 9, 12), first.record.recordedDate)
+            assertEquals(1, first.reward.categoryTokens)
+            assertEquals(0, service.createRecord("user-1", request).reward.categoryTokens)
+            instant = Instant.parse("2026-09-12T15:00:00Z")
+            val tomorrow = service.createRecord("user-1", request)
+            assertEquals(LocalDate.of(2026, 9, 13), tomorrow.record.recordedDate)
+            assertEquals(10, tomorrow.reward.basicCoins)
+            assertEquals(1, tomorrow.reward.categoryTokens)
+            assertEquals(0, service.createRecord("user-1", request).reward.categoryTokens)
+        }
+    }
+
+    @Test
+    fun `daily rewards — 공동 기록 상대의 최초 보상은 본인과 독립 판정`() {
+        userRepo.save(User(id = "partner", nickname = "친구"))
+        whenever(inviteRepo.existsAcceptedBetween("user-1", "partner")).thenReturn(true)
+        service.createRecord("user-1", CreateRecordRequest(categoryId = 1L, dailyType = DailyType.PHOTO))
+        val joint = CreateRecordRequest(categoryId = 1L, dailyType = DailyType.PHOTO, partnerUserId = "partner")
+        assertEquals(0, service.createRecord("user-1", joint).reward.categoryTokens)
+        assertEquals(0, service.createRecord("user-1", joint).reward.categoryTokens)
+        verify(currencyService).credit(eq("partner"), eq("DEW"), eq(1L), any(), anyOrNull(), anyOrNull())
+        verify(currencyService).credit(eq("user-1"), eq("DEW"), eq(1L), any(), anyOrNull(), anyOrNull())
+    }
+
     private class FakeRecordRepository :
         FakeJpaRepository<ActivityRecord, Long>(),
         RecordRepository {
+        override fun existsByUserIdAndRecordedDateAndDailyType(
+            userId: String,
+            recordedDate: LocalDate,
+            dailyType: DailyType,
+        ): Boolean = store.values.any { it.user.id == userId && it.recordedDate == recordedDate && it.dailyType == dailyType }
+
         override fun existsByPhotoUrl(photoUrl: String): Boolean = store.values.any { it.photoUrl == photoUrl }
 
         override fun findPhotoUrlsByUserId(userId: String): List<String> = store.values.filter { it.user.id == userId }.mapNotNull { it.photoUrl }
@@ -305,7 +375,7 @@ class RecordServiceTest {
             categoryId: Long,
         ): Long =
             todayCountOverride
-                ?: store.values.count { it.user.id == userId && it.category.id == categoryId && !it.isDeleted }.toLong()
+                ?: store.values.count { it.user.id == userId && it.category.id == categoryId && it.recordedDate == recordedDate && !it.isDeleted }.toLong()
 
         // REC-DELETE-REFARM: 민팅 cap 은 soft-delete 포함 전건 카운트 (재민팅 차단).
         override fun countByUserIdAndRecordedDateAndCategoryId(
@@ -314,7 +384,7 @@ class RecordServiceTest {
             categoryId: Long,
         ): Long =
             todayCountOverride
-                ?: store.values.count { it.user.id == userId && it.category.id == categoryId }.toLong()
+                ?: store.values.count { it.user.id == userId && it.category.id == categoryId && it.recordedDate == recordedDate }.toLong()
 
         override fun findAllByUserIdAndIsDeletedFalseOrderByCreatedAtDesc(
             userId: String,

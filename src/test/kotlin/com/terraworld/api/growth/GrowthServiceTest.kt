@@ -27,11 +27,15 @@ import io.terraworld.api.model.GrowthReviveRequest
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.EnumSource
 import org.mockito.Mockito.mock
 import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.eq
+import org.mockito.kotlin.inOrder
 import org.mockito.kotlin.never
+import org.mockito.kotlin.spy
 import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
@@ -61,6 +65,7 @@ class GrowthServiceTest {
     private lateinit var currencyService: CurrencyService
     private lateinit var grantService: GrantService
     private lateinit var rewardService: RewardService
+    private lateinit var habitTrackerRepository: com.terraworld.domain.record.HabitTrackerRepository
     private lateinit var recordRepository: RecordRepository
     private lateinit var itemRepository: ItemRepository
     private lateinit var eventPublisher: ApplicationEventPublisher
@@ -76,6 +81,7 @@ class GrowthServiceTest {
         grantService = mock(GrantService::class.java)
         rewardService = mock(RewardService::class.java)
         recordRepository = mock(RecordRepository::class.java)
+        habitTrackerRepository = mock(com.terraworld.domain.record.HabitTrackerRepository::class.java)
         itemRepository = mock(ItemRepository::class.java)
         eventPublisher = mock(ApplicationEventPublisher::class.java)
         whenever(grantService.grant(any(), any(), any(), any(), any(), any())).thenReturn(true)
@@ -92,6 +98,7 @@ class GrowthServiceTest {
                 recordRepository,
                 itemRepository,
                 eventPublisher,
+                habitTrackerRepository,
                 GrowthProperties(lostAfterDays = 2, reviveRubyCost = 10, goal = 30),
             )
 
@@ -188,6 +195,36 @@ class GrowthServiceTest {
         assertEquals("cat:0", item.cycleId)
     }
 
+    @Test
+    fun `habit checkIn — 실제 성장 스탬프 1 증가 후 습관 재호출과 일상 기록은 같은 날 멱등`() {
+        val tracker =
+            com.terraworld.domain.record
+                .HabitTracker(id = 1L, userId = "u", title = "습관", startDate = today)
+        val trackers = mock(com.terraworld.domain.record.HabitTrackerRepository::class.java)
+        whenever(trackers.findByIdAndUserId(1L, "u")).thenReturn(tracker)
+        whenever(trackers.save(any<com.terraworld.domain.record.HabitTracker>())).thenAnswer { it.getArgument(0) }
+        val habits =
+            com.terraworld.api.record.HabitService(
+                trackers,
+                mock(com.terraworld.domain.record.HabitCycleRepository::class.java),
+                mock(com.terraworld.domain.record.HabitPairRequestRepository::class.java),
+                grantService,
+                mock(com.terraworld.domain.social.InviteRepository::class.java),
+                mock(com.terraworld.domain.user.UserRepository::class.java),
+                eventPublisher,
+                service,
+                recordRepository,
+            )
+        assertEquals(0, cat().stampCount)
+        habits.checkIn("u", 1L)
+        assertEquals(1, cat().stampCount)
+        habits.checkIn("u", 1L)
+        assertEquals(1, cat().stampCount)
+        service.advanceAllStreaks("u")
+        assertEquals(1, cat().stampCount)
+        verify(grantService, never()).grant(any(), any(), any(), any(), any(), any())
+    }
+
     // ─── 기록 진행(advanceAllStreaks) ───
 
     @Test
@@ -274,6 +311,44 @@ class GrowthServiceTest {
 
     // ─── 되살리기 / 보류 ───
 
+    @ParameterizedTest
+    @EnumSource(GrowthReviveRequest.Method::class)
+    fun `revive — 성장 조회 및 루비 차감이나 광고 nonce 소비 전에 같은 일일 잠금 획득`(method: GrowthReviveRequest.Method) {
+        inst(streak = 12, lastProgress = today.minusDays(2).atStartOfDay(), state = GrowthCycleState.LOST)
+        val instances = spy(instanceRepo)
+        val lockedService =
+            GrowthService(
+                speciesRepo,
+                stageRepo,
+                instances,
+                currencyService,
+                grantService,
+                rewardService,
+                recordRepository,
+                itemRepository,
+                eventPublisher,
+                habitTrackerRepository,
+                GrowthProperties(lostAfterDays = 2, reviveRubyCost = 10, goal = 30),
+            )
+        val nonce = "550e8400-e29b-41d4-a716-446655440000"
+
+        val item = lockedService.revive("u", "cat", method, nonce)
+
+        inOrder(recordRepository, instances, currencyService, rewardService) {
+            verify(recordRepository).acquireRecordDailyLock("record|u|$today")
+            verify(instances).findByUserIdAndSpeciesCode("u", "cat")
+            when (method) {
+                GrowthReviveRequest.Method.RUBY ->
+                    verify(currencyService).debit("u", "RUBY", 10L, GrowthService.REASON_GROW_REVIVE, GrowthService.REF_TYPE, "cat")
+                GrowthReviveRequest.Method.AD ->
+                    verify(rewardService).consumeAdNonce("u", nonce, AdRewardNonceInbox.PURPOSE_GROWTH_REVIVE)
+            }
+            verify(recordRepository).findMaxRecordedDate("u")
+        }
+        assertEquals(GrowthItem.CycleState.ACTIVE, item.cycleState)
+        assertEquals(12, item.stampCount)
+    }
+
     @Test
     fun `revive RUBY — 10 차감, 진행 유지, ACTIVE 복귀, 오늘 기록이 오면 연속으로 이어진다`() {
         inst(streak = 12, lastProgress = today.minusDays(2).atStartOfDay())
@@ -295,6 +370,46 @@ class GrowthServiceTest {
         assertEquals(13, item.stampCount)
         service.advanceAllStreaks("u") // 같은날 멱등
         assertEquals(13, instanceRepo.findById(1L).get().naturalStreak)
+    }
+
+    @Test
+    fun `revive — LOST 중 오늘 습관만 체크인해도 복구 시 1 스탬프 반영하고 재호출은 멱등`() {
+        inst(streak = 12, lastProgress = today.minusDays(2).atStartOfDay())
+        val tracker =
+            com.terraworld.domain.record
+                .HabitTracker(id = 1L, userId = "u", title = "습관", startDate = today)
+        whenever(habitTrackerRepository.findByIdAndUserId(1L, "u")).thenReturn(tracker)
+        whenever(habitTrackerRepository.existsByUserIdAndLastCheckedDate("u", today)).thenAnswer { tracker.lastCheckedDate == today }
+        whenever(habitTrackerRepository.save(any<com.terraworld.domain.record.HabitTracker>())).thenAnswer { it.getArgument(0) }
+        val habits =
+            com.terraworld.api.record.HabitService(
+                habitTrackerRepository,
+                mock(com.terraworld.domain.record.HabitCycleRepository::class.java),
+                mock(com.terraworld.domain.record.HabitPairRequestRepository::class.java),
+                grantService,
+                mock(com.terraworld.domain.social.InviteRepository::class.java),
+                mock(com.terraworld.domain.user.UserRepository::class.java),
+                eventPublisher,
+                service,
+                recordRepository,
+            )
+        habits.checkIn("u", 1L)
+        assertEquals(GrowthItem.CycleState.LOST, cat().cycleState)
+        assertEquals(12, cat().stampCount)
+        val revived = service.revive("u", "cat", GrowthReviveRequest.Method.RUBY, null)
+        assertEquals(GrowthItem.CycleState.ACTIVE, revived.cycleState)
+        assertEquals(13, revived.stampCount)
+        habits.checkIn("u", 1L)
+        service.advanceAllStreaks("u")
+        assertEquals(13, service.revive("u", "cat", GrowthReviveRequest.Method.RUBY, null).stampCount)
+        verify(currencyService).debit(eq("u"), eq("RUBY"), eq(10L), any(), anyOrNull(), anyOrNull())
+    }
+
+    @Test
+    fun `revive — 어제 습관은 오늘 스탬프로 소급하지 않는다`() {
+        inst(streak = 12, lastProgress = today.minusDays(2).atStartOfDay())
+        whenever(habitTrackerRepository.existsByUserIdAndLastCheckedDate("u", today.minusDays(1))).thenReturn(true)
+        assertEquals(12, service.revive("u", "cat", GrowthReviveRequest.Method.RUBY, null).stampCount)
     }
 
     @Test

@@ -14,7 +14,7 @@ enum class DailyType(
     val coinReward: Long,
     val tokenReward: Long,
 ) {
-    PHOTO("DEW", 10, 2),
+    PHOTO("DEW", 10, 1),
     DIARY("SUN", 12, 2),
     FOCUS("BOLT", 15, 3),
     DISTANCE("WIND", 15, 3),

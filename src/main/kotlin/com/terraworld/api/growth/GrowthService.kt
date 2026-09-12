@@ -18,6 +18,7 @@ import com.terraworld.domain.growth.GrowthSpeciesRepository
 import com.terraworld.domain.growth.GrowthStage
 import com.terraworld.domain.growth.GrowthStageRepository
 import com.terraworld.domain.item.ItemRepository
+import com.terraworld.domain.record.HabitTrackerRepository
 import com.terraworld.domain.record.RecordRepository
 import com.terraworld.domain.reward.AdRewardNonceInbox
 import io.terraworld.api.model.GrowthItem
@@ -40,7 +41,7 @@ import io.terraworld.api.model.GrowthStage as ApiGrowthStage
  * - 사이클: ACTIVE(진행) / LOST(기록 끊김) / COMPLETED(goal 달성). 판정은 조회·mutation 시 [settle] 로 lazy 수행 +
  *   스케줄러(KST 00:05, [GrowthResetScheduler]) 이중 경로 — 전이는 전부 CAS(bulk UPDATE) 라 동시 판정에도 1회만 적용.
  * - LOST: `DAYS.between(lastProgressDate, today) >= lost-after-days(2)` — lastProgressDate+1일의 KST 종료까지 미기록이면
- *   D+2 00:00 KST 부터. 판정 트리거는 일상 기록(advanceAllStreaks)만. LOST 에서는 기록이 진행을 올리지 않고(되살리기 필요),
+ *   D+2 00:00 KST 부터. 일상 기록과 습관 체크인이 advanceAllStreaks 를 호출한다. LOST 에서는 진행하지 않고(되살리기 필요),
  *   부스터 409 GROWTH_LOST. revive(루비/광고) 는 진행 유지 + ACTIVE 복귀, revive-dismiss 는 내일 새 사이클 리셋.
  * - COMPLETED: goal 도달 시 정령 아이템 지급(GrantService ITEM, items 가 소유권 SoT) + 당일 유지, 다음날 새 사이클 리셋
  *   (notifyNext 신청자에게 SPIRIT_ARRIVED 1회 — rows==1 을 받은 경로만 발행).
@@ -56,6 +57,7 @@ class GrowthService(
     private val recordRepository: RecordRepository,
     private val itemRepository: ItemRepository,
     private val eventPublisher: ApplicationEventPublisher,
+    private val habitTrackerRepository: HabitTrackerRepository,
     private val properties: GrowthProperties = GrowthProperties(),
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
@@ -92,7 +94,7 @@ class GrowthService(
     /**
      * 일상 기록 시 전 종 스탬프 진행 (하루 1회). 연속이면 streak++, 첫 기록(리셋 후 포함)이면 1.
      * LOST/COMPLETED 사이클은 진행하지 않는다 (LOST 는 되살리기, COMPLETED 는 당일 유지 후 리셋). 개체 미생성 종은 생성.
-     * RecordService.createRecord hook — 습관 체크인은 호출하지 않는다.
+     * RecordService.createRecord / HabitService.checkIn hook — 일상 기록과 습관이 같은 하루 스탬프를 공유한다.
      */
     @Transactional
     fun advanceAllStreaks(userId: String) {
@@ -154,7 +156,7 @@ class GrowthService(
      * LOST 사이클 되살리기 — 진행(stampCount) 유지 + ACTIVE 복귀. RUBY 는 reviveRubyCost 차감, AD 는 광고 보상과
      * 동일한 단계 정책으로 nonce 를 소비한다(authoritative 에서는 SSV 검증 완료 SERVER nonce 만 허용).
      * revive-dismiss 로 보류된 당일(reviveSnoozedUntil > today)은 409 GROWTH_REVIVE_SNOOZED.
-     * 오늘 이미 일상 기록이 있으면 그 기록을 스탬프로 반영(streak+1), 없으면 오늘 기록이 이어지도록 기준일을 어제로 둔다.
+     * 오늘 일상 기록 또는 습관 체크인이 있으면 스탬프로 반영(streak+1), 없으면 기준일을 어제로 둔다.
      */
     @Transactional
     fun revive(
@@ -165,6 +167,7 @@ class GrowthService(
     ): GrowthItem {
         val species = requireSpecies(speciesCode, ErrorCode.GROWTH_SPECIES_NOT_FOUND)
         val today = KstTime.today()
+        recordRepository.acquireRecordDailyLock("record|$userId|$today")
         val inst =
             growthInstanceRepository.findByUserIdAndSpeciesCode(userId, speciesCode)?.let { settle(it, species, today) }
                 ?: return toItem(species, null, today)
@@ -187,7 +190,7 @@ class GrowthService(
         inst.lostAt = null
         inst.reviveSnoozedUntilKstDate = null
         inst.dormancyRecoveredAt = now
-        if (recordRepository.findMaxRecordedDate(userId) == today) {
+        if (recordRepository.findMaxRecordedDate(userId) == today || habitTrackerRepository.existsByUserIdAndLastCheckedDate(userId, today)) {
             // 오늘 기록이 이미 있음 — 되살린 사이클에 오늘 스탬프 반영
             inst.naturalStreak += 1
             inst.lastProgressAt = now

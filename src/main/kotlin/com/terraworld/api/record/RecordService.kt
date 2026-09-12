@@ -144,6 +144,8 @@ class RecordService(
         }
 
         val jointSessionId: UUID? = if (partner != null) UUID.randomUUID() else null
+        // 현재 기록 저장 전에 판정한다. cap 과 동일한 잠금/트랜잭션 아래 삭제된 기록도 포함한다.
+        val rewardEligible = isDailyRewardEligible(userId, today, request.dailyType)
 
         // 본인 기록
         val record =
@@ -156,11 +158,12 @@ class RecordService(
                     photoUrl = request.photoUrl,
                     recordedDate = today,
                     dailyType = request.dailyType,
+                    rewardGranted = rewardEligible,
                     partnerUserId = partner?.id,
                     jointSessionId = jointSessionId,
                 ),
             )
-        val reward = applyReward(record, category)
+        val reward = if (rewardEligible) applyReward(record, category) else 0 to 0
         // 낙서장 P3: 기록 → 육성 연속 진행 (하루 1회, 전 종). 육성 실패/부스터는 GrowthService 내부.
         growthService.advanceAllStreaks(userId)
 
@@ -175,6 +178,7 @@ class RecordService(
                     category.id,
                 )
             if (partnerTodayCount < category.dailyLimit) {
+                val partnerRewardEligible = isDailyRewardEligible(partner.id, today, request.dailyType)
                 val partnerRecord =
                     recordRepository.save(
                         ActivityRecord(
@@ -185,11 +189,12 @@ class RecordService(
                             photoUrl = request.photoUrl,
                             recordedDate = today,
                             dailyType = request.dailyType,
+                            rewardGranted = partnerRewardEligible,
                             partnerUserId = userId,
                             jointSessionId = jointSessionId,
                         ),
                     )
-                applyReward(partnerRecord, category)
+                if (partnerRewardEligible) applyReward(partnerRecord, category)
                 // 리뷰 Q#5: joint record 시 partner 육성도 진행 (본인만 진행하던 결함)
                 growthService.advanceAllStreaks(partner.id)
             }
@@ -218,6 +223,12 @@ class RecordService(
             updatedCurrency = walletBuilder.build(userId, user),
         )
     }
+
+    private fun isDailyRewardEligible(
+        userId: String,
+        today: LocalDate,
+        dailyType: DailyType?,
+    ): Boolean = dailyType == null || !recordRepository.existsByUserIdAndRecordedDateAndDailyType(userId, today, dailyType)
 
     /**
      * 보상 적용 (N2: wallet_transactions 원장 기록 포함). dailyType 지정 시 낙서장 일상 보상

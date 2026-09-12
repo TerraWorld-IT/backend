@@ -47,6 +47,8 @@ class HabitService(
     private val inviteRepository: InviteRepository,
     private val userRepository: UserRepository,
     private val eventPublisher: ApplicationEventPublisher,
+    private val growthService: com.terraworld.api.growth.GrowthService,
+    private val recordRepository: com.terraworld.domain.record.RecordRepository,
     private val properties: HabitProperties = HabitProperties(),
 ) {
     companion object {
@@ -145,13 +147,15 @@ class HabitService(
         userId: String,
         trackerId: Long,
     ): HabitCheckInResult {
+        val today = KstTime.today()
+        // 일상 기록과 같은 사용자/날짜 잠금으로 체크인 및 성장 읽기-쓰기를 직렬화한다.
+        recordRepository.acquireRecordDailyLock("record|$userId|$today")
         val tracker =
             habitTrackerRepository.findByIdAndUserId(trackerId, userId)
                 ?: throw BusinessException(ErrorCode.HABIT_NOT_FOUND)
         if (tracker.status == HabitStatus.PENDING) expireStaleRequests(listOf(tracker))
         if (tracker.status != HabitStatus.ACTIVE) throw BusinessException(ErrorCode.HABIT_NOT_ACTIVE)
 
-        val today = KstTime.today()
         if (tracker.lastCheckedDate == today) {
             // 같은 날 재체크인 — 멱등
             return HabitCheckInResult(tracker, cycleCompleted = false)
@@ -175,6 +179,7 @@ class HabitService(
             }
         }
         habitTrackerRepository.save(tracker)
+        growthService.advanceAllStreaks(userId)
 
         // 친구 연동 습관 — 체크인/완주를 상대에게 알림 (낙서장 "트래커 기록 시 상대 알림"). 같은 날 재체크인은 조기 return 이라 최대 1회/일.
         partnerOf(tracker)?.takeIf { it.status in HabitStatus.OPEN }?.let { partner ->

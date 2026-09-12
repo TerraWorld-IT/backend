@@ -8,6 +8,13 @@ import org.springframework.data.repository.query.Param
 import java.time.LocalDate
 
 interface RecordRepository : JpaRepository<ActivityRecord, Long> {
+    /** KST 당일 타입별 첫 기록 보상 판정. 삭제해도 이미 사용한 보상 기회는 복구하지 않는다. */
+    fun existsByUserIdAndRecordedDateAndDailyType(
+        userId: String,
+        recordedDate: LocalDate,
+        dailyType: DailyType,
+    ): Boolean
+
     /** 지연된 사진 삭제 전에 soft-delete 기록을 포함한 모든 참조를 확인한다. */
     fun existsByPhotoUrl(photoUrl: String): Boolean
 

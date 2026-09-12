@@ -84,6 +84,12 @@ enum class HabitStatus {
 }
 
 interface HabitTrackerRepository : JpaRepository<HabitTracker, Long> {
+    /** 종료된 습관도 오늘의 체크인 사실은 유지한다. 되살리기 스탬프 소급 판정용. */
+    fun existsByUserIdAndLastCheckedDate(
+        userId: String,
+        lastCheckedDate: LocalDate,
+    ): Boolean
+
     /** 계정 삭제 시 FK 없는 사용자 행을 즉시 일괄 삭제한다. */
     @Modifying(flushAutomatically = true)
     @Query("DELETE FROM HabitTracker e WHERE e.userId = :userId")

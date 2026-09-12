@@ -342,6 +342,12 @@ class TerrariumServiceTest {
     private class FakeRecordRepository :
         FakeJpaRepository<ActivityRecord, Long>(),
         RecordRepository {
+        override fun existsByUserIdAndRecordedDateAndDailyType(
+            userId: String,
+            recordedDate: LocalDate,
+            dailyType: com.terraworld.domain.record.DailyType,
+        ): Boolean = store.values.any { it.user.id == userId && it.recordedDate == recordedDate && it.dailyType == dailyType }
+
         override fun existsByPhotoUrl(photoUrl: String): Boolean = store.values.any { it.photoUrl == photoUrl }
 
         override fun findPhotoUrlsByUserId(userId: String): List<String> = store.values.filter { it.user.id == userId }.mapNotNull { it.photoUrl }
