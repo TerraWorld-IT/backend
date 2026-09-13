@@ -57,6 +57,42 @@ class ExchangeExecutorTest {
         rateRepo.save(ExchangeRate("BOLT", "COIN", BigDecimal("0.100000"), 1000, 500))
         rateRepo.save(ExchangeRate("WIND", "COIN", BigDecimal("0.100000"), 1000, 500))
         rateRepo.save(ExchangeRate("RUBY", "COIN", BigDecimal("50.000000"), 0, 100))
+        for (code in ExchangeExecutor.ACTIVITY_CODES) {
+            rateRepo.save(ExchangeRate("COIN", code, BigDecimal("5.000000"), 1000, 100))
+        }
+    }
+
+    @Test
+    fun `COIN to each activity token and back loses 60 COIN from 100`() {
+        for (code in ExchangeExecutor.ACTIVITY_CODES) {
+            val userId = "round-trip-$code"
+            val bought = executor.execute(userId, "COIN", code, 100)
+            assertEquals(500, bought.grossToAmount)
+            assertEquals(50, bought.feeAmount)
+            assertEquals(450, bought.toAmount)
+            assertEquals("1:5", bought.rate)
+            verify(currencyService).debit(eq(userId), eq("COIN"), eq(100L), any(), anyOrNull(), anyOrNull())
+            verify(currencyService).credit(eq(userId), eq(code), eq(450L), any(), anyOrNull(), anyOrNull())
+
+            val sold = executor.execute(userId, code, "COIN", bought.toAmount)
+            assertEquals(45, sold.grossToAmount)
+            assertEquals(5, sold.feeAmount)
+            assertEquals(40, sold.toAmount)
+            assertEquals(100L, usageRepo.get(userId, "COIN", code, today)?.fromAmount)
+            assertEquals(450L, usageRepo.get(userId, code, "COIN", today)?.fromAmount)
+        }
+    }
+
+    @Test
+    fun `COIN activity cap is cumulative per destination and leaves reverse combined cap intact`() {
+        executor.execute("u", "COIN", "DEW", 99)
+        val last = executor.execute("u", "COIN", "DEW", 1)
+        assertEquals(4, last.toAmount)
+        val ex = assertThrows<BusinessException> { executor.execute("u", "COIN", "DEW", 1) }
+        assertEquals(ErrorCode.DAILY_LIMIT_EXCEEDED, ex.errorCode)
+        assertEquals(100L, usageRepo.get("u", "COIN", "DEW", today)?.fromAmount)
+        assertEquals(450, executor.execute("u", "COIN", "SUN", 100).toAmount)
+        assertEquals(9, executor.execute("u", "DEW", "COIN", 100).toAmount)
     }
 
     @Test
