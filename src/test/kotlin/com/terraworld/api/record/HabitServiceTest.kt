@@ -3,6 +3,7 @@ package com.terraworld.api.record
 import com.terraworld.api.grant.GrantService
 import com.terraworld.api.grant.GrantType
 import com.terraworld.api.notification.HabitPairEvent
+import com.terraworld.api.user.UserDeletionService
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
 import com.terraworld.common.time.KstTime
@@ -150,8 +151,8 @@ class HabitServiceTest {
     }
 
     @Test
-    fun `활성 습관이 있으면 HABIT_LIMIT_EXCEEDED (PENDING·COMPLETED_UNCLAIMED 포함)`() {
-        tracker(1L, status = HabitStatus.COMPLETED_UNCLAIMED)
+    fun `대기 중인 습관이 있으면 HABIT_LIMIT_EXCEEDED`() {
+        tracker(1L, status = HabitStatus.PENDING)
         val ex = assertThrows<BusinessException> { service.createTracker("u", "독서") }
         assertEquals(ErrorCode.HABIT_LIMIT_EXCEEDED, ex.errorCode)
     }
@@ -188,8 +189,8 @@ class HabitServiceTest {
     }
 
     @Test
-    fun `friend 생성 — 상대가 이미 활성 습관이면 HABIT_LIMIT_EXCEEDED`() {
-        tracker(9L, userId = "friend")
+    fun `friend 생성 — 상대가 이미 활성 친구 습관이면 HABIT_LIMIT_EXCEEDED`() {
+        tracker(9L, userId = "friend", partnerTrackerId = 10L)
         val ex = assertThrows<BusinessException> { service.createTracker("u", "산책", "friend") }
         assertEquals(ErrorCode.HABIT_LIMIT_EXCEEDED, ex.errorCode)
         assertTrue(repo.all().none { it.userId == "u" })
@@ -202,6 +203,71 @@ class HabitServiceTest {
     }
 
     // ─── 수락 / 거절 / 취소 / 만료 ───
+
+    @Test
+    fun `양측 solo 진행 중 friend 생성 및 수락 — 각 사용자 두 모드 ACTIVE`() {
+        service.createTracker("u", "혼자 독서")
+        service.createTracker("friend", "혼자 운동")
+        val mine = service.createTracker("u", "함께 산책", "friend")
+        service.accept("friend", mine.partnerTrackerId!!)
+        for (userId in listOf("u", "friend")) {
+            val open = service.listOpen(userId)
+            assertEquals(2, open.size)
+            assertTrue(open.all { it.status == HabitStatus.ACTIVE })
+            assertEquals(1, open.count { it.partnerTrackerId == null })
+            assertEquals(1, open.count { it.partnerTrackerId != null })
+        }
+    }
+
+    @Test
+    fun `friend 진행 중 solo 생성 가능 — 각 모드 두 번째는 슬롯 점유 상태 모두 거절`() {
+        for (status in HabitStatus.SLOT_OCCUPYING) {
+            repo.deleteAll()
+            tracker(1L, status = status, partnerTrackerId = 2L)
+            val solo = service.createTracker("u", "혼자 독서")
+            solo.status = status
+            assertEquals(ErrorCode.HABIT_LIMIT_EXCEEDED, assertThrows<BusinessException> { service.createTracker("u", "또 독서") }.errorCode)
+            assertEquals(ErrorCode.HABIT_LIMIT_EXCEEDED, assertThrows<BusinessException> { service.createTracker("u", "또 산책", "friend") }.errorCode)
+        }
+    }
+
+    @Test
+    fun `각 모드 중단과 완료 후 재시작 — 다른 모드는 유지`() {
+        for (friendMode in listOf(false, true)) {
+            for (complete in listOf(false, true)) {
+                repo.deleteAll()
+                requestRepo.deleteAll()
+                val solo = service.createTracker("u", "혼자 독서")
+                val mine = service.createTracker("u", "함께 산책", "friend")
+                service.accept("friend", mine.partnerTrackerId!!)
+                val target = if (friendMode) mine else solo
+                val other = if (friendMode) solo else mine
+                if (complete) {
+                    target.status = HabitStatus.COMPLETED_UNCLAIMED
+                    service.complete("u", target.id)
+                } else {
+                    service.stop("u", target.id)
+                }
+                if (friendMode) service.stop("friend", mine.partnerTrackerId!!)
+                val restarted = service.createTracker("u", "다시 시작", if (friendMode) "friend" else null)
+                assertTrue(restarted.status in HabitStatus.OPEN)
+                assertEquals(HabitStatus.ACTIVE, other.status)
+                assertEquals(2, service.listOpen("u").size)
+            }
+        }
+    }
+
+    @Test
+    fun `상대 중단 후 solo 연장은 기존 solo가 있으면 보상과 상태 변경 전에 거절`() {
+        val (mine, partner) = pair()
+        mine.status = HabitStatus.COMPLETED_UNCLAIMED
+        partner.status = HabitStatus.BROKEN
+        service.createTracker("u", "혼자 독서")
+        assertEquals(ErrorCode.HABIT_LIMIT_EXCEEDED, assertThrows<BusinessException> { service.extend("u", mine.id) }.errorCode)
+        assertEquals(HabitStatus.COMPLETED_UNCLAIMED, mine.status)
+        assertEquals(partner.id, mine.partnerTrackerId)
+        verify(grantService, never()).grant(any(), any(), any(), any(), any(), any())
+    }
 
     @Test
     fun `accept — 수신자 미러 id 로 수락하면 양측 ACTIVE + 사이클 개시 + partnerStatus ACCEPTED`() {
@@ -359,6 +425,95 @@ class HabitServiceTest {
     }
 
     // ─── 연장(extend) ───
+
+    @Test
+    fun `완주 미수령은 목록에 남지만 슬롯 미점유 — 새 solo 이후 이전 연장은 거절`() {
+        val completed = tracker(1L, streak = 7, status = HabitStatus.COMPLETED_UNCLAIMED)
+        val active = service.createTracker("u", "새 독서")
+        assertEquals(setOf(completed.id, active.id), service.listOpen("u").map { it.id }.toSet())
+        assertEquals(ErrorCode.HABIT_LIMIT_EXCEEDED, assertThrows<BusinessException> { service.extend("u", completed.id) }.errorCode)
+        assertEquals(HabitStatus.COMPLETED_UNCLAIMED, completed.status)
+        verify(grantService, never()).grant(any(), any(), any(), any(), any(), any())
+    }
+
+    @Test
+    fun `EXTEND 요청자 탈퇴 후 미수령 수신자는 기존 solo가 있으면 연장 거절 — solo 활성 1개 유지`() {
+        val (mine, partner) = pair()
+        mine.status = HabitStatus.COMPLETED_UNCLAIMED
+        partner.status = HabitStatus.COMPLETED_UNCLAIMED
+        service.extend("friend", partner.id)
+        val solo = service.createTracker("u", "혼자 독서")
+
+        deletePartner()
+
+        assertNull(mine.partnerTrackerId)
+        assertNull(mine.friendLinkId)
+        assertEquals(HabitStatus.COMPLETED_UNCLAIMED, mine.status)
+        assertEquals(ErrorCode.HABIT_LIMIT_EXCEEDED, assertThrows<BusinessException> { service.extend("u", mine.id) }.errorCode)
+        assertEquals(ErrorCode.HABIT_LIMIT_EXCEEDED, assertThrows<BusinessException> { service.createTracker("u", "또 독서") }.errorCode)
+        assertEquals(listOf(solo.id), repo.all().filter { it.userId == "u" && it.status in HabitStatus.SLOT_OCCUPYING && it.partnerTrackerId == null }.map { it.id })
+        verify(grantService, never()).grant(eq("u"), any(), any(), any(), any(), any())
+        service.stop("u", solo.id)
+        assertEquals(HabitStatus.ACTIVE, service.extend("u", mine.id).tracker.status)
+    }
+
+    @Test
+    fun `EXTEND 요청자 탈퇴 시 진행 중 수신자는 친구 슬롯 유지 — 완주 뒤 solo 충돌 검사`() {
+        val (mine, partner) = pair()
+        partner.status = HabitStatus.COMPLETED_UNCLAIMED
+        service.extend("friend", partner.id)
+        service.createTracker("u", "혼자 독서")
+
+        deletePartner()
+
+        assertEquals(partner.id, mine.partnerTrackerId)
+        assertEquals(HabitStatus.ACTIVE, mine.status)
+        assertFalse(repo.existsById(partner.id))
+        assertEquals(1, repo.all().count { it.userId == "u" && it.status == HabitStatus.ACTIVE && it.partnerTrackerId == null })
+        assertEquals(ErrorCode.HABIT_LIMIT_EXCEEDED, assertThrows<BusinessException> { service.createTracker("u", "새 친구 습관", "friend") }.errorCode)
+        mine.status = HabitStatus.COMPLETED_UNCLAIMED
+        assertEquals(ErrorCode.HABIT_LIMIT_EXCEEDED, assertThrows<BusinessException> { service.extend("u", mine.id) }.errorCode)
+        verify(grantService, never()).grant(eq("u"), any(), any(), any(), any(), any())
+    }
+
+    @Test
+    fun `새 친구 슬롯이 있으면 이전 친구 연장의 요청과 두 수락 경로 모두 보상 전에 거절`() {
+        val (mine, partner) = pair()
+        mine.status = HabitStatus.COMPLETED_UNCLAIMED
+        partner.status = HabitStatus.COMPLETED_UNCLAIMED
+        val other = tracker(3L, partnerTrackerId = 4L)
+        assertEquals(ErrorCode.HABIT_LIMIT_EXCEEDED, assertThrows<BusinessException> { service.extend("u", mine.id) }.errorCode)
+
+        service.extend("friend", partner.id)
+        assertEquals(ErrorCode.HABIT_LIMIT_EXCEEDED, assertThrows<BusinessException> { service.accept("u", mine.id) }.errorCode)
+        assertEquals(ErrorCode.HABIT_LIMIT_EXCEEDED, assertThrows<BusinessException> { service.extend("u", mine.id) }.errorCode)
+        assertEquals(HabitStatus.COMPLETED_UNCLAIMED, mine.status)
+        assertEquals(HabitStatus.PENDING, partner.status)
+        assertEquals(HabitStatus.ACTIVE, other.status)
+        verify(grantService, never()).grant(eq("u"), any(), any(), any(), any(), any())
+    }
+
+    private fun deletePartner() {
+        whenever(userRepository.existsById("friend")).thenReturn(true)
+        val deletionRepo = org.mockito.kotlin.spy(repo)
+        UserDeletionService(
+            userRepository,
+            recordRepository,
+            org.mockito.kotlin.mock(),
+            deletionRepo,
+            org.mockito.kotlin.mock(),
+            org.mockito.kotlin.mock(),
+            org.mockito.kotlin.mock(),
+            org.mockito.kotlin.mock(),
+            requestRepo,
+            org.mockito.kotlin.mock(),
+            org.mockito.kotlin.mock(),
+        ).deleteUser("friend")
+        org.mockito.kotlin.inOrder(deletionRepo) {
+            verify(deletionRepo).acquireHabitPairLock("habit|user|u")
+            verify(deletionRepo).findByIdAndUserId(1L, "u")
+        }
+    }
 
     @Test
     fun `extend solo — 보상 지급 + 새 사이클 ACTIVE (completedCycles+1, streak 0)`() {

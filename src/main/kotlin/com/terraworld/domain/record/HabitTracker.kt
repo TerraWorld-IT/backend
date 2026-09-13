@@ -78,8 +78,11 @@ enum class HabitStatus {
     ;
 
     companion object {
-        /** 목록 노출 + 활성 1개 제한 판정 집합 (PENDING/ACTIVE/COMPLETED_UNCLAIMED). */
+        /** 목록 노출 집합: 완주 미수령 트래커도 보상 수령을 위해 유지한다. */
         val OPEN: Set<HabitStatus> = setOf(PENDING, ACTIVE, COMPLETED_UNCLAIMED)
+
+        /** 새 사이클의 모드별 슬롯을 점유하는 상태. 완주 미수령은 연장 시 슬롯을 다시 확보한다. */
+        val SLOT_OCCUPYING: Set<HabitStatus> = setOf(PENDING, ACTIVE)
     }
 }
 

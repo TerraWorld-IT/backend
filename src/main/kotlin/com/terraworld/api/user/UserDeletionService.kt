@@ -7,6 +7,7 @@ import com.terraworld.domain.exchange.ExchangeDailyUsageRepository
 import com.terraworld.domain.record.HabitPairRequestKind
 import com.terraworld.domain.record.HabitPairRequestRepository
 import com.terraworld.domain.record.HabitPairRequestStatus
+import com.terraworld.domain.record.HabitStatus
 import com.terraworld.domain.record.HabitTrackerRepository
 import com.terraworld.domain.record.RecordRepository
 import com.terraworld.domain.reward.AdRewardNonceInboxRepository
@@ -82,7 +83,14 @@ class UserDeletionService(
 
     private fun settlePendingPairRequests(userId: String) {
         val now = LocalDateTime.now()
-        pairRequestRepository.findOpenByUserId(userId).forEach { request ->
+        val requests = pairRequestRepository.findOpenByUserId(userId)
+        // 생존 사용자의 생성·연장·수락과 unlink를 직렬화한다. 여러 상대의 잠금은 정렬 순서로 획득한다.
+        requests
+            .map { if (it.requesterUserId == userId) it.partnerUserId else it.requesterUserId }
+            .distinct()
+            .sorted()
+            .forEach { trackerRepository.acquireHabitPairLock("habit|user|$it") }
+        requests.forEach { request ->
             // HabitService.closeRequest의 거절·만료 규칙: START는 양측 종료, EXTEND는 요청자만 종료한다.
             request.status = if (request.isExpired(now)) HabitPairRequestStatus.EXPIRED else HabitPairRequestStatus.DECLINED
             request.respondedAt = now
@@ -96,9 +104,12 @@ class UserDeletionService(
             val peerUserId = if (request.requesterUserId == userId) request.partnerUserId else request.requesterUserId
             if (peerId == null || peerUserId == userId) return@forEach
             trackerRepository.findByIdAndUserId(peerId, peerUserId)?.let { peer ->
-                peer.partnerTrackerId = null
-                peer.friendLinkId = null
-                trackerRepository.save(peer)
+                // 진행 중인 EXTEND 수신자는 현재 친구 슬롯을 유지한다. 상대가 없어도 solo 전환은 extend에서 검사한다.
+                if (peer.status !in HabitStatus.SLOT_OCCUPYING) {
+                    peer.partnerTrackerId = null
+                    peer.friendLinkId = null
+                    trackerRepository.save(peer)
+                }
             }
         }
     }

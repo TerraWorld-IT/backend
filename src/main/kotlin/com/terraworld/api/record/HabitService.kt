@@ -29,7 +29,7 @@ import java.time.LocalDateTime
 /**
  * 습관(7일 트래커) 서비스 — 아프젝 v2 상태머신 (§R2).
  *
- * - 활성(PENDING/ACTIVE/COMPLETED_UNCLAIMED) 습관은 solo·friend 합산 1개 (409 HABIT_LIMIT_EXCEEDED).
+ * - 활성(PENDING/ACTIVE) 습관은 solo·friend 모드별 1개 (409 HABIT_LIMIT_EXCEEDED). 완주 미수령은 슬롯 미점유.
  * - 친구 습관: 요청자 트래커 + 상대 미러 트래커(둘 다 PENDING) + [HabitPairRequest](START). 수락 시 양측 ACTIVE,
  *   거절/취소/만료 시 양측 BROKEN. 수락 전 체크인은 409 HABIT_NOT_ACTIVE.
  * - 7일째 체크인 → COMPLETED_UNCLAIMED(보상 미지급). complete(종료) / extend(새 사이클) 가 보상을 지급한다 —
@@ -71,7 +71,7 @@ class HabitService(
 
         if (friendUserId.isNullOrBlank()) {
             lockUser(userId)
-            ensureNoOpenHabit(userId)
+            ensureNoOpenHabit(userId, friendLinked = false)
             val tracker =
                 habitTrackerRepository.save(
                     HabitTracker(userId = userId, title = trimmedTitle, startDate = today, status = HabitStatus.ACTIVE),
@@ -88,11 +88,11 @@ class HabitService(
                 .map { it.id }
                 .orElseThrow { BusinessException(ErrorCode.INVALID_INPUT, "수락된 친구 관계가 아닙니다") }
 
-        // 양측 활성 1개 제한을 per-user advisory lock 으로 직렬화 — 정렬 순서로 획득해 교착 회피.
+        // 양측 친구 모드 활성 1개 제한을 per-user advisory lock 으로 직렬화 — 정렬 순서로 획득해 교착 회피.
         listOf(userId, friendUserId).sorted().forEach { lockUser(it) }
-        ensureNoOpenHabit(userId)
-        if (habitTrackerRepository.countByUserIdAndStatusIn(friendUserId, HabitStatus.OPEN) > 0) {
-            throw BusinessException(ErrorCode.HABIT_LIMIT_EXCEEDED, "상대가 이미 진행 중인 습관이 있어요")
+        ensureNoOpenHabit(userId, friendLinked = true)
+        if (hasOpenHabit(friendUserId, friendLinked = true)) {
+            throw BusinessException(ErrorCode.HABIT_LIMIT_EXCEEDED, "상대가 이미 진행 중인 친구 습관이 있어요")
         }
 
         val mine =
@@ -207,6 +207,7 @@ class HabitService(
         userId: String,
         trackerId: Long,
     ): HabitTracker {
+        lockUser(userId)
         val mine =
             habitTrackerRepository.findByIdAndUserId(trackerId, userId)
                 ?: throw BusinessException(ErrorCode.HABIT_NOT_FOUND)
@@ -259,6 +260,7 @@ class HabitService(
         if (mine.status != HabitStatus.COMPLETED_UNCLAIMED) {
             throw BusinessException(ErrorCode.HABIT_INVALID_STATE, "이번 사이클을 완주한 뒤 연장을 수락할 수 있어요")
         }
+        ensureNoOpenHabit(mine.userId, friendLinked = true)
         claimReward(mine)
         startNextCycle(mine, today)
         mine.status = HabitStatus.ACTIVE
@@ -376,6 +378,7 @@ class HabitService(
         userId: String,
         trackerId: Long,
     ): HabitRewardResult {
+        lockUser(userId)
         val tracker =
             habitTrackerRepository.findByIdAndUserId(trackerId, userId)
                 ?: throw BusinessException(ErrorCode.HABIT_NOT_FOUND)
@@ -387,6 +390,7 @@ class HabitService(
         if (incoming != null && incoming.kind == HabitPairRequestKind.EXTEND && !incoming.isExpired(LocalDateTime.now())) {
             val requester = habitTrackerRepository.findById(incoming.requesterTrackerId).orElse(null)
             if (requester != null && requester.status == HabitStatus.PENDING) {
+                ensureNoOpenHabit(userId, friendLinked = true)
                 val claim = claimReward(tracker)
                 startNextCycle(tracker, today)
                 tracker.status = HabitStatus.ACTIVE
@@ -404,6 +408,8 @@ class HabitService(
         val partner = partnerOf(tracker)
         // 상대가 아직 함께(열린 상태)면 연장 요청, 종료(COMPLETED/BROKEN)됐으면 solo 연장
         val pairContinues = partner != null && partner.status in HabitStatus.OPEN
+        // 완주 트래커는 슬롯 미점유: 탈퇴로 포인터가 지워졌어도 보상/상태 변경 전에 목표 슬롯을 확보한다.
+        ensureNoOpenHabit(userId, friendLinked = pairContinues)
         val target = if (pairContinues) HabitStatus.PENDING else HabitStatus.ACTIVE
         val rows = habitTrackerRepository.casStatus(trackerId, userId, HabitStatus.COMPLETED_UNCLAIMED, target)
         val fresh = habitTrackerRepository.findByIdAndUserId(trackerId, userId) ?: throw BusinessException(ErrorCode.HABIT_NOT_FOUND)
@@ -519,9 +525,20 @@ class HabitService(
         habitTrackerRepository.acquireHabitPairLock("habit|user|$userId")
     }
 
-    private fun ensureNoOpenHabit(userId: String) {
-        if (habitTrackerRepository.countByUserIdAndStatusIn(userId, HabitStatus.OPEN) > 0) {
-            throw BusinessException(ErrorCode.HABIT_LIMIT_EXCEEDED)
+    private fun hasOpenHabit(
+        userId: String,
+        friendLinked: Boolean,
+    ): Boolean =
+        habitTrackerRepository.findAllByUserIdAndStatusIn(userId, HabitStatus.SLOT_OCCUPYING).any {
+            (it.partnerTrackerId != null) == friendLinked
+        }
+
+    private fun ensureNoOpenHabit(
+        userId: String,
+        friendLinked: Boolean,
+    ) {
+        if (hasOpenHabit(userId, friendLinked)) {
+            throw BusinessException(ErrorCode.HABIT_LIMIT_EXCEEDED, "같은 모드의 습관은 한 번에 1개만 진행할 수 있어요")
         }
     }
 
