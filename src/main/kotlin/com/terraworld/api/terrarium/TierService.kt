@@ -64,7 +64,7 @@ class TierService(
                         sparkleCost = it.sparkleCost,
                         rubyCost = it.rubyCost,
                         slots = it.slots,
-                        spiritCode = it.spiritCode,
+                        spiritCode = it.spiritCode.takeUnless { code -> code == "fish" },
                         unlocked = it.tierOrder <= highestOrder,
                         active = it.tier == terrarium.activeTier,
                         previewAssetUrl = it.previewAssetUrl,
@@ -113,7 +113,8 @@ class TierService(
 
         // 티어 보상 정령 — items 가 소유권 SoT(ITEM executor, `{code}-spirit`). user_characters(SPIRIT)도 레거시 표면 호환으로 함께 멱등 지급.
         var grantedSpirit: String? = null
-        val spirit = target.spiritCode
+        // V49 비활성 정령은 보상 설정이 남아 있어도 신규 지급하지 않는다.
+        val spirit = target.spiritCode.takeUnless { it == "fish" }
         if (spirit != null) {
             val granted =
                 grantService.grant(userId, GrantType.ITEM, SpiritItems.slugForCharacter(spirit), 1, "tier-$targetTier:item", REASON_TIER_UNLOCK)

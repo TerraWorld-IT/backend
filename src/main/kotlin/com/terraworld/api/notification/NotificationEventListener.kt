@@ -43,8 +43,8 @@ class NotificationEventListener(
                 userId = event.toUserId,
                 type = NotificationType.FRIEND_JOINED,
                 // FcmEventListener.onFriendActivity 의 푸시 title/body 와 동일 카피 — 알림함과 푸시 일치.
-                title = "친구가 활동했어요",
-                body = event.message,
+                title = event.notificationTitle,
+                body = event.notificationBody,
                 route = event.route,
             )
         }.onFailure { log.warn("notification.append.fail type=FRIEND to={} — {}", event.toUserId, it.message) }
@@ -57,7 +57,7 @@ class NotificationEventListener(
             notificationService.append(
                 userId = event.userId,
                 type = NotificationType.PAYMENT,
-                title = "💳 결제 완료",
+                title = "결제 내역 안내",
                 body = "구매하신 상품이 정상 적용되었어요",
                 route = null,
             )
@@ -102,8 +102,8 @@ class NotificationEventListener(
             notificationService.append(
                 userId = event.userId,
                 type = NotificationType.SPIRIT_ARRIVED,
-                title = "✨ 새 정령이 도착했어요",
-                body = "${event.speciesNameKo} 의 새 사이클이 시작됐어요. 오늘 기록으로 첫 스탬프를 찍어보세요",
+                title = "새로운 수수께끼 정령이 찾아왔어요",
+                body = "오늘 부터 다시 정령을 키울 수 있어요.",
                 route = event.route,
             )
         }.onFailure { log.warn("notification.append.fail type=SPIRIT_ARRIVED to={} — {}", event.userId, it.message) }

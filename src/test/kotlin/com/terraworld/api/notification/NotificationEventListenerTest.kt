@@ -25,13 +25,13 @@ class NotificationEventListenerTest {
     @Test
     fun `FriendActivityEvent — 수신자에게 FRIEND_JOINED + 푸시와 동일 카피`() {
         listener.onFriendActivity(
-            FriendActivityEvent(fromUserId = "a", toUserId = "b", message = "친구가 초대를 수락했어요", route = "/friends"),
+            FriendActivityEvent(fromUserId = "a", toUserId = "b", message = "친구 님이 초대를 수락했어요", route = "/friends"),
         )
         verify(notificationService).append(
             userId = eq("b"),
             type = eq(NotificationType.FRIEND_JOINED),
-            title = eq("친구가 활동했어요"),
-            body = eq("친구가 초대를 수락했어요"),
+            title = eq("나의 초대코드로 친구가 가입했어요"),
+            body = eq("친구의 테라에 놀러 갈 수 있어요"),
             route = eq("/friends"),
         )
     }
@@ -42,10 +42,36 @@ class NotificationEventListenerTest {
         verify(notificationService).append(
             userId = eq("buyer"),
             type = eq(NotificationType.PAYMENT),
-            title = eq("💳 결제 완료"),
+            title = eq("결제 내역 안내"),
             body = eq("구매하신 상품이 정상 적용되었어요"),
             route = eq(null),
         )
+    }
+
+    @Test
+    fun `SpiritArrivedEvent — 피그마 정령 도착 문구`() {
+        listener.onSpiritArrived(SpiritArrivedEvent(userId = "u", speciesNameKo = "고양이"))
+        verify(notificationService).append(
+            userId = "u",
+            type = NotificationType.SPIRIT_ARRIVED,
+            title = "새로운 수수께끼 정령이 찾아왔어요",
+            body = "오늘 부터 다시 정령을 키울 수 있어요.",
+            route = "/grow",
+        )
+    }
+
+    @Test
+    fun `FriendActivityEvent — 습관과 다른 친구 활동은 기존 문구 유지`() {
+        listOf("/record", "/friends").forEach { route ->
+            listener.onFriendActivity(FriendActivityEvent("a", "b", "친구가 기록을 남겼어요", route))
+            verify(notificationService).append(
+                userId = "b",
+                type = NotificationType.FRIEND_JOINED,
+                title = "친구가 활동했어요",
+                body = "친구가 기록을 남겼어요",
+                route = route,
+            )
+        }
     }
 
     @Test

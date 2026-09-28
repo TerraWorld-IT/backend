@@ -83,8 +83,8 @@ class FcmEventListener(
         if (tokens.isEmpty()) return
         fcmService.sendToTokens(
             tokens,
-            "친구가 활동했어요",
-            event.message,
+            event.notificationTitle,
+            event.notificationBody,
             // route: 클라 capacitor.client.ts 의 pushNotificationActionPerformed 가 탭 시 이동.
             mapOf("type" to "FRIEND", "fromUserId" to event.fromUserId, "route" to event.route),
         )
@@ -112,8 +112,8 @@ class FcmEventListener(
         if (tokens.isEmpty()) return
         fcmService.sendToTokens(
             tokens,
-            "✨ 새 정령이 도착했어요",
-            "${event.speciesNameKo} 의 새 사이클이 시작됐어요",
+            "새로운 수수께끼 정령이 찾아왔어요",
+            "오늘 부터 다시 정령을 키울 수 있어요.",
             mapOf("type" to "SPIRIT_ARRIVED", "route" to event.route),
         )
     }
@@ -151,6 +151,16 @@ data class FriendActivityEvent(
     /** 푸시 탭 시 이동 경로 — 습관 연동은 /record, 초대 수락은 /friends. */
     val route: String = "/record",
 )
+
+// InviteService의 초대 수락 발행 형식으로만 구분하여 다른 친구 활동 문구는 보존한다.
+private val FriendActivityEvent.isInviteAccepted: Boolean
+    get() = route == "/friends" && message.endsWith(" 님이 초대를 수락했어요")
+
+internal val FriendActivityEvent.notificationTitle: String
+    get() = if (isInviteAccepted) "나의 초대코드로 친구가 가입했어요" else "친구가 활동했어요"
+
+internal val FriendActivityEvent.notificationBody: String
+    get() = if (isInviteAccepted) "친구의 테라에 놀러 갈 수 있어요" else message
 
 /**
  * 습관 응원 이벤트 (apjek social loop) — HabitCheerService.cheer 가 도메인 tx 안에서 publish.
