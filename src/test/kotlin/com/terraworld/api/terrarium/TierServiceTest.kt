@@ -102,6 +102,20 @@ class TierServiceTest {
     }
 
     @Test
+    fun `활성 티어에 물고기 보상 설정이 남아도 해금만 하고 지급하지 않는다`() {
+        whenever(terrariumRepo.findByUserId("u")).thenReturn(Optional.of(terrarium("GRAND_TANK")))
+        whenever(tierConfigRepo.findById("HOUSE_TANK"))
+            .thenReturn(Optional.of(TierConfig("HOUSE_TANK", 4, "하우스형", 0, 180, 24, "fish", isActive = true)))
+        whenever(terrariumRepo.casTier(any(), eq("GRAND_TANK"), eq("HOUSE_TANK"), any())).thenReturn(1)
+
+        val response = service.unlockTier("u", "HOUSE_TANK")
+
+        assertEquals("HOUSE_TANK", response.tier)
+        assertNull(response.grantedSpirit)
+        verify(grantService, never()).grant(any(), any(), any(), any(), any(), any())
+    }
+
+    @Test
     fun `이미 보유한 정령이면 grantedSpirit null (멱등)`() {
         val terr = terrarium("LARGE_JAR")
         whenever(terrariumRepo.findByUserId("u")).thenReturn(Optional.of(terr))
@@ -171,6 +185,7 @@ class TierServiceTest {
         assertEquals(listOf(true, true, true, true), c.tiers.map { it.unlocked })
         assertTrue(c.tiers[3].active)
         assertEquals(24, c.tiers[3].slots)
+        assertNull(c.tiers[3].spiritCode)
     }
 
     @Test

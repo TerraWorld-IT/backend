@@ -51,6 +51,7 @@ class FlywayMigrationSmokeTest {
             // V1부터 최신까지 적용하고 V44 포함 여부를 별도로 확인한다.
             assertTrue(result.migrationsExecuted >= 43, "적용된 마이그레이션 수=${result.migrationsExecuted} (>=43 기대)")
             assertTrue(flyway.info().applied().any { it.version?.version == "44" }, "V44 미적용")
+            assertTrue(flyway.info().applied().any { it.version?.version == "49" }, "V49 미적용")
 
             pg.createConnection("").use { conn ->
                 val md = conn.metaData
@@ -121,9 +122,9 @@ class FlywayMigrationSmokeTest {
                         assertTrue(rs.next())
                         assertTrue(rs.getInt(1) == 3, "정령 아이템 3종 시드 부재")
                     }
-                    st.executeQuery("SELECT COUNT(*) FROM items WHERE layout = 'BACKGROUND' AND purchasable = TRUE").use { rs ->
+                    st.executeQuery("SELECT COUNT(*) FROM items WHERE slug = 'bg-pink' AND layout = 'BACKGROUND' AND is_active = TRUE AND purchasable = TRUE").use { rs ->
                         assertTrue(rs.next())
-                        assertTrue(rs.getInt(1) >= 3, "배경 아이템 3종 이상 시드 부재")
+                        assertEquals(1, rs.getInt(1), "V48 이후 디자이너 배경은 활성·판매 상태 유지")
                     }
                 }
             }
@@ -464,6 +465,98 @@ class FlywayMigrationSmokeTest {
                 }
             }
             assertEquals(0, flyway.migrate().migrationsExecuted)
+        }
+    }
+
+    @Test
+    fun `V49 물고기 비활성화는 기존 소유와 배치를 그대로 보존한다`() {
+        assumeTrue(dockerAvailable(), "Docker 미가용 — 마이그레이션 스모크 skip (docker_unavailable)")
+
+        PostgreSQLContainer("postgres:16-alpine").use { pg ->
+            pg.start()
+            pg.createConnection("").use { conn ->
+                conn.createStatement().use { st ->
+                    st.execute("CREATE SCHEMA IF NOT EXISTS auth")
+                    st.execute("""CREATE TABLE IF NOT EXISTS auth."user" (id TEXT PRIMARY KEY)""")
+                }
+            }
+            Flyway
+                .configure()
+                .dataSource(pg.jdbcUrl, pg.username, pg.password)
+                .target("48")
+                .load()
+                .migrate()
+
+            pg.createConnection("").use { conn ->
+                conn.createStatement().use { st ->
+                    st.execute("""INSERT INTO auth."user" VALUES ('fish-owner')""")
+                    st.execute("INSERT INTO users (id, nickname) VALUES ('fish-owner', '기존 소유자')")
+                    st.execute("INSERT INTO user_characters (user_id, character_code, acquired_via) VALUES ('fish-owner', 'fish', 'TIER_UNLOCK')")
+                    st.execute("INSERT INTO user_items (user_id, item_id, quantity) SELECT 'fish-owner', id, 2 FROM items WHERE slug = 'fish-spirit'")
+                    st.execute(
+                        """
+                        INSERT INTO terrariums (user_id, background_id, tier, active_tier)
+                        SELECT 'fish-owner', MIN(id), 'HOUSE_TANK', 'HOUSE_TANK' FROM terrarium_backgrounds
+                        """.trimIndent(),
+                    )
+                    st.execute(
+                        """
+                        INSERT INTO terrarium_items (terrarium_id, item_id, slot_id, pos_x, pos_y, tier)
+                        SELECT t.id, i.id, 0, 0.25, 0.75, 'HOUSE_TANK'
+                        FROM terrariums t CROSS JOIN items i
+                        WHERE t.user_id = 'fish-owner' AND i.slug = 'fish-spirit'
+                        """.trimIndent(),
+                    )
+                }
+
+                fun snapshot(table: String): List<String> =
+                    conn.createStatement().use { st ->
+                        st.executeQuery("SELECT to_jsonb(t)::text FROM $table t ORDER BY id").use { rs ->
+                            buildList { while (rs.next()) add(rs.getString(1)) }
+                        }
+                    }
+
+                val tables = listOf("user_items", "user_characters", "terrariums", "terrarium_items")
+                val before = tables.associateWith(::snapshot)
+                assertTrue(before.values.all { it.isNotEmpty() }, "기존 소유·배치 픽스처 생성")
+                val flyway =
+                    Flyway
+                        .configure()
+                        .dataSource(pg.jdbcUrl, pg.username, pg.password)
+                        .target("49")
+                        .load()
+                assertEquals(1, flyway.migrate().migrationsExecuted)
+                assertEquals(before, tables.associateWith(::snapshot), "기존 소유 수량·획득 시각·배치·티어 보존")
+
+                conn.createStatement().use { st ->
+                    st.executeQuery("SELECT is_active, purchasable FROM items WHERE slug = 'fish-spirit'").use { rs ->
+                        assertTrue(rs.next())
+                        assertFalse(rs.getBoolean(1))
+                        assertFalse(rs.getBoolean(2))
+                    }
+                    st.executeQuery("SELECT sellable, acquire_source FROM character_defs WHERE code = 'fish'").use { rs ->
+                        assertTrue(rs.next())
+                        assertFalse(rs.getBoolean(1))
+                        assertEquals("DISABLED", rs.getString(2))
+                    }
+                    st.executeQuery("SELECT COUNT(*) FROM tier_configs WHERE spirit_code = 'fish'").use { rs ->
+                        assertTrue(rs.next())
+                        assertEquals(0, rs.getInt(1))
+                    }
+                    st.executeQuery("SELECT COUNT(*) FROM items WHERE slug IN ('cat-spirit', 'pigeon-spirit') AND is_active = TRUE").use { rs ->
+                        assertTrue(rs.next())
+                        assertEquals(2, rs.getInt(1), "다른 정령 활성 상태 보존")
+                    }
+                    st.executeQuery("SELECT spirit_code FROM tier_configs WHERE tier = 'GRAND_TANK'").use { rs ->
+                        assertTrue(rs.next())
+                        assertEquals("pigeon", rs.getString(1))
+                    }
+                    // Flyway 이력뿐 아니라 SQL 재실행도 기존 소유·배치를 바꾸지 않는다.
+                    st.execute(checkNotNull(javaClass.getResource("/db/migration/V49__deactivate_fish_spirit.sql")).readText())
+                }
+                assertEquals(before, tables.associateWith(::snapshot))
+                assertEquals(0, flyway.migrate().migrationsExecuted)
+            }
         }
     }
 

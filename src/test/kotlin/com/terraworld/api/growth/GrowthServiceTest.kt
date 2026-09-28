@@ -277,6 +277,21 @@ class GrowthServiceTest {
         assertEquals(30, instanceRepo.findById(1L).get().naturalStreak)
     }
 
+    @Test
+    fun `기존 물고기 육성이 완료되어도 정령은 신규 지급하지 않는다`() {
+        speciesRepo.save(GrowthSpecies(code = "fish", kind = "SPIRIT", nameKo = "물고기 정령", sortOrder = 2))
+        whenever(itemRepository.findBySlug("fish-spirit"))
+            .thenReturn(Optional.of(Item(id = 2L, slug = "fish-spirit", name = "물고기 정령", priceType = PriceType.SPECIAL, priceAmount = 0, assetUrl = "x")))
+        instanceRepo.save(
+            GrowthInstance(id = 2L, userId = "u", speciesCode = "fish", naturalStreak = 29, lastProgressAt = today.minusDays(1).atStartOfDay()),
+        )
+
+        service.advanceAllStreaks("u")
+
+        assertEquals(GrowthCycleState.COMPLETED, instanceRepo.findById(2L).get().cycleState)
+        verify(grantService, never()).grant(any(), any(), eq("fish-spirit"), any(), any(), any())
+    }
+
     // ─── 부스터(buyBooster) ───
 
     @Test

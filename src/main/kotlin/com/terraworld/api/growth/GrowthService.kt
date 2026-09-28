@@ -331,7 +331,8 @@ class GrowthService(
         inst: GrowthInstance,
         species: GrowthSpecies,
     ) {
-        if (species.kind != "SPIRIT") return
+        // V49 비활성 정령은 기존 육성 데이터가 있어도 신규 지급하지 않는다.
+        if (species.kind != "SPIRIT" || species.code == "fish") return
         val slug = SpiritItems.slugForCharacter(species.code)
         if (itemRepository.findBySlug(slug).isEmpty) {
             // 시드 누락 — 기록 tx 를 깨지 않고 경고만 (운영 대시보드 감지용)
