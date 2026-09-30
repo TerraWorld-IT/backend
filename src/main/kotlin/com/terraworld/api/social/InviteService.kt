@@ -29,7 +29,7 @@ class InviteService(
     private val eventPublisher: org.springframework.context.ApplicationEventPublisher,
     // N16 (구현 계획서 v4): 공유 테라리움 조회 — 발신자 terrarium 스냅샷
     private val terrariumService: com.terraworld.api.terrarium.TerrariumService,
-    @Value("\${terraworld.invite.base-url:https://terraworld.app/share}")
+    @Value("\${terraworld.invite.base-url:https://terraworld.web-qplay.kr/share}")
     private val inviteBaseUrl: String,
     // 아프젝 v2 (§3): 초대자 30 / 수락자 10 루비 — 설정(invite.reward.*). 종전 양측 5 상수 대체.
     private val rewardProperties: InviteRewardProperties = InviteRewardProperties(),
