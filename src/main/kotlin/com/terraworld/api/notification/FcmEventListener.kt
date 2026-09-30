@@ -59,7 +59,7 @@ class FcmEventListener(
             tokens,
             title,
             body,
-            mapOf("type" to "WILTING", "stage" to event.stage.toString()),
+            mapOf("type" to "WILTING", "stage" to event.stage.toString(), "route" to "/record"),
         )
     }
 
@@ -72,7 +72,7 @@ class FcmEventListener(
             tokens,
             "🌿 오늘도 한 줄 기록 어때요?",
             "출석 보상 + 카테고리 토큰을 받을 수 있어요",
-            mapOf("type" to "ATTENDANCE", "missedDays" to event.missedDays.toString()),
+            mapOf("type" to "ATTENDANCE", "missedDays" to event.missedDays.toString(), "route" to "/record"),
         )
     }
 

@@ -46,6 +46,28 @@ class FcmEventListenerTest {
     }
 
     @Test
+    fun `시들음 알림은 기록 화면 경로를 포함`() {
+        listener.onWiltingEntered(WiltingEnteredEvent("b", 2))
+        verify(fcmService).sendToTokens(
+            listOf("token"),
+            "🥀 식물이 시들었어요",
+            "광고 시청 또는 기록으로 복구해주세요 (햇살 +1)",
+            mapOf("type" to "WILTING", "stage" to "2", "route" to "/record"),
+        )
+    }
+
+    @Test
+    fun `출석 알림은 기록 화면 경로를 포함`() {
+        listener.onAttendanceMissed(AttendanceMissedEvent("b", 3))
+        verify(fcmService).sendToTokens(
+            listOf("token"),
+            "🌿 오늘도 한 줄 기록 어때요?",
+            "출석 보상 + 카테고리 토큰을 받을 수 있어요",
+            mapOf("type" to "ATTENDANCE", "missedDays" to "3", "route" to "/record"),
+        )
+    }
+
+    @Test
     fun `정령 도착은 인앱과 같은 피그마 문구로 발송`() {
         listener.onSpiritArrived(SpiritArrivedEvent("b", "고양이"))
         verify(fcmService).sendToTokens(
