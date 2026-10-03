@@ -108,6 +108,31 @@ class UserServiceTest {
         assertEquals(ErrorCode.USER_NOT_FOUND, ex.errorCode)
     }
 
+    @Test
+    fun `updateMe — 금칙어 닉네임은 INVALID_INPUT 으로 거부되고 닉네임은 바뀌지 않는다`() {
+        userRepo.save(User(id = "user-1", nickname = "테스터", role = UserRole.USER))
+
+        val ex =
+            assertThrows<BusinessException> {
+                service.updateMe("user-1", "tester@example.com", " 시1발 ")
+            }
+
+        assertEquals(ErrorCode.INVALID_INPUT, ex.errorCode)
+        assertEquals("사용할 수 없는 닉네임이에요", ex.message)
+        assertEquals("테스터", userRepo.findById("user-1").get().nickname)
+    }
+
+    @Test
+    fun `updateMe — 일반 닉네임은 trim 후 저장`() {
+        userRepo.save(User(id = "user-1", nickname = "테스터", role = UserRole.USER))
+        Mockito.`when`(entitlementService.hasEntitlement(org.mockito.kotlin.any(), org.mockito.kotlin.any())).thenReturn(false)
+
+        val response = service.updateMe("user-1", "tester@example.com", "  초록이 ")
+
+        assertEquals("초록이", response.nickname)
+        assertEquals("초록이", userRepo.findById("user-1").get().nickname)
+    }
+
     // ─── Fakes ─────────────────────────────────────────────────
 
     private class FakeUserRepository :
