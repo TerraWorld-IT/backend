@@ -106,6 +106,10 @@ class UserService(
         if (trimmed.isEmpty() || trimmed.length > MAX_NICKNAME_LENGTH) {
             throw BusinessException(ErrorCode.INVALID_INPUT, "닉네임은 1~${MAX_NICKNAME_LENGTH}자여야 합니다")
         }
+        // App Store 1.2 UGC 필터링 — 욕설·비하·성적 표현·운영자 사칭 닉네임 거부 (가입 bootstrap 경로는 대상 아님)
+        if (NicknamePolicy.isForbidden(trimmed)) {
+            throw BusinessException(ErrorCode.INVALID_INPUT, "사용할 수 없는 닉네임이에요")
+        }
         val user =
             userRepository
                 .findById(userId)
