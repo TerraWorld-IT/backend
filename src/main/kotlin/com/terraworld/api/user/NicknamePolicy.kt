@@ -18,7 +18,7 @@ import java.text.Normalizer
  */
 object NicknamePolicy {
     /** 한글 채움 문자 — 글자처럼 보이지 않으면서 자모 사이를 끊는 구분자로 쓰인다. */
-    private val HANGUL_FILLERS: Set<Char> = setOf('ᅟ', 'ᅠ', 'ㅤ', 'ﾠ')
+    private val HANGUL_FILLERS: Set<Char> = setOf('\u115F', '\u1160', '\u3164', '\uFFA0')
 
     // 주의: 아래 금칙어 목록이 초기화 시점에 normalize 를 호출하므로 normalize 가 쓰는 상수는 목록보다 먼저 선언해야 한다.
 
@@ -26,15 +26,47 @@ object NicknamePolicy {
     private val SUBSTRING_WORDS: List<String> =
         listOf(
             // 한국어 욕설·비하
-            "시발", "씨발", "씨빨", "ㅅㅂ", "ㅆㅂ", "병신", "ㅄ", "ㅂㅅ",
-            "개새끼", "개새", "좆", "존나", "지랄", "미친놈", "미친년",
-            "꺼져", "닥쳐", "엿먹", "느금마", "니애미",
+            "시발",
+            "씨발",
+            "씨빨",
+            "ㅅㅂ",
+            "ㅆㅂ",
+            "병신",
+            "ㅄ",
+            "ㅂㅅ",
+            "개새끼",
+            "개새",
+            "좆",
+            "존나",
+            "지랄",
+            "미친놈",
+            "미친년",
+            "꺼져",
+            "닥쳐",
+            "엿먹",
+            "느금마",
+            "니애미",
             // 한국어 성적 표현
-            "섹스", "야동", "걸레", "창녀",
+            "섹스",
+            "야동",
+            "걸레",
+            "창녀",
             // 영어
-            "fuck", "shit", "bitch", "asshole", "pussy", "cunt", "nigger", "faggot", "porn",
+            "fuck",
+            "shit",
+            "bitch",
+            "asshole",
+            "pussy",
+            "cunt",
+            "nigger",
+            "faggot",
+            "porn",
             // 운영 사칭
-            "운영자", "관리자", "admin", "terraworld운영", "테라월드운영",
+            "운영자",
+            "관리자",
+            "admin",
+            "terraworld운영",
+            "테라월드운영",
         ).map { normalize(it) }.onEach { require(it.isNotEmpty()) { "금칙어가 정규화 후 비어 있다" } }
 
     /**
@@ -45,7 +77,15 @@ object NicknamePolicy {
      */
     private val EXACT_WORDS: Set<String> =
         setOf(
-            "시바", "새끼", "졸라", "애미", "애비", "보지", "자지", "sex", "dick",
+            "시바",
+            "새끼",
+            "졸라",
+            "애미",
+            "애비",
+            "보지",
+            "자지",
+            "sex",
+            "dick",
         ).map { normalize(it) }.onEach { require(it.isNotEmpty()) { "금칙어가 정규화 후 비어 있다" } }.toSet()
 
     /** leet 치환 표 — 숫자 제거만으로는 놓치는 영문 변형용. */
