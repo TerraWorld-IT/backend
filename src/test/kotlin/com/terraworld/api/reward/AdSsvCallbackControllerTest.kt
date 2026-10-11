@@ -2,6 +2,9 @@ package com.terraworld.api.reward
 
 import com.terraworld.common.audit.AuditService
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.CsvSource
+import org.junit.jupiter.params.provider.ValueSource
 import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.eq
@@ -87,6 +90,59 @@ class AdSsvCallbackControllerTest {
         val response = controller().handleSsv(request(timestamp = "0"))
         assertEquals(403, response.statusCode.value())
         verify(verifier, never()).verify(any(), any(), any())
+    }
+
+    @ParameterizedTest
+    @CsvSource("1, -600000", "1, 600000", "1000, -600000", "1000, 600000")
+    fun `밀리초와 마이크로초 모두 허용 범위 밖이면 403`(
+        scale: Long,
+        offsetMs: Long,
+    ) {
+        val timestamp = ((System.currentTimeMillis() + offsetMs) * scale).toString()
+
+        val response = controller().handleSsv(request(timestamp = timestamp))
+
+        assertEquals(403, response.statusCode.value())
+        verify(verifier, never()).verify(any(), any(), any())
+        verify(nonceService, never()).recordVerifiedSsv(any(), any(), anyOrNull())
+    }
+
+    @ParameterizedTest
+    @ValueSource(longs = [Long.MIN_VALUE, -1, 999_999_999_999_999, 1_000_000_000_000_000, Long.MAX_VALUE])
+    fun `극단값과 단위 경계의 오래되거나 먼 미래 timestamp 는 403`(timestamp: Long) {
+        val response = controller().handleSsv(request(timestamp = timestamp.toString()))
+
+        assertEquals(403, response.statusCode.value())
+        verify(verifier, never()).verify(any(), any(), any())
+    }
+
+    @Test
+    fun `초 단위 timestamp 는 지원하지 않고 403`() {
+        val response = controller().handleSsv(request(timestamp = (System.currentTimeMillis() / 1000).toString()))
+
+        assertEquals(403, response.statusCode.value())
+        verify(verifier, never()).verify(any(), any(), any())
+    }
+
+    @ParameterizedTest
+    @CsvSource("-120000, 0", "0, 123", "120000, 999")
+    fun `마이크로초 timestamp 는 허용 범위에서 200 이며 원본 서명 대상을 보존한다`(
+        offsetMs: Long,
+        remainderMicros: Long,
+    ) {
+        val timestamp = ((System.currentTimeMillis() + offsetMs) * 1000 + remainderMicros).toString()
+        val signedQuery =
+            "transaction_id=tx-1&user_id=user-1&timestamp=$timestamp&custom_data=$VALID_NONCE&ad_unit=ca-app/allowed"
+        whenever(verifier.verify(signedQuery, "SIG", 1L)).thenReturn(true)
+        whenever(nonceService.recordVerifiedSsv(any(), any(), anyOrNull())).thenReturn(
+            SsvNonceOutcome(SsvNonceResult.RECORDED),
+        )
+
+        val response = controller().handleSsv(request(timestamp = timestamp))
+
+        assertEquals(200, response.statusCode.value())
+        verify(verifier).verify(signedQuery, "SIG", 1L)
+        verify(nonceService).recordVerifiedSsv("user-1", "tx-1", VALID_NONCE)
     }
 
     @Test
