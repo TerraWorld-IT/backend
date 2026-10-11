@@ -123,7 +123,7 @@ reward:
     nonce:
       required: ${REWARD_AD_NONCE_REQUIRED:true}
     ssv:
-      public-key-url: ${ADMOB_SSV_PUBLIC_KEY_URL:https://gstatic.com/admob/reward/verifier-keys.json}
+      public-key-url: ${ADMOB_SSV_PUBLIC_KEY_URL:https://www.gstatic.com/admob/reward/verifier-keys.json}
       timestamp-tolerance-ms: ${REWARD_AD_SSV_TIMESTAMP_TOLERANCE_MS:300000}
       # authoritative 전환 전 운영 AdMob ad unit ID를 쉼표로 구분해 반드시 주입한다.
       ad-unit-allowlist: ${REWARD_AD_SSV_AD_UNIT_ALLOWLIST:}
@@ -211,7 +211,7 @@ reward:
     nonce:
       required: ${REWARD_AD_NONCE_REQUIRED:true}
     ssv:
-      public-key-url: ${ADMOB_SSV_PUBLIC_KEY_URL:https://gstatic.com/admob/reward/verifier-keys.json}
+      public-key-url: ${ADMOB_SSV_PUBLIC_KEY_URL:https://www.gstatic.com/admob/reward/verifier-keys.json}
       timestamp-tolerance-ms: ${REWARD_AD_SSV_TIMESTAMP_TOLERANCE_MS:300000}
       ad-unit-allowlist: ${REWARD_AD_SSV_AD_UNIT_ALLOWLIST:}
 
