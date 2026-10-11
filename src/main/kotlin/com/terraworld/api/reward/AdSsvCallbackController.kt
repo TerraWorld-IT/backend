@@ -73,7 +73,8 @@ class AdSsvCallbackController(
         }
 
         val now = System.currentTimeMillis()
-        if (timestamp < now - timestampToleranceMs || timestamp > now + timestampToleranceMs) {
+        val timestampMs = if (timestamp >= MICROSECOND_TIMESTAMP_THRESHOLD) timestamp / 1000 else timestamp
+        if (timestampMs < now - timestampToleranceMs || timestampMs > now + timestampToleranceMs) {
             log.warn("event=ad.ssv.stale-timestamp mode={} timestamp={}", policy.mode.configValue, timestamp)
             return ResponseEntity.status(403).build()
         }
@@ -173,6 +174,8 @@ class AdSsvCallbackController(
     }
 
     companion object {
+        // Google SSV 문서의 16자리 예시(1507770365237823)를 기준으로 마이크로초를 구분하고, 비교에만 밀리초를 사용한다.
+        private const val MICROSECOND_TIMESTAMP_THRESHOLD = 1_000_000_000_000_000L
         private const val MAX_SIGNATURE_LENGTH = 512
         private const val MAX_TRANSACTION_ID_LENGTH = 128
         private const val MAX_USER_ID_LENGTH = 64
