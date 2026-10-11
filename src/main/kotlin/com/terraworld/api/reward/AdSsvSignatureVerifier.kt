@@ -31,7 +31,7 @@ import java.util.Base64
  */
 @Component
 class AdSsvSignatureVerifier(
-    @Value("\${reward.ad.ssv.public-key-url:https://gstatic.com/admob/reward/verifier-keys.json}")
+    @Value("\${reward.ad.ssv.public-key-url:https://www.gstatic.com/admob/reward/verifier-keys.json}")
     private val publicKeyUrl: String,
     private val objectMapper: ObjectMapper,
 ) {
