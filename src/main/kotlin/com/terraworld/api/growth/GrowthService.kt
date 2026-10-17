@@ -58,6 +58,7 @@ class GrowthService(
     private val itemRepository: ItemRepository,
     private val eventPublisher: ApplicationEventPublisher,
     private val habitTrackerRepository: HabitTrackerRepository,
+    private val spiritPool: SpiritPool,
     private val properties: GrowthProperties = GrowthProperties(),
 ) {
     private val log = LoggerFactory.getLogger(javaClass)
@@ -316,6 +317,10 @@ class GrowthService(
     ) {
         val stages = stagesOf(species)
         inst.currentStage = stageForProgress(stages, inst.effectiveProgress)
+        if (species.kind == "SPIRIT" && inst.revealedSpiritCode == null && inst.currentStage >= 2) {
+            inst.revealedSpiritCode = spiritPool.choose(inst.userId)
+            inst.revealedAt = now
+        }
         if (inst.cycleState == GrowthCycleState.ACTIVE && inst.effectiveProgress >= properties.goal) {
             inst.cycleState = GrowthCycleState.COMPLETED
             inst.completedKstDate = today
@@ -333,7 +338,7 @@ class GrowthService(
     ) {
         // V49 비활성 정령은 기존 육성 데이터가 있어도 신규 지급하지 않는다.
         if (species.kind != "SPIRIT" || species.code == "fish") return
-        val slug = SpiritItems.slugForCharacter(species.code)
+        val slug = SpiritItems.slugForCharacter(inst.revealedSpiritCode ?: species.code)
         if (itemRepository.findBySlug(slug).isEmpty) {
             // 시드 누락 — 기록 tx 를 깨지 않고 경고만 (운영 대시보드 감지용)
             log.warn("growth.complete.spirit-item-missing slug={} user={} species={}", slug, inst.userId, species.code)
@@ -367,19 +372,29 @@ class GrowthService(
         val progress = inst?.effectiveProgress ?: 0
         val currentStage = stageForProgress(stages, progress)
         val state = inst?.cycleState ?: GrowthCycleState.ACTIVE
+        val revealedName =
+            if (species.kind == "SPIRIT") {
+                inst?.revealedSpiritCode?.let { itemRepository.findBySlug(SpiritItems.slugForCharacter(it)).orElse(null)?.name }
+            } else {
+                null
+            }
+
+        fun label(stage: GrowthStage): String = if (species.kind == "SPIRIT" && stage.stageOrder >= 2) "${revealedName ?: "정령"} ${stage.labelKo}" else stage.labelKo
+
         return GrowthItem(
             speciesCode = species.code,
             kind = GrowthItem.Kind.forValue(species.kind),
-            nameKo = species.nameKo,
+            nameKo = revealedName ?: species.nameKo,
+            revealedSpiritCode = inst?.revealedSpiritCode,
             currentStage = currentStage,
-            stageLabel = stages.firstOrNull { it.stageOrder == currentStage }?.labelKo ?: "",
+            stageLabel = stages.firstOrNull { it.stageOrder == currentStage }?.let(::label) ?: "",
             effectiveProgress = progress,
             stampCount = progress,
             goal = properties.goal,
             dormant = state == GrowthCycleState.LOST,
             cycleId = inst?.cycleId?.toString() ?: (species.code + NEW_CYCLE_SUFFIX),
             cycleState = GrowthItem.CycleState.forValue(state.name),
-            stages = stages.map { ApiGrowthStage(stage = it.stageOrder, threshold = it.threshold, label = it.labelKo) },
+            stages = stages.map { ApiGrowthStage(stage = it.stageOrder, threshold = it.threshold, label = label(it)) },
             reviveRubyCost = properties.reviveRubyCost.toInt(),
             completedToday = inst?.completedKstDate == today,
             notifyNext = inst?.notifyNext ?: false,

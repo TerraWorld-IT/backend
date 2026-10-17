@@ -60,6 +60,10 @@ class GrowthInstance(
     var reviveSnoozedUntilKstDate: LocalDate? = null,
     @Column(name = "lost_at")
     var lostAt: LocalDateTime? = null,
+    @Column(name = "revealed_spirit_code", length = 32)
+    var revealedSpiritCode: String? = null,
+    @Column(name = "revealed_at")
+    var revealedAt: LocalDateTime? = null,
     @Version
     @Column(nullable = false)
     var version: Long = 0,

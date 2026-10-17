@@ -49,6 +49,7 @@ interface GrowthInstanceRepository : JpaRepository<GrowthInstance, Long> {
             "g.cycleId = :newCycleId, g.naturalStreak = 0, g.sparkleBoughtCount = 0, g.currentStage = 1, " +
             "g.lastProgressAt = NULL, g.completedKstDate = NULL, g.completedAt = NULL, g.resetDueKstDate = NULL, " +
             "g.resetProcessedAt = :now, g.notifyNext = false, g.reviveSnoozedUntilKstDate = NULL, g.lostAt = NULL, " +
+            "g.revealedSpiritCode = NULL, g.revealedAt = NULL, " +
             "g.version = g.version + 1 " +
             "WHERE g.id = :id AND g.cycleState = com.terraworld.domain.growth.GrowthCycleState.COMPLETED " +
             "AND g.resetProcessedAt IS NULL AND g.resetDueKstDate IS NOT NULL AND g.resetDueKstDate <= :today",
@@ -70,6 +71,7 @@ interface GrowthInstanceRepository : JpaRepository<GrowthInstance, Long> {
             "g.cycleId = :newCycleId, g.naturalStreak = 0, g.sparkleBoughtCount = 0, g.currentStage = 1, " +
             "g.lastProgressAt = NULL, g.completedKstDate = NULL, g.completedAt = NULL, g.resetDueKstDate = NULL, " +
             "g.resetProcessedAt = :now, g.reviveSnoozedUntilKstDate = NULL, g.lostAt = NULL, " +
+            "g.revealedSpiritCode = NULL, g.revealedAt = NULL, " +
             "g.version = g.version + 1 " +
             "WHERE g.id = :id AND g.cycleState = com.terraworld.domain.growth.GrowthCycleState.LOST " +
             "AND g.reviveSnoozedUntilKstDate IS NOT NULL AND g.reviveSnoozedUntilKstDate <= :today",
