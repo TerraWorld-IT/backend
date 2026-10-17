@@ -8,6 +8,8 @@ import com.terraworld.api.reward.RewardService
 import com.terraworld.common.exception.BusinessException
 import com.terraworld.common.exception.ErrorCode
 import com.terraworld.common.time.KstTime
+import com.terraworld.domain.character.CharacterDef
+import com.terraworld.domain.character.CharacterDefRepository
 import com.terraworld.domain.growth.GrowthCycleState
 import com.terraworld.domain.growth.GrowthInstance
 import com.terraworld.domain.growth.GrowthInstanceRepository
@@ -19,8 +21,11 @@ import com.terraworld.domain.growth.GrowthStageRepository
 import com.terraworld.domain.item.Item
 import com.terraworld.domain.item.ItemRepository
 import com.terraworld.domain.item.PriceType
+import com.terraworld.domain.item.UserItem
+import com.terraworld.domain.item.UserItemRepository
 import com.terraworld.domain.record.RecordRepository
 import com.terraworld.domain.reward.AdRewardNonceInbox
+import com.terraworld.domain.user.User
 import com.terraworld.test.FakeJpaRepository
 import io.terraworld.api.model.GrowthItem
 import io.terraworld.api.model.GrowthReviveRequest
@@ -44,6 +49,7 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.util.Optional
 import java.util.UUID
+import kotlin.random.Random
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotEquals
@@ -68,6 +74,9 @@ class GrowthServiceTest {
     private lateinit var habitTrackerRepository: com.terraworld.domain.record.HabitTrackerRepository
     private lateinit var recordRepository: RecordRepository
     private lateinit var itemRepository: ItemRepository
+    private lateinit var characterRepository: CharacterDefRepository
+    private lateinit var userItemRepository: UserItemRepository
+    private lateinit var spiritPool: SpiritPool
     private lateinit var eventPublisher: ApplicationEventPublisher
     private lateinit var service: GrowthService
     private val today = KstTime.today()
@@ -83,10 +92,16 @@ class GrowthServiceTest {
         recordRepository = mock(RecordRepository::class.java)
         habitTrackerRepository = mock(com.terraworld.domain.record.HabitTrackerRepository::class.java)
         itemRepository = mock(ItemRepository::class.java)
+        characterRepository = mock(CharacterDefRepository::class.java)
+        userItemRepository = mock(UserItemRepository::class.java)
+        spiritPool = SpiritPool(characterRepository, itemRepository, userItemRepository, Random(7))
+        whenever(characterRepository.findAllByOrderBySortOrderAsc()).thenReturn(listOf(CharacterDef(code = "cat", acquireSource = "GROW")))
+        whenever(userItemRepository.findAllByUserId("u")).thenReturn(emptyList())
         eventPublisher = mock(ApplicationEventPublisher::class.java)
         whenever(grantService.grant(any(), any(), any(), any(), any(), any())).thenReturn(true)
-        whenever(itemRepository.findBySlug("cat-spirit"))
-            .thenReturn(Optional.of(Item(id = 1L, slug = "cat-spirit", name = "고양이 정령", priceType = PriceType.SPECIAL, priceAmount = 0, assetUrl = "x")))
+        val catItem = Item(id = 1L, slug = "cat-spirit", name = "고양이 정령", priceType = PriceType.SPECIAL, priceAmount = 0, assetUrl = "x")
+        whenever(itemRepository.findBySlug("cat-spirit")).thenReturn(Optional.of(catItem))
+        whenever(itemRepository.findAllByIsActiveTrue()).thenReturn(listOf(catItem))
         service =
             GrowthService(
                 speciesRepo,
@@ -99,13 +114,14 @@ class GrowthServiceTest {
                 itemRepository,
                 eventPublisher,
                 habitTrackerRepository,
+                spiritPool,
                 GrowthProperties(lostAfterDays = 2, reviveRubyCost = 10, goal = 30),
             )
 
-        speciesRepo.save(GrowthSpecies(code = "cat", kind = "SPIRIT", nameKo = "고양이 정령", sortOrder = 1))
+        speciesRepo.save(GrowthSpecies(code = "cat", kind = "SPIRIT", nameKo = "수수께끼 정령", sortOrder = 1))
         stageRepo.save(GrowthStage(kind = "SPIRIT", stageOrder = 1, threshold = 1, labelKo = "수수께끼 정령"))
-        stageRepo.save(GrowthStage(kind = "SPIRIT", stageOrder = 2, threshold = 10, labelKo = "고양이 정령 1단계"))
-        stageRepo.save(GrowthStage(kind = "SPIRIT", stageOrder = 3, threshold = 20, labelKo = "고양이 정령 2단계"))
+        stageRepo.save(GrowthStage(kind = "SPIRIT", stageOrder = 2, threshold = 10, labelKo = "1단계"))
+        stageRepo.save(GrowthStage(kind = "SPIRIT", stageOrder = 3, threshold = 20, labelKo = "2단계"))
     }
 
     private fun inst(
@@ -289,6 +305,7 @@ class GrowthServiceTest {
         service.advanceAllStreaks("u")
 
         assertEquals(GrowthCycleState.COMPLETED, instanceRepo.findById(2L).get().cycleState)
+        assertEquals("cat", instanceRepo.findById(2L).get().revealedSpiritCode)
         verify(grantService, never()).grant(any(), any(), eq("fish-spirit"), any(), any(), any())
     }
 
@@ -343,6 +360,7 @@ class GrowthServiceTest {
                 itemRepository,
                 eventPublisher,
                 habitTrackerRepository,
+                spiritPool,
                 GrowthProperties(lostAfterDays = 2, reviveRubyCost = 10, goal = 30),
             )
         val nonce = "550e8400-e29b-41d4-a716-446655440000"
@@ -520,6 +538,130 @@ class GrowthServiceTest {
 
     // ─── 페이크 ─────────────────────────────────────────────────
 
+    private fun poolItems(): List<Item> {
+        val items =
+            listOf("cat" to "고양이 정령", "dino" to "공룡 정령", "pigeon" to "비둘기 정령", "fish" to "물고기 정령", "snail" to "달팽이 정령")
+                .mapIndexed { i, (code, name) ->
+                    Item(id = i + 1L, slug = "$code-spirit", name = name, priceType = PriceType.SPECIAL, priceAmount = 0, assetUrl = "x")
+                }
+        whenever(characterRepository.findAllByOrderBySortOrderAsc()).thenReturn(
+            listOf(
+                CharacterDef(code = "cat", acquireSource = "GROW", sortOrder = 1),
+                CharacterDef(code = "dino", acquireSource = "GROW", sortOrder = 2),
+                CharacterDef(code = "pigeon", acquireSource = "TIER", sortOrder = 3),
+                CharacterDef(code = "fish", acquireSource = "DISABLED", sortOrder = 4),
+                CharacterDef(code = "snail", acquireSource = "GROW", sortOrder = 5),
+            ),
+        )
+        // 달팽이 아이템이 비활성이면 획득 풀에서 제외한다.
+        whenever(itemRepository.findAllByIsActiveTrue()).thenReturn(items.filter { it.slug != "snail-spirit" })
+        items.forEach { whenever(itemRepository.findBySlug(it.slug!!)).thenReturn(Optional.of(it)) }
+        return items
+    }
+
+    private fun own(items: List<Item>) {
+        whenever(userItemRepository.findAllByUserId("u")).thenReturn(items.map { UserItem(user = User(id = "u", nickname = "테스터"), item = it) })
+    }
+
+    @Test
+    fun `9에서 10 첫 공개는 미보유 종으로 저장되고 재조회와 추가 진행에도 유지된다`() {
+        val items = poolItems()
+        own(items.filter { it.slug == "cat-spirit" })
+        val i = inst(streak = 9, lastProgress = today.minusDays(1).atStartOfDay())
+        assertNull(cat().revealedSpiritCode)
+        assertEquals("수수께끼 정령", cat().nameKo)
+        assertEquals(listOf("수수께끼 정령", "정령 1단계", "정령 2단계"), cat().stages.map { it.label })
+
+        service.advanceAllStreaks("u")
+
+        assertEquals("dino", i.revealedSpiritCode)
+        assertTrue(i.revealedAt != null)
+        val revealedAt = i.revealedAt
+        val revealed = cat()
+        assertEquals("dino", revealed.revealedSpiritCode)
+        assertEquals("공룡 정령", revealed.nameKo)
+        assertEquals("공룡 정령 1단계", revealed.stageLabel)
+        assertEquals(listOf("수수께끼 정령", "공룡 정령 1단계", "공룡 정령 2단계"), revealed.stages.map { it.label })
+        own(emptyList())
+        assertEquals(revealed, cat())
+        assertEquals("dino", service.buyBooster("u", "cat").revealedSpiritCode)
+        assertEquals("공룡 정령 2단계", cat().stageLabel)
+        assertEquals(revealedAt, i.revealedAt)
+    }
+
+    @Test
+    fun `전부 보유하면 전체 키우기 풀에서 무작위 선택하며 티어 정령과 비활성 아이템은 제외한다`() {
+        own(poolItems())
+        val expectedRandom = Random(7)
+        repeat(20) {
+            assertEquals(listOf("cat", "dino").random(expectedRandom), spiritPool.choose("u"))
+        }
+    }
+
+    @Test
+    fun `키우기 정령 풀이 비어도 예외 없이 고양이를 반환한다`() {
+        whenever(itemRepository.findAllByIsActiveTrue()).thenReturn(emptyList())
+
+        assertEquals("cat", spiritPool.choose("u"))
+    }
+
+    @Test
+    fun `부스터로 공개 임계를 넘고 완료하면 공개된 종과 기존 멱등 키로 지급한다`() {
+        own(poolItems().filter { it.slug == "cat-spirit" })
+        val i = inst(streak = 9, lastProgress = today.atStartOfDay())
+        assertEquals("dino", service.buyBooster("u", "cat").revealedSpiritCode)
+        assertEquals(19, i.effectiveProgress)
+        service.buyBooster("u", "cat")
+        service.buyBooster("u", "cat")
+        verify(grantService).grant("u", GrantType.ITEM, "dino-spirit", 1L, "growth:${i.cycleId}:spirit", GrowthService.REASON_GROW_COMPLETE)
+        verify(grantService, never()).grant(any(), any(), eq("cat-spirit"), any(), any(), any())
+    }
+
+    @Test
+    fun `되살리기에서 9에서 10으로 진행하면 공개되고 다시 LOST 후 되살려도 유지된다`() {
+        own(poolItems().filter { it.slug == "cat-spirit" })
+        val i = inst(streak = 9, state = GrowthCycleState.LOST, lastProgress = today.minusDays(2).atStartOfDay())
+        whenever(recordRepository.findMaxRecordedDate("u")).thenReturn(today)
+        assertEquals("dino", service.revive("u", "cat", GrowthReviveRequest.Method.RUBY, null).revealedSpiritCode)
+        val revealedAt = i.revealedAt
+        i.cycleState = GrowthCycleState.LOST
+        own(emptyList())
+        assertEquals("dino", service.revive("u", "cat", GrowthReviveRequest.Method.RUBY, null).revealedSpiritCode)
+        assertEquals(revealedAt, i.revealedAt)
+    }
+
+    @Test
+    fun `완료와 보류 만료 리셋은 공개 코드와 공개 시각을 함께 초기화한다`() {
+        val i = inst(streak = 30, state = GrowthCycleState.COMPLETED)
+        i.completedKstDate = today.minusDays(1)
+        i.resetDueKstDate = today
+        i.revealedSpiritCode = "cat"
+        i.revealedAt = today.minusDays(10).atStartOfDay()
+        assertNull(cat().revealedSpiritCode)
+        assertNull(i.revealedAt)
+        i.cycleState = GrowthCycleState.LOST
+        i.naturalStreak = 15
+        i.reviveSnoozedUntilKstDate = today
+        i.revealedSpiritCode = "cat"
+        i.revealedAt = today.minusDays(10).atStartOfDay()
+        assertNull(cat().revealedSpiritCode)
+        assertNull(i.revealedAt)
+        assertEquals(0, i.effectiveProgress)
+    }
+
+    @Test
+    fun `식물 응답은 이름과 단계 라벨을 유지하고 정령 공개를 하지 않는다`() {
+        speciesRepo.save(GrowthSpecies(code = "plant", kind = "PLANT", nameKo = "식물", sortOrder = 2))
+        stageRepo.save(GrowthStage(kind = "PLANT", stageOrder = 2, threshold = 10, labelKo = "새싹"))
+        instanceRepo.save(GrowthInstance(id = 2L, userId = "u", speciesCode = "plant", naturalStreak = 10))
+        val item = service.getGrowth("u").items.first { it.speciesCode == "plant" }
+        assertEquals("식물", item.nameKo)
+        assertEquals("새싹", item.stageLabel)
+        assertEquals("새싹", item.stages.single().label)
+        assertNull(item.revealedSpiritCode)
+        verify(characterRepository, never()).findAllByOrderBySortOrderAsc()
+    }
+
     private class FakeSpeciesRepository :
         FakeJpaRepository<GrowthSpecies, String>(),
         GrowthSpeciesRepository {
@@ -591,6 +733,8 @@ class GrowthServiceTest {
             g.resetProcessedAt = now
             g.reviveSnoozedUntilKstDate = null
             g.lostAt = null
+            g.revealedSpiritCode = null
+            g.revealedAt = null
             g.version += 1
         }
 

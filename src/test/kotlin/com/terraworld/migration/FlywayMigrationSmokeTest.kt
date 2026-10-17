@@ -1,5 +1,6 @@
 package com.terraworld.migration
 
+import com.terraworld.common.time.KstTime
 import org.flywaydb.core.Flyway
 import org.flywaydb.core.api.MigrationVersion
 import org.junit.jupiter.api.Assumptions.assumeTrue
@@ -7,6 +8,8 @@ import org.junit.jupiter.api.Test
 import org.testcontainers.DockerClientFactory
 import org.testcontainers.containers.PostgreSQLContainer
 import java.sql.SQLException
+import java.time.Duration
+import java.time.LocalDateTime
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
 import kotlin.test.assertEquals
@@ -52,6 +55,7 @@ class FlywayMigrationSmokeTest {
             assertTrue(result.migrationsExecuted >= 43, "적용된 마이그레이션 수=${result.migrationsExecuted} (>=43 기대)")
             assertTrue(flyway.info().applied().any { it.version?.version == "44" }, "V44 미적용")
             assertTrue(flyway.info().applied().any { it.version?.version == "49" }, "V49 미적용")
+            assertTrue(flyway.info().applied().any { it.version?.version == "50" }, "V50 미적용")
 
             pg.createConnection("").use { conn ->
                 val md = conn.metaData
@@ -557,6 +561,123 @@ class FlywayMigrationSmokeTest {
                 assertEquals(before, tables.associateWith(::snapshot))
                 assertEquals(0, flyway.migrate().migrationsExecuted)
             }
+        }
+    }
+
+    @Test
+    fun `V50 공개 백필은 임계 이상과 완료 정령만 고양이로 고정하고 7종 카탈로그를 검증한다`() {
+        assumeTrue(dockerAvailable(), "Docker 미가용 — V50 스모크 skip (docker_unavailable)")
+        PostgreSQLContainer("postgres:16-alpine").use { pg ->
+            pg.start()
+            pg.createConnection("").use { conn ->
+                conn.createStatement().use { st ->
+                    st.execute("CREATE SCHEMA auth")
+                    st.execute("""CREATE TABLE auth."user" (id TEXT PRIMARY KEY)""")
+                }
+            }
+
+            fun flyway(target: String) =
+                Flyway
+                    .configure()
+                    .dataSource(pg.jdbcUrl, pg.username, pg.password)
+                    .target(target)
+                    .load()
+
+            flyway("49").migrate()
+            pg.createConnection("").use { conn ->
+                conn.createStatement().use { st ->
+                    st.execute(
+                        """
+                        INSERT INTO items (slug, name, description, price_type, price_amount, rarity, asset_url, layout, is_animated, is_active, purchasable)
+                        VALUES ('dino-spirit', '기존 이름', '기존 설명', 'BASIC', 99, 'COMMON', '/old.png', 'FOREGROUND', TRUE, FALSE, TRUE)
+                        """.trimIndent(),
+                    )
+                    st.execute("""INSERT INTO auth."user" (id) VALUES ('nine'), ('ten'), ('lost'), ('done'), ('plant')""")
+                    st.execute("INSERT INTO users (id, nickname) VALUES ('nine','구'), ('ten','십'), ('lost','중단'), ('done','완료'), ('plant','식물')")
+                    st.execute(
+                        """
+                        INSERT INTO growth_instances (user_id, species_code, natural_streak, sparkle_bought_count, cycle_state, version) VALUES
+                          ('nine', 'cat', 9, 0, 'ACTIVE', 3),
+                          ('ten', 'cat', 6, 4, 'ACTIVE', 3),
+                          ('lost', 'cat', 15, 0, 'LOST', 3),
+                          ('done', 'cat', 0, 0, 'COMPLETED', 3),
+                          ('plant', 'tomato-vine', 30, 0, 'COMPLETED', 3)
+                        """.trimIndent(),
+                    )
+                }
+            }
+            assertEquals(1, flyway("50").migrate().migrationsExecuted)
+
+            pg.createConnection("").use { conn ->
+                conn.createStatement().use { st ->
+                    st.executeQuery("SELECT user_id, revealed_spirit_code, revealed_at, version FROM growth_instances ORDER BY user_id").use { rs ->
+                        var count = 0
+                        while (rs.next()) {
+                            val revealed = rs.getString(1) in setOf("ten", "lost", "done")
+                            assertEquals(if (revealed) "cat" else null, rs.getString(2), rs.getString(1))
+                            assertEquals(revealed, rs.getTimestamp(3) != null)
+                            if (revealed) {
+                                val revealedAt = rs.getObject(3, LocalDateTime::class.java)
+                                assertTrue(
+                                    Duration.between(revealedAt, KstTime.now()).abs() < Duration.ofMinutes(5),
+                                    "${rs.getString(1)} 공개 시각이 KST 현재 시각에서 5분 이내여야 함: $revealedAt",
+                                )
+                            }
+                            assertEquals(if (revealed) 4L else 3L, rs.getLong(4))
+                            count++
+                        }
+                        assertEquals(5, count)
+                    }
+                    val catalogQuery =
+                        """
+                        SELECT c.code, c.acquire_source, i.name, i.layout, i.is_active, i.purchasable,
+                               i.asset_url, i.price_type, i.price_amount, i.rarity, i.is_animated, i.description
+                        FROM character_defs c JOIN items i ON i.slug = c.code || '-spirit'
+                        WHERE c.acquire_source = 'GROW' ORDER BY c.sort_order
+                        """.trimIndent()
+                    st.executeQuery(catalogQuery).use { rs ->
+                        val names = mapOf("cat" to "고양이 정령", "dino" to "공룡 정령", "squirrel" to "다람쥐 정령", "snail" to "달팽이 정령", "otter" to "수달 정령", "axolotl" to "아홀로틀 정령", "rabbit" to "토끼 정령")
+                        val codes = mutableSetOf<String>()
+                        while (rs.next()) {
+                            val code = rs.getString(1)
+                            codes.add(code)
+                            assertEquals(names[code], rs.getString(3))
+                            assertEquals("FIGURE", rs.getString(4))
+                            assertTrue(rs.getBoolean(5))
+                            assertFalse(rs.getBoolean(6))
+                            assertEquals(if (code == "cat") "/spirits/stage2.png" else "/spirits/$code-stage2.png", rs.getString(7))
+                            assertEquals("SPECIAL", rs.getString(8))
+                            assertEquals(0L, rs.getLong(9))
+                            assertEquals("EPIC", rs.getString(10))
+                            assertFalse(rs.getBoolean(11))
+                            assertEquals("키우기 30일 완주로 만나는 정령", rs.getString(12))
+                        }
+                        assertEquals(names.keys, codes)
+                    }
+                    st.executeQuery("SELECT asset_url FROM items WHERE slug = 'pigeon-spirit'").use { rs ->
+                        assertTrue(rs.next())
+                        assertEquals("/spirits/pigeon-stage2.png", rs.getString(1))
+                    }
+                    st.executeQuery("SELECT label_ko FROM growth_stages WHERE kind = 'SPIRIT' ORDER BY stage_order").use { rs ->
+                        val labels = mutableListOf<String>()
+                        while (rs.next()) labels.add(rs.getString(1))
+                        assertEquals(listOf("수수께끼 정령", "1단계", "2단계"), labels)
+                    }
+                    st.executeQuery("SELECT code, name_ko FROM growth_species WHERE kind = 'SPIRIT'").use { rs ->
+                        assertTrue(rs.next())
+                        assertEquals("cat", rs.getString(1))
+                        assertEquals("수수께끼 정령", rs.getString(2))
+                        assertFalse(rs.next())
+                    }
+                    st.executeQuery("SELECT name_ko, habitat, sellable FROM character_defs WHERE code = 'snail'").use { rs ->
+                        assertTrue(rs.next())
+                        assertEquals("달팽이", rs.getString(1))
+                        assertEquals("LAND", rs.getString(2))
+                        assertFalse(rs.getBoolean(3))
+                    }
+                }
+            }
+            assertEquals(0, flyway("50").migrate().migrationsExecuted)
         }
     }
 
