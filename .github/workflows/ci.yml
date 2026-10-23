@@ -134,10 +134,14 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # :latest 는 compose 가 참조하는 태그, :<sha> 는 롤백용.
+      # attestation 이 붙은 manifest list 는 맥 pull 시
+      # 'no matching manifest for linux/arm64/v8' 실패를 일으킨다.
+      # frontend ci.yml 의 provenance: false 와 같은 이유로 attestation 을 끄고
+      # 단일 manifest amd64 이미지를 유지한다 (맥은 Rosetta 로 실행).
       - name: Build and push image
         run: |
           set -euo pipefail
-          docker build -t "$IMAGE:latest" -t "$IMAGE:$GITHUB_SHA" .
+          docker build --provenance=false -t "$IMAGE:latest" -t "$IMAGE:$GITHUB_SHA" .
           docker push "$IMAGE:latest"
           docker push "$IMAGE:$GITHUB_SHA"
 
