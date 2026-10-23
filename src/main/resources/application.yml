@@ -204,16 +204,19 @@ terraworld:
   # PlayBillingWebhookController.@PostConstruct 가 빈 문자열 감지 시 부팅 abort.
   internal-api-token: ${INTERNAL_API_TOKEN}
 
-# 운영도 명시 전환 전에는 legacy 를 유지한다. authoritative 는 외부 AdMob 설정 검증 후에만 선택한다.
+# 운영 기본은 shadow 로, 지급은 legacy 와 같고 SSV 와 서버 nonce 결합만 관측한다.
+# authoritative 는 별도 결정 후 환경변수로만 전환한다.
+# AdMob 콜백 ad_unit 형식이 미확정이므로 허용 목록에 숫자 ID 와 전체 ID 를 함께 둔다.
+# Mac·윈도우 두 노드가 같은 이미지를 받도록 모드와 허용 목록을 이미지 기본값에 둔다.
 reward:
   ad:
-    mode: ${REWARD_AD_MODE:legacy}
+    mode: ${REWARD_AD_MODE:shadow}
     nonce:
       required: ${REWARD_AD_NONCE_REQUIRED:true}
     ssv:
       public-key-url: ${ADMOB_SSV_PUBLIC_KEY_URL:https://www.gstatic.com/admob/reward/verifier-keys.json}
       timestamp-tolerance-ms: ${REWARD_AD_SSV_TIMESTAMP_TOLERANCE_MS:300000}
-      ad-unit-allowlist: ${REWARD_AD_SSV_AD_UNIT_ALLOWLIST:}
+      ad-unit-allowlist: ${REWARD_AD_SSV_AD_UNIT_ALLOWLIST:4068169643,ca-app-pub-1298693904589724/4068169643}
 
 # 운영도 개발과 같은 기본 상한을 사용하며 환경변수로 명시 조정할 수 있다.
 terrarium:
