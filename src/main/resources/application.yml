@@ -205,9 +205,10 @@ terraworld:
   internal-api-token: ${INTERNAL_API_TOKEN}
 
 # 운영 기본은 shadow 로, 지급은 legacy 와 같고 SSV 와 서버 nonce 결합만 관측한다.
-# authoritative 는 별도 결정 후 환경변수로만 전환한다.
-# AdMob 콜백 ad_unit 형식이 미확정이므로 허용 목록에 숫자 ID 와 전체 ID 를 함께 둔다.
-# Mac·윈도우 두 노드가 같은 이미지를 받도록 모드와 허용 목록을 이미지 기본값에 둔다.
+# shadow 에서는 허용 목록을 비워 광고 단위에 관계없이 서명 검증을 통과한 콜백을 기록한다.
+# authoritative 전환 시 감사 로그의 실제 adUnit 값으로 REWARD_AD_SSV_AD_UNIT_ALLOWLIST 를 정한다.
+# authoritative 에서 허용 목록이 비어 있으면 콜백은 503 을 반환한다.
+# Mac·윈도우 두 노드가 같은 이미지를 받도록 모드는 이미지 기본값에 둔다.
 reward:
   ad:
     mode: ${REWARD_AD_MODE:shadow}
@@ -216,7 +217,7 @@ reward:
     ssv:
       public-key-url: ${ADMOB_SSV_PUBLIC_KEY_URL:https://www.gstatic.com/admob/reward/verifier-keys.json}
       timestamp-tolerance-ms: ${REWARD_AD_SSV_TIMESTAMP_TOLERANCE_MS:300000}
-      ad-unit-allowlist: ${REWARD_AD_SSV_AD_UNIT_ALLOWLIST:4068169643,ca-app-pub-1298693904589724/4068169643}
+      ad-unit-allowlist: ${REWARD_AD_SSV_AD_UNIT_ALLOWLIST:}
 
 # 운영도 개발과 같은 기본 상한을 사용하며 환경변수로 명시 조정할 수 있다.
 terrarium:
